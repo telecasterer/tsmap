@@ -1,0 +1,14 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+.vscode/
+scratch/
+
+CLAUDE.md
+
+# Test data files — these can be large or proprietary
+*.stdf
+*.std
+*.atdf
+*.atd

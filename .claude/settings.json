@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/home/paul/projects/**)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(cargo check)",
+      "Bash(cargo build)",
+      "Bash(cargo build *)",
+      "Bash(cargo add *)",
+      "Bash(git status)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "mcp__semble__search",
+      "mcp__semble__find_related"
+    ]
+  },
+  "mcpServers": {
+    "semble": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}

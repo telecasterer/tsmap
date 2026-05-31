@@ -27,4 +27,6 @@ tauri-plugin-dialog = "2.7.1"
 tauri-plugin-fs = "2.5.1"
 tokio = { version = "1.52.3", features = ["rt"] }
 libc = "0.2.186"
+csv = "1.4.0"
+indexmap = "2.14.0"
 

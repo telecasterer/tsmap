@@ -24,16 +24,102 @@
       }
       #drop-zone:hover, #drop-zone.drag-over { border-color: #6af; background: #1e2a38; }
       #open-btn {
+        display: inline-block;
         background: none; border: 1px solid #6af; border-radius: 4px;
         color: #6af; font-size: 12px; padding: 3px 10px; cursor: pointer;
-        white-space: nowrap;
+        white-space: nowrap; user-select: none;
       }
       #open-btn:hover { background: #1e2a38; }
       #file-input { display: none; }
       #file-label { font-size: 12px; color: #888; }
 
-      #map-container { flex: 1; min-height: 0; position: relative; }
-      #map-container.single { display: flex; align-items: center; justify-content: center; }
+      #map-container { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
+      #map-container.gallery { overflow-y: auto; }
+
+      /* ── Mapping overlay ───────────────────────────────────────── */
+      #tsmap-mapping-overlay {
+        position: fixed; inset: 0; z-index: 200;
+        background: #161616; display: flex; flex-direction: column;
+        overflow: hidden;
+      }
+      .mapping-panel { display: flex; flex-direction: column; height: 100%; font-size: 13px; }
+      .mapping-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 16px; border-bottom: 1px solid #333; flex-shrink: 0;
+      }
+      .mapping-title { font-weight: 600; font-size: 14px; color: #ddd; }
+      .mapping-file-info { font-size: 11px; color: #666; }
+      .mapping-scroll { flex: 1; overflow-y: auto; padding: 0 8px; }
+      .mapping-table { width: 100%; border-collapse: collapse; }
+      .mapping-table th { text-align: left; padding: 6px 8px; font-size: 11px; color: #666; border-bottom: 1px solid #2a2a2a; position: sticky; top: 0; background: #161616; }
+      .mapping-table td { padding: 4px 8px; border-bottom: 1px solid #1e1e1e; vertical-align: middle; }
+      .mapping-table tr:hover td { background: #1d1d1d; }
+      .col-name { font-family: monospace; color: #aaa; white-space: nowrap; }
+      .col-arrow { color: #444; text-align: center; }
+      .mapping-table select {
+        background: #222 !important; border: 1px solid #3a3a3a; color: #ccc !important;
+        padding: 2px 4px; border-radius: 3px; font-size: 12px; width: 100%;
+        -webkit-appearance: none; appearance: none;
+        color-scheme: dark;
+      }
+      .mapping-table select option {
+        background: #222; color: #ccc;
+      }
+      .test-name-input {
+        background: #222 !important; border: 1px solid #3a3a3a; color: #ccc !important;
+        padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 180px;
+        color-scheme: dark;
+      }
+      .split-cell { white-space: nowrap; }
+      .split-label { display: flex; align-items: center; gap: 5px; cursor: pointer; color: #888; font-size: 12px; }
+      .cardinality-hint { color: #555; font-size: 11px; }
+      .mapping-footer {
+        display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+        border-top: 1px solid #333; flex-shrink: 0; background: #111;
+      }
+      .pass-bin-group { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: #888; }
+      .pass-bin-group input { background: #222 !important; border: 1px solid #3a3a3a; color: #ccc !important; padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 80px; color-scheme: dark; }
+      .btn-primary { background: #1a5aad; border: none; color: #fff; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+      .btn-primary:hover { background: #2068cc; }
+      .btn-secondary { background: none; border: 1px solid #444; color: #888; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+      .btn-secondary:hover { border-color: #666; color: #bbb; }
+      /* Long-format modal */
+      .tsmap-modal-backdrop {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .tsmap-modal {
+        background: #222; border: 1px solid #3a3a3a; border-radius: 6px;
+        padding: 24px; max-width: 420px; color: #ddd;
+      }
+      .tsmap-modal h3 { margin-bottom: 10px; font-size: 15px; }
+      .tsmap-modal p  { margin-bottom: 20px; font-size: 13px; color: #999; line-height: 1.5; }
+      .tsmap-modal-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+      .muted { color: #555; font-size: 11px; }
+
+      /* ── Log panel ─────────────────────────────────────────────── */
+      #log-bar {
+        flex-shrink: 0; background: #111; border-top: 1px solid #333;
+      }
+      #log-toggle {
+        width: 100%; background: none; border: none; border-bottom: 1px solid transparent;
+        color: #666; font-size: 11px; text-align: left; padding: 3px 12px;
+        cursor: pointer; user-select: none;
+      }
+      #log-toggle:hover { color: #aaa; }
+      #log-panel {
+        display: none; height: 120px; overflow-y: auto;
+        padding: 4px 12px 6px;
+      }
+      #log-panel.open { display: block; border-top: 1px solid #222; }
+      .log-entry {
+        font-family: monospace; font-size: 11px; line-height: 1.6;
+        white-space: pre-wrap; word-break: break-all;
+        color: #888;
+      }
+      .log-error { color: #f87; }
+      .log-warn  { color: #fa7; }
+      .log-info  { color: #888; }
     </style>
   </head>
   <body>
@@ -41,13 +127,19 @@
       <div id="toolbar">
         <span id="toolbar-title">tsmap</span>
         <div id="drop-zone">
-          <button id="open-btn">Open file</button>
+          <label id="open-btn" for="file-input">Open file</label>
           <input id="file-input" type="file" accept=".csv,.json,.stdf,.std,.atdf,.atd" />
         </div>
         <span>or drop a file anywhere</span>
         <span id="file-label"></span>
       </div>
       <div id="map-container"></div>
+      <div id="log-bar">
+        <button id="log-toggle">Log</button>
+        <div id="log-panel">
+          <div id="log-list"></div>
+        </div>
+      </div>
     </div>
   </body>
 </html>

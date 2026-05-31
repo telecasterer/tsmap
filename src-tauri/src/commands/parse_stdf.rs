@@ -240,7 +240,7 @@ pub fn parse_stdf(path: String) -> Result<ParsedStdf, String> {
                     x: prr.x_coord as i32,
                     y: prr.y_coord as i32,
                     hbin: prr.hard_bin as u32,
-                    sbin: prr.soft_bin as u32,
+                    sbin: if prr.soft_bin == 65535 { prr.hard_bin as u32 } else { prr.soft_bin as u32 },
                     site_num,
                     part_id,
                     test_values,

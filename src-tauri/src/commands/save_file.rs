@@ -6,6 +6,7 @@ pub async fn save_file(
     bytes: Vec<u8>,
     default_name: String,
 ) -> Option<String> {
+    let _ = &app; // used on non-Linux only
     #[cfg(target_os = "linux")]
     {
         save_file_zenity(bytes, default_name)
@@ -18,12 +19,17 @@ pub async fn save_file(
 
 #[cfg(target_os = "linux")]
 fn save_file_zenity(bytes: Vec<u8>, default_name: String) -> Option<String> {
+    // Zenity on Wayland often ignores --filename unless given a full path.
+    // Pre-seed with the user's home directory so the dialog opens there.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let full_default = format!("{}/{}", home, default_name);
+
     let mut cmd = std::process::Command::new("zenity");
     cmd.args([
         "--file-selection",
         "--save",
         "--confirm-overwrite",
-        &format!("--filename={}", default_name),
+        &format!("--filename={}", full_default),
         "--title=Save PNG",
         "--file-filter=PNG images | *.png",
     ]);

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 /// Show a native file picker and return the selected path.
 ///
 /// On Linux + WebKitGTK, rfd (used by tauri-plugin-dialog) deadlocks because
@@ -10,6 +8,7 @@ use std::path::PathBuf;
 /// from tauri-plugin-dialog directly.
 #[tauri::command]
 pub async fn pick_file(app: tauri::AppHandle) -> Option<String> {
+    let _ = &app; // used on non-Linux only
     #[cfg(target_os = "linux")]
     {
         pick_file_zenity()
@@ -56,8 +55,9 @@ async fn pick_file_rfd(app: tauri::AppHandle) -> Option<String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .add_filter("Wafer map files", &["stdf", "std", "csv", "json"])
+        .add_filter("Wafer map files", &["stdf", "std", "atdf", "atd", "csv", "json"])
         .add_filter("STDF", &["stdf", "std"])
+        .add_filter("ATDF", &["atdf", "atd"])
         .add_filter("CSV / JSON", &["csv", "json"])
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));

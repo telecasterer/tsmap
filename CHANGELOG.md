@@ -1,0 +1,32 @@
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- **CSV column mapping UI** — overlay shown after opening a CSV file. Detects column roles automatically (exact name, regex, and token-based fuzzy matching across 30+ naming conventions). User can reassign roles, rename test columns, mark metadata columns, set pass bins, and choose which metadata columns split the gallery into separate wafer cards. Mapping is saved to `localStorage` keyed by header fingerprint and pre-filled on next open of the same schema.
+- **Long-format CSV support** — files where each row is one test result for one die (test_name / result columns with repeating X/Y) are detected automatically. A confirmation modal is shown; on confirm the data is pivoted to wide format in Rust before rendering.
+- **Rust CSV parser** (`csv_headers` + `parse_csv` commands) — replaces the TypeScript parser. Uses the `csv` crate: streaming, handles quoted fields, BOM, `\r\n`, `#` comment lines, and any file size. Long-format pivot and wafer/split-by grouping run in Rust.
+- **Lot-level analysis** — `analyzeWaferLot` is called for multi-wafer renders. The lot summary panel opens by default alongside the gallery, showing cross-wafer yield trends, bin aggregates, ring and quadrant summaries, and lot-level findings.
+- **File drop** — files can now be dropped anywhere on the Tauri window. Uses `tauri://drag-drop` event (WebKitGTK intercepts OS drops before the browser sees them; `dragDropEnabled: true` in `tauri.conf.json`).
+- **Log panel** — collapsible bar at the bottom of the window. All load events, warnings, and errors are timestamped and shown here. Auto-opens on error. Error count shown in the toggle label.
+- **`read_text_file` Rust command** — reads any user-selected path without hitting `tauri-plugin-fs` scope restrictions (which only allow app-specific dirs by default).
+- **Empty state** — clean startup screen with a wafer icon and "Open a file to get started" prompt. Replaces the confusing random demo data.
+
+### Fixed
+
+- **PNG save** — wmap creates a detached `<a download>` element that is never added to the DOM, so `document` capture listeners never fire. Fixed by patching `HTMLAnchorElement.prototype.click` in Tauri context.
+- **PNG save filename** — zenity on Wayland ignores `--filename` when given a bare name. Pre-seed with `$HOME/<name>.png` so the dialog opens in the home directory with the filename populated.
+- **STDF soft bin sentinel** — `PRR.soft_bin = 65535` means "not set" in STDF V4. Now falls back to `hard_bin` instead of passing `65535` to the frontend as a spurious soft bin value.
+- **CSV/ATDF silent failures** — `tauri-plugin-fs` `fs:default` only allows access to app-specific directories. Text files selected via zenity can be anywhere; now read via `read_text_file` Rust command instead.
+- **Column mapping overlay covering gallery toolbar** — overlay changed from `position: absolute` (inside `#map-container`) to `position: fixed; z-index: 200`, covering the entire app window including the wmap toolbar.
+- **Gallery not scrollable** — added `overflow-y: auto` to the container in gallery mode.
+- **Dark mode form elements** — Ubuntu GTK / WebKitGTK imposes the system light theme on `select` and `input` elements regardless of CSS background. Fixed with `color-scheme: dark`, `-webkit-appearance: none`, and `!important` colour overrides.
+- **ATDF and JSON not loading** — these now read via `read_text_file` Rust command, bypassing the `tauri-plugin-fs` scope restriction.
+- **ATDF missing from non-Linux file picker** — `tauri-plugin-dialog` filters on macOS/Windows now include `.atdf` and `.atd`.
+
+### Changed
+
+- **Map fills window on resize** — removed the constraining `display: flex; align-items: center` wrapper. wmap's internal `ResizeObserver` re-fits the canvas automatically when the container resizes.
+- **Default window size** — increased from 800×600 to 1200×800.
+- **TypeScript CSV parser removed** — all CSV parsing now goes through Rust.

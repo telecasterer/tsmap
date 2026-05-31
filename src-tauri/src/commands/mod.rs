@@ -1,6 +1,10 @@
+pub mod parse_csv;
 pub mod parse_stdf;
 pub mod pick_file;
+pub mod read_text_file;
 pub mod save_file;
+pub use parse_csv::{csv_headers, parse_csv};
 pub use parse_stdf::parse_stdf;
 pub use pick_file::pick_file;
+pub use read_text_file::read_text_file;
 pub use save_file::save_file;

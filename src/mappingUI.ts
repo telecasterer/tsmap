@@ -292,6 +292,7 @@ export async function showMappingOverlay(
     </div>`;
 
   document.getElementById('map-container')!.appendChild(overlay);
+  document.body.classList.add('overlay-open');
 
   // Wire up role change → show/hide test name input and split checkbox
   for (const tr of overlay.querySelectorAll<HTMLTableRowElement>('tr[data-col]')) {
@@ -309,8 +310,13 @@ export async function showMappingOverlay(
 
   const passBinInput = overlay.querySelector<HTMLInputElement>('#pass-bin-input')!;
 
-  overlay.querySelector('#map-cancel')!.addEventListener('click', () => {
+  const closeOverlay = () => {
     overlay.remove();
+    document.body.classList.remove('overlay-open');
+  };
+
+  overlay.querySelector('#map-cancel')!.addEventListener('click', () => {
+    closeOverlay();
     onCancel();
   });
 
@@ -330,7 +336,7 @@ export async function showMappingOverlay(
     }
 
     saveMapping(headers, mapping);
-    overlay.remove();
+    closeOverlay();
     onConfirm(mapping);
   });
 }

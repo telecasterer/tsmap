@@ -53,20 +53,29 @@ pub fn csv_headers(path: String) -> Result<CsvHeadersResult, String> {
         .collect();
 
     let mut sample: Vec<HashMap<String, String>> = Vec::new();
-    let mut row_count = 0usize;
 
     for result in rdr.records() {
         let rec = result.map_err(|e| e.to_string())?;
-        if sample.len() < 5 {
-            let row: HashMap<String, String> = headers
-                .iter()
-                .enumerate()
-                .map(|(i, h)| (h.clone(), rec.get(i).unwrap_or("").trim().to_string()))
-                .collect();
-            sample.push(row);
-        }
-        row_count += 1;
+        let row: HashMap<String, String> = headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (h.clone(), rec.get(i).unwrap_or("").trim().to_string()))
+            .collect();
+        sample.push(row);
+        if sample.len() >= 5 { break; }
     }
+
+    // Estimate row count from file size ÷ average of sampled row byte lengths.
+    // Fast (no full scan) and accurate enough for the UI label.
+    let row_count = std::fs::metadata(&path).ok().map(|m| {
+        let file_bytes = m.len() as usize;
+        if sample.is_empty() { return 0; }
+        let sample_bytes: usize = sample.iter()
+            .map(|row| row.values().map(|v| v.len() + 2).sum::<usize>())
+            .sum();
+        let avg = sample_bytes / sample.len();
+        if avg == 0 { 0 } else { file_bytes / avg }
+    }).unwrap_or(0);
 
     Ok(CsvHeadersResult { headers, sample, row_count })
 }

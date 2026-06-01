@@ -31,10 +31,18 @@
       }
       #open-btn:hover { background: #1e2a38; }
       #file-input { display: none; }
+      #add-btn {
+        background: none; border: 1px solid #555; border-radius: 4px;
+        color: #888; font-size: 12px; padding: 3px 10px; cursor: pointer;
+        white-space: nowrap;
+      }
+      #add-btn:not(:disabled):hover { border-color: #6af; color: #6af; background: #1e2a38; }
+      #add-btn:disabled { opacity: 0.4; cursor: default; }
       #file-label { font-size: 12px; color: #888; }
 
       #map-container { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
       #map-container.gallery { overflow-y: auto; }
+      body.overlay-open #map-container { visibility: hidden; }
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
@@ -83,6 +91,31 @@
       .btn-primary:hover { background: #2068cc; }
       .btn-secondary { background: none; border: 1px solid #444; color: #888; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
       .btn-secondary:hover { border-color: #666; color: #bbb; }
+      /* Rename overlay — reuses mapping-panel styles */
+      #tsmap-rename-overlay {
+        position: fixed; inset: 0; z-index: 200;
+        background: #161616; display: flex; flex-direction: column;
+        overflow: hidden;
+      }
+      .rename-file { font-family: monospace; color: #888; font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .rename-arrow { color: #444; text-align: center; padding: 0 8px; }
+      .rename-input {
+        background: #222 !important; border: 1px solid #3a3a3a; color: #ccc !important;
+        padding: 3px 8px; border-radius: 3px; font-size: 13px; width: 200px;
+        color-scheme: dark;
+      }
+      .rename-count { color: #555; font-size: 11px; padding-left: 12px; }
+      /* Append confirmation */
+      .append-summary { margin-bottom: 14px; font-size: 13px; color: #aaa; }
+      .append-warnings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+      .append-warning { display: flex; gap: 8px; font-size: 12px; padding: 6px 10px; border-radius: 4px; }
+      .append-warn { background: #2a1f00; color: #fa7; border: 1px solid #3a2a00; }
+      .append-info { background: #0f1f2a; color: #6af; border: 1px solid #1a3a4a; }
+      .warn-icon { flex-shrink: 0; }
+      .append-ok { font-size: 12px; color: #4a8; margin-bottom: 18px; }
+      .btn-warn { background: #7a3a00 !important; }
+      .btn-warn:hover { background: #9a4a00 !important; }
+
       /* Long-format modal */
       .tsmap-modal-backdrop {
         position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200;
@@ -130,6 +163,7 @@
           <label id="open-btn" for="file-input">Open file</label>
           <input id="file-input" type="file" accept=".csv,.json,.stdf,.std,.atdf,.atd" />
         </div>
+        <button id="add-btn" disabled>Add files</button>
         <span>or drop a file anywhere</span>
         <span id="file-label"></span>
       </div>

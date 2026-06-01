@@ -138,7 +138,7 @@ function showEmptyState() {
   container.classList.remove('gallery');
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-                height:100%;gap:16px;color:#555;user-select:none;">
+                position:absolute;inset:0;gap:16px;color:#555;user-select:none;">
       <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
         <circle cx="32" cy="32" r="28" stroke="#3a3a3a" stroke-width="2"/>
         <circle cx="32" cy="32" r="18" stroke="#3a3a3a" stroke-width="1.5" stroke-dasharray="3 3"/>

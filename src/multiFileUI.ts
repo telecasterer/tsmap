@@ -66,7 +66,7 @@ export function showRenameOverlay(
       </div>
     </div>`;
 
-  document.getElementById('map-container')!.appendChild(overlay);
+  document.body.appendChild(overlay);
   document.body.classList.add('overlay-open');
 
   const closeOverlay = () => {

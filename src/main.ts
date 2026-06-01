@@ -27,6 +27,7 @@ function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
 const container  = document.getElementById('map-container')!;
 const openBtn    = document.getElementById('open-btn')!;
 const addBtn     = document.getElementById('add-btn') as HTMLButtonElement;
+const resetBtn   = document.getElementById('reset-btn') as HTMLButtonElement;
 const fileLabel  = document.getElementById('file-label')!;
 const logList    = document.getElementById('log-list')!;
 const logToggle  = document.getElementById('log-toggle')!;
@@ -99,9 +100,11 @@ if (isTauri) {
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function renderWafers(wafers: WaferData[], label: string) {
+  setIdle();
   currentWafers = wafers;
   currentFileName = label;
   addBtn.disabled = wafers.length === 0;
+  resetBtn.style.display = '';
 
   const totalDies = wafers.reduce((n, w) => n + w.results.length, 0);
   fileLabel.textContent = `${label} — ${wafers.length} wafer${wafers.length !== 1 ? 's' : ''}, ${totalDies} dies`;
@@ -135,6 +138,7 @@ function renderWafers(wafers: WaferData[], label: string) {
 function showEmptyState() {
   currentWafers = [];
   addBtn.disabled = true;
+  resetBtn.style.display = 'none';
   container.classList.remove('gallery');
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -155,16 +159,36 @@ function showEmptyState() {
 
 // ── Multi-file load flow ──────────────────────────────────────────────────────
 
+let busy = false;
+
+function setBusy(msg: string) {
+  busy = true;
+  fileLabel.textContent = msg;
+  openBtn.style.pointerEvents = 'none';
+  openBtn.style.opacity = '0.5';
+  addBtn.disabled = true;
+}
+
+function setIdle(msg = '') {
+  busy = false;
+  fileLabel.textContent = msg;
+  openBtn.style.pointerEvents = '';
+  openBtn.style.opacity = '';
+}
+
 async function handlePaths(paths: string[], isAppend: boolean) {
   if (paths.length === 0) return;
+  if (busy) return;
 
-  fileLabel.textContent = `Loading ${paths.length} file${paths.length > 1 ? 's' : ''}…`;
+  setBusy(`Reading ${paths.length} file${paths.length > 1 ? 's' : ''}…`);
+  // Yield to let the browser repaint before the first invoke call
+  await new Promise(r => setTimeout(r, 0));
 
   // Validate all files have the same extension
   const exts = [...new Set(paths.map(p => p.split('.').pop()?.toLowerCase() ?? ''))];
   if (exts.length > 1) {
     log('error', `Mixed formats not supported: ${exts.join(', ')} — please select files of the same type`);
-    fileLabel.textContent = 'Error: mixed formats';
+    setIdle('Error: mixed formats');
     return;
   }
 
@@ -179,7 +203,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
       command, { path: paths[0] }
     ).catch(e => { log('error', `Failed to read headers: ${e}`); return null; });
 
-    if (!headersResult) { fileLabel.textContent = ''; return; }
+    if (!headersResult) { setIdle(); return; }
 
     const note = paths.length > 1
       ? ` — mapping will be applied to all ${paths.length} files`
@@ -189,7 +213,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
     mappingPromise = new Promise(resolve => {
       showMappingOverlay(headersResult,
         (mapping) => resolve(mapping),
-        () => { fileLabel.textContent = ''; resolve(null); }
+        () => { setIdle(); resolve(null); }
       );
     });
   }
@@ -203,7 +227,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   const entries: FileWaferEntry[] = [];
   for (const path of paths) {
     const fileName = path.split('/').pop() ?? path;
-    fileLabel.textContent = `Parsing ${fileName}…`;
+    setBusy(`Parsing ${fileName}…`);
     try {
       let parsed: ParsedFile;
       if (ext === 'stdf' || ext === 'std') {
@@ -224,7 +248,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   }
 
   if (entries.length === 0) {
-    fileLabel.textContent = 'Error: no files parsed successfully';
+    setIdle('Error: no files parsed successfully');
     return;
   }
 
@@ -245,7 +269,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
     return new Promise(resolve => {
       showRenameOverlay(entries,
         (renamed) => resolve(renamed),
-        () => { fileLabel.textContent = ''; resolve(null); }
+        () => { setIdle(); resolve(null); }
       );
     });
   };
@@ -268,7 +292,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
           log('info', `Added ${renamed.length} wafer${renamed.length !== 1 ? 's' : ''} — gallery now has ${merged.length}`);
           resolve();
         },
-        onCancel: () => { fileLabel.textContent = `${currentWafers.length} wafers loaded`; resolve(); },
+        onCancel: () => { setIdle(`${currentWafers.length} wafers loaded`); resolve(); },
       });
     });
   } else {
@@ -298,5 +322,11 @@ openBtn.addEventListener('click', e => {
 });
 
 addBtn.addEventListener('click', () => { if (isTauri) pickAndHandle(true); });
+
+resetBtn.addEventListener('click', () => {
+  if (currentWafers.length === 0) return;
+  setIdle();
+  showEmptyState();
+});
 
 showEmptyState();

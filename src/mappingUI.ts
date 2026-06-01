@@ -291,8 +291,9 @@ export async function showMappingOverlay(
       </div>
     </div>`;
 
-  document.getElementById('map-container')!.appendChild(overlay);
+  document.body.appendChild(overlay);
   document.body.classList.add('overlay-open');
+  document.getElementById('map-container')!.innerHTML = '';
 
   // Wire up role change → show/hide test name input and split checkbox
   for (const tr of overlay.querySelectorAll<HTMLTableRowElement>('tr[data-col]')) {

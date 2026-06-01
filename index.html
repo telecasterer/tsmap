@@ -133,11 +133,16 @@
       }
       #add-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #add-btn:disabled { opacity: 0.4; cursor: default; }
+      #reset-btn {
+        background: none; border: 1px solid var(--border-muted); border-radius: 4px;
+        color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
+        white-space: nowrap;
+      }
+      #reset-btn:hover { border-color: var(--error-text); color: var(--error-text); }
       #file-label { font-size: 12px; color: var(--text-muted); }
 
       #map-container { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
       #map-container.gallery { overflow-y: auto; }
-      body.overlay-open #map-container { visibility: hidden; }
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
@@ -262,6 +267,7 @@
           <input id="file-input" type="file" accept=".csv,.json,.stdf,.std,.atdf,.atd" />
         </div>
         <button id="add-btn" disabled>Add files</button>
+        <button id="reset-btn" style="display:none">Clear</button>
         <span>or drop a file anywhere</span>
         <span id="file-label"></span>
       </div>

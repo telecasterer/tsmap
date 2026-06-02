@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use super::parse_stdf::{DieResult, LotMeta, ParsedStdf, TestDef, WaferData};
+use super::read_file::read_text;
 
 // Field positions for each record type (positional, pipe-delimited)
 const MIR: &[&str] = &[
@@ -46,7 +47,7 @@ fn nonempty(s: &str) -> Option<String> {
 
 #[tauri::command]
 pub fn parse_atdf(path: String) -> Result<ParsedStdf, String> {
-    let raw = std::fs::read_to_string(&path)
+    let raw = read_text(&path)
         .map_err(|e| format!("Failed to read {path}: {e}"))?;
 
     // Join continuation lines (lines starting with space)

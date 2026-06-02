@@ -1,6 +1,7 @@
 use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 
 // ── Types shared between the two commands ────────────────────────────────────
 
@@ -327,11 +328,21 @@ pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn build_reader(path: &str) -> Result<csv::Reader<std::fs::File>, String> {
-    ReaderBuilder::new()
+fn build_reader(path: &str) -> Result<csv::Reader<Box<dyn Read>>, String> {
+    let is_gz = std::path::Path::new(path)
+        .extension().and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("gz")).unwrap_or(false);
+
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let reader: Box<dyn Read> = if is_gz {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else {
+        Box::new(std::io::BufReader::new(file))
+    };
+
+    Ok(ReaderBuilder::new()
         .trim(csv::Trim::All)
         .comment(Some(b'#'))
         .flexible(true)
-        .from_path(path)
-        .map_err(|e| e.to_string())
+        .from_reader(reader))
 }

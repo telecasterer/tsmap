@@ -1,6 +1,8 @@
-use rust_stdf::{stdf_file::StdfReader, StdfRecord};
+use rust_stdf::{stdf_file::StdfReader, CompressType, StdfRecord};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::{BufReader, Cursor};
+use super::read_file::read_bytes;
 
 // ── Output types (serialised to JSON for the JS frontend) ────────────────────
 
@@ -97,7 +99,10 @@ const SENTINEL_I2: i16 = -32768;
 
 #[tauri::command]
 pub fn parse_stdf(path: String) -> Result<ParsedStdf, String> {
-    let mut reader = StdfReader::new(&path).map_err(|e| e.to_string())?;
+    // read_bytes decompresses .gz transparently; wrap in Cursor for BufRead + Seek
+    let bytes = read_bytes(&path)?;
+    let mut reader = StdfReader::from(BufReader::new(Cursor::new(bytes)), &CompressType::Uncompressed)
+        .map_err(|e| e.to_string())?;
 
     let mut meta = LotMeta::default();
     let mut sites: Vec<SiteInfo> = Vec::new();

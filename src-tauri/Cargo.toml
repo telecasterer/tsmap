@@ -1,9 +1,9 @@
 [package]
 name = "tsmap"
-version = "0.1.1"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
+version = "0.1.3"
+description = "Desktop application for loading and visualising semiconductor wafer map data"
+authors = ["Paul Robins"]
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -29,4 +29,6 @@ tokio = { version = "1.52.3", features = ["rt"] }
 libc = "0.2.186"
 csv = "1.4.0"
 indexmap = "2.14.0"
+flate2 = "1.1.9"
+zip = "8.6.0"
 

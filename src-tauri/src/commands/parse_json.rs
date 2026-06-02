@@ -3,8 +3,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use super::parse_stdf::{DieResult, LotMeta, ParsedStdf, TestDef, WaferData};
-// Reuse the mapping types from parse_csv
 use super::parse_csv::CsvMapping;
+use super::read_file::read_text;
 
 // ── json_headers ──────────────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ pub struct JsonHeadersResult {
 
 #[tauri::command]
 pub fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let text = read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
 
@@ -44,7 +44,7 @@ pub fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
 
 #[tauri::command]
 pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let text = read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
 

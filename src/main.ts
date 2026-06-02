@@ -188,57 +188,94 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   // Yield to let the browser repaint before the first invoke call
   await new Promise(r => setTimeout(r, 0));
 
-  // Validate all files have the same extension
-  const exts = [...new Set(paths.map(p => p.split('.').pop()?.toLowerCase() ?? ''))];
-  if (exts.length > 1) {
+  // Expand zip archives; .gz is handled transparently by the parsers
+  let needsCleanup = false;
+  const expanded: string[] = [];
+  for (const p of paths) {
+    const ext = p.split('.').pop()?.toLowerCase() ?? '';
+    if (ext === 'zip') {
+      setBusy(`Extracting ${p.split('/').pop()}…`);
+      try {
+        const extracted = await invoke<string[]>('extract_archive', { path: p });
+        log('info', `Extracted ${extracted.length} file${extracted.length !== 1 ? 's' : ''} from ${p.split('/').pop()}`);
+        expanded.push(...extracted);
+        needsCleanup = true;
+      } catch (e) {
+        log('error', `Failed to extract ${p.split('/').pop()}: ${(e as Error).message}`);
+      }
+    } else {
+      expanded.push(p);
+    }
+  }
+  paths = expanded;
+
+  if (paths.length === 0) {
+    if (needsCleanup) invoke('cleanup_extract').catch(() => {});
+    setIdle('Error: no files after extraction');
+    return;
+  }
+
+  // Determine effective extension — strip .gz wrapper to get inner format
+  const effectiveExt = (p: string) => {
+    const parts = p.split('.');
+    const ext = parts.pop()?.toLowerCase() ?? '';
+    return ext === 'gz' ? (parts.pop()?.toLowerCase() ?? ext) : ext;
+  };
+
+  // Validate all files have the same extension (relaxed for mixed-format zips)
+  const exts = [...new Set(paths.map(effectiveExt))];
+  if (exts.length > 1 && !needsCleanup) {
     log('error', `Mixed formats not supported: ${exts.join(', ')} — please select files of the same type`);
     setIdle('Error: mixed formats');
     return;
   }
 
-  // For CSV/JSON: show mapping overlay once for the first file, apply to all
+  // For CSV/JSON: show mapping overlay once for the first such file, apply to all CSV/JSON
   // For STDF/ATDF: parse directly (no mapping needed)
-  const ext = exts[0];
+  const needsMapping = (e: string) => e === 'csv' || e === 'txt' || e === 'dat' || e === 'json';
+  const firstMappablePath = paths.find(p => needsMapping(effectiveExt(p)));
+
   let mappingPromise: Promise<CsvMapping | null> = Promise.resolve(null);
 
-  if (ext === 'csv' || ext === 'txt' || ext === 'dat' || ext === 'json') {
-    const command = (ext === 'json') ? 'json_headers' : 'csv_headers';
+  if (firstMappablePath) {
+    const firstExt = firstMappablePath.split('.').pop()?.toLowerCase() ?? '';
+    const command = firstExt === 'json' ? 'json_headers' : 'csv_headers';
     const headersResult = await invoke<{ headers: string[]; sample: Record<string, string>[]; rowCount: number }>(
-      command, { path: paths[0] }
+      command, { path: firstMappablePath }
     ).catch(e => { log('error', `Failed to read headers: ${e}`); return null; });
 
-    if (!headersResult) { setIdle(); return; }
+    if (!headersResult) { if (needsCleanup) invoke('cleanup_extract').catch(() => {}); setIdle(); return; }
 
-    const note = paths.length > 1
-      ? ` — mapping will be applied to all ${paths.length} files`
-      : '';
-    log('info', `${paths[0].split('/').pop()}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
+    const mappablePaths = paths.filter(p => needsMapping(p.split('.').pop()?.toLowerCase() ?? ''));
+    const note = mappablePaths.length > 1 ? ` — mapping applied to all ${mappablePaths.length} CSV/JSON files` : '';
+    log('info', `${firstMappablePath.split('/').pop()}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
 
     mappingPromise = new Promise(resolve => {
       showMappingOverlay(headersResult,
         (mapping) => resolve(mapping),
-        () => { setIdle(); resolve(null); }
+        () => { if (needsCleanup) invoke('cleanup_extract').catch(() => {}); setIdle(); resolve(null); }
       );
     });
   }
 
   const mapping = await mappingPromise;
-  if (mapping === null && (ext === 'csv' || ext === 'txt' || ext === 'dat' || ext === 'json')) {
+  if (mapping === null && firstMappablePath) {
     return; // cancelled
   }
 
-  // Parse all files
+  // Parse all files — use per-file extension so mixed-format archives work
   const entries: FileWaferEntry[] = [];
   for (const path of paths) {
     const fileName = path.split('/').pop() ?? path;
+    const fileExt = effectiveExt(path);
     setBusy(`Parsing ${fileName}…`);
     try {
       let parsed: ParsedFile;
-      if (ext === 'stdf' || ext === 'std') {
+      if (fileExt === 'stdf' || fileExt === 'std') {
         parsed = await loadStdfPath(path);
-      } else if (ext === 'atdf' || ext === 'atd') {
+      } else if (fileExt === 'atdf' || fileExt === 'atd') {
         parsed = rustToLocal(await invoke<RustParsedFile>('parse_atdf', { path }), fileName);
-      } else if (ext === 'json') {
+      } else if (fileExt === 'json') {
         parsed = rustToLocal(await invoke<RustParsedFile>('parse_json', { path, mapping }), fileName);
       } else {
         parsed = rustToLocal(await invoke<RustParsedFile>('parse_csv', { path, mapping }), fileName);
@@ -249,6 +286,8 @@ async function handlePaths(paths: string[], isAppend: boolean) {
       log('error', `Failed to parse ${fileName}: ${(e as Error).message}`);
     }
   }
+
+  if (needsCleanup) invoke('cleanup_extract').catch(() => {});
 
   if (entries.length === 0) {
     setIdle('Error: no files parsed successfully');
@@ -346,16 +385,21 @@ helpBtn.addEventListener('click', () => {
 
       <h3>Supported formats</h3>
       <ul>
-        <li><code>.stdf</code> / <code>.std</code> — STDF v4 binary. Parsed in Rust; handles
-            multi-wafer lots, parametric (PTR) and functional (FTR) tests.</li>
+        <li><code>.stdf</code> / <code>.std</code> — STDF v4 binary. Handles multi-wafer lots,
+            parametric (PTR) and functional (FTR) tests.</li>
         <li><code>.atdf</code> / <code>.atd</code> — ATDF ASCII. Same data as STDF in
             text form; pipe-delimited records.</li>
         <li><code>.csv</code> / <code>.txt</code> / <code>.dat</code> — Comma-separated.
             A column mapping step lets you assign roles to each column before rendering.</li>
-        <li><code>.json</code> — JSON array of row objects. Same mapping step as CSV.</li>
+        <li><code>.json</code> — JSON array of die objects, or nested wafer objects with a
+            <code>results</code> array. Same mapping step as CSV.</li>
+        <li><code>.gz</code> — Gzip-compressed version of any of the above (e.g.
+            <code>lot.stdf.gz</code>). Decompressed in memory; no temp files.</li>
+        <li><code>.zip</code> — Zip archive containing any supported files. All files are
+            extracted and loaded as a batch; mixed formats within a single zip are supported.</li>
       </ul>
 
-      <h3>CSV column mapping</h3>
+      <h3>Column mapping (CSV / JSON)</h3>
       <p>When you open a CSV or JSON file, a mapping overlay appears before the map renders.
          Assign a role to each column:</p>
       <ul>
@@ -374,7 +418,8 @@ helpBtn.addEventListener('click', () => {
       <h3>Viewing maps</h3>
       <p>Scroll to zoom, drag to pan. The toolbar provides zoom controls, plot mode switching,
          box selection, and PNG download. The summary panel on the right shows yield, bin
-         counts, test statistics, and findings.</p>
+         counts, test statistics, and findings. Click a finding to highlight the affected
+         dies or wafers in the gallery.</p>
 
       <div class="help-close-row">
         <button class="btn-primary" id="help-close">Close</button>

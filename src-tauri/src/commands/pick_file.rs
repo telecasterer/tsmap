@@ -62,10 +62,11 @@ fn zenity_args() -> Vec<&'static str> {
     vec![
         "--file-selection",
         "--title=Open wafer map files",
-        "--file-filter=Wafer map files | *.stdf *.std *.atdf *.atd *.csv *.json",
+        "--file-filter=Wafer map files | *.stdf *.std *.atdf *.atd *.csv *.json *.gz *.zip",
         "--file-filter=STDF | *.stdf *.std",
         "--file-filter=ATDF | *.atdf *.atd",
         "--file-filter=CSV / JSON | *.csv *.json",
+        "--file-filter=Archives | *.gz *.zip",
         "--file-filter=All files | *",
     ]
 }
@@ -119,10 +120,11 @@ async fn rfd_single(app: tauri::AppHandle) -> Option<String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let mut dialog = app.dialog()
         .file()
-        .add_filter("Wafer map files", &["stdf", "std", "atdf", "atd", "csv", "json"])
+        .add_filter("Wafer map files", &["stdf", "std", "atdf", "atd", "csv", "json", "gz", "zip"])
         .add_filter("STDF", &["stdf", "std"])
         .add_filter("ATDF", &["atdf", "atd"])
-        .add_filter("CSV / JSON", &["csv", "json"]);
+        .add_filter("CSV / JSON", &["csv", "json"])
+        .add_filter("Archives", &["gz", "zip"]);
     if let Some(dir) = load_last_dir() { dialog = dialog.set_directory(dir); }
     dialog.pick_file(move |path| { let _ = tx.send(path.map(|p| p.to_string())); });
     let result = rx.await.ok().flatten();
@@ -136,10 +138,11 @@ async fn rfd_multiple(app: tauri::AppHandle) -> Vec<String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let mut dialog = app.dialog()
         .file()
-        .add_filter("Wafer map files", &["stdf", "std", "atdf", "atd", "csv", "json"])
+        .add_filter("Wafer map files", &["stdf", "std", "atdf", "atd", "csv", "json", "gz", "zip"])
         .add_filter("STDF", &["stdf", "std"])
         .add_filter("ATDF", &["atdf", "atd"])
-        .add_filter("CSV / JSON", &["csv", "json"]);
+        .add_filter("CSV / JSON", &["csv", "json"])
+        .add_filter("Archives", &["gz", "zip"]);
     if let Some(dir) = load_last_dir() { dialog = dialog.set_directory(dir); }
     dialog.pick_files(move |paths| {
         let _ = tx.send(paths.map(|ps| ps.into_iter().map(|p| p.to_string()).collect::<Vec<_>>()).unwrap_or_default());

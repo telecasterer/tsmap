@@ -14,17 +14,19 @@ A desktop application for loading and visualising semiconductor wafer map data. 
 
 | Format | Parsing | Notes |
 |--------|---------|-------|
-| CSV | TypeScript (frontend) | Columns: `x, y, hbin, sbin`, optional `wafer`, optional test columns |
-| JSON | TypeScript (frontend) | Array of `DieResult`, or `{ wafers, meta, testDefs }` |
-| ATDF | TypeScript (frontend) | ASCII, handles MIR/WIR/WRR/PIR/PRR/PTR/FTR |
-| STDF | Rust (backend) | Binary V4, handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
+| STDF | Rust | Binary V4; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
+| ATDF | Rust | ASCII; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
+| CSV | Rust | Column mapping step before render; supports wide and long (pivot) formats |
+| JSON | Rust | Flat array or nested `[{ wafer fields, results: [{die}] }]`; same mapping step as CSV |
 
 ## Development
 
 ```bash
 npm install
 npm run tauri dev       # full Tauri app (Rust + frontend)
-npx vite --port 5300    # frontend only (CSV/JSON/ATDF work; STDF needs Tauri)
+npx vite --port 5300    # frontend only (no file parsing — all parsers need Tauri)
+cargo check             # type-check Rust (run from src-tauri/)
+npx tsc --noEmit        # type-check TypeScript
 ```
 
 ### Generating test files
@@ -38,15 +40,19 @@ python3 scripts/generate_atdf.py /tmp/test.atdf   # synthetic ATDF — same stru
 
 ```
 src/
-  main.ts          — app entry: file open, PNG save intercept, renderParsed
-  fileLoader.ts    — loadFile() dispatcher: CSV/JSON/ATDF parsed in JS, STDF via Tauri invoke
-  atdfParser.ts    — ATDF text parser (MIR, WIR, WRR, PIR, PRR, PTR, FTR)
+  main.ts          — app entry: file open, PNG save intercept, renderWafers
+  fileLoader.ts    — loadStdfPath() for STDF; parseText() for browser file input
+  atdfParser.ts    — ATDF text parser used by fileLoader (browser drag-drop path only)
   types.ts         — shared types: ParsedFile, WaferData, TestDef, LotMeta
 
 src-tauri/src/commands/
-  parse_stdf.rs    — #[tauri::command] parse_stdf(path) → ParsedStdf
-  pick_file.rs     — #[tauri::command] pick_file() — zenity on Linux, rfd on macOS/Windows
-  save_file.rs     — #[tauri::command] save_file(bytes, defaultName) — zenity --save / rfd
+  parse_stdf.rs    — parse_stdf(path) → ParsedStdf — STDF V4 binary
+  parse_atdf.rs    — parse_atdf(path) → ParsedStdf — ATDF ASCII
+  parse_csv.rs     — parse_csv(path, mapping) → ParsedStdf — CSV/TSV/DAT
+  parse_json.rs    — parse_json(path, mapping) → ParsedStdf — JSON array
+  pick_file.rs     — pick_file() / pick_files() — zenity on Linux, rfd on macOS/Windows
+  save_file.rs     — save_file(bytes, defaultName) — zenity --save on Linux, rfd elsewhere
+  write_temp_html.rs — write_temp_html(html) — opens wmap HTML reports in the system browser
 
 scripts/
   generate_stdf.py — generates a valid binary STDF V4 test file

@@ -22,38 +22,22 @@ pub fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    // Find the die-level array — the innermost array of objects
-    let rows = find_die_rows(&raw).ok_or("Could not find an array of objects in this JSON file")?;
+    let rows = flatten_to_rows(&raw).ok_or("Could not find an array of objects in this JSON file")?;
 
     if rows.is_empty() {
         return Err("JSON array is empty".to_string());
     }
 
-    // Flatten all rows to collect the full header set (union across first 20 rows)
     let mut header_set: indexmap::IndexSet<String> = indexmap::IndexSet::new();
     for row in rows.iter().take(20) {
-        for k in flatten_object(row).keys() {
+        for k in row.keys() {
             header_set.insert(k.clone());
         }
     }
     let headers: Vec<String> = header_set.into_iter().collect();
+    let sample = rows.into_iter().take(5).collect();
 
-    let sample: Vec<HashMap<String, String>> = rows
-        .iter()
-        .take(5)
-        .map(|row| {
-            flatten_object(row)
-                .into_iter()
-                .map(|(k, v)| (k, value_to_string(&v)))
-                .collect()
-        })
-        .collect();
-
-    Ok(JsonHeadersResult {
-        headers,
-        sample,
-        row_count: rows.len(),
-    })
+    Ok(JsonHeadersResult { headers, sample, row_count: rows_len(&raw) })
 }
 
 // ── parse_json ────────────────────────────────────────────────────────────────
@@ -64,21 +48,8 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    let rows = find_die_rows(&raw).ok_or("Could not find an array of objects in this JSON file")?;
+    let flat_rows = flatten_to_rows(&raw).ok_or("Could not find an array of objects in this JSON file")?;
 
-    // Flatten every row
-    let flat_rows: Vec<HashMap<String, String>> = rows
-        .iter()
-        .map(|row| {
-            flatten_object(row)
-                .into_iter()
-                .map(|(k, v)| (k, value_to_string(&v)))
-                .collect()
-        })
-        .collect();
-
-    // Delegate to the same mapping logic as parse_csv by re-using its row processing
-    // We reproduce it here to avoid coupling — it's short
     let is_long_format = mapping.testname_col.is_some() && mapping.testvalue_col.is_some();
     let pass_bin_set: std::collections::HashSet<u32> =
         mapping.pass_bins.iter().copied().collect();
@@ -114,9 +85,7 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
         for row in &flat_rows {
             let x = row.get(&mapping.x).map(|s| s.as_str()).unwrap_or("");
             let y = row.get(&mapping.y).map(|s| s.as_str()).unwrap_or("");
-            if x.is_empty() || y.is_empty() {
-                continue;
-            }
+            if x.is_empty() || y.is_empty() { continue; }
             let wafer = mapping.wafer.as_deref().and_then(|c| row.get(c)).map(|s| s.as_str()).unwrap_or("");
             let lot = mapping.lot.as_deref().and_then(|c| row.get(c)).map(|s| s.as_str()).unwrap_or("");
             let key = format!("{}\x00{}\x00{}\x00{}", wafer, lot, x, y);
@@ -237,40 +206,59 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Find the innermost array of objects — handles:
-/// - Top-level array: [{ die fields }]  or  [{ wafer fields, results: [{die}] }]
-/// - Envelope object: { wafers: [{...}], batch_id: "...", ... }
-/// Always returns the die-level rows (innermost objects with scalar values).
-fn find_die_rows(val: &Value) -> Option<Vec<&Value>> {
+/// Convert JSON to a flat Vec of string-string maps in a single pass.
+/// Handles:
+/// - Flat array of die objects:          [{x,y,hbin}]
+/// - Array of wafer objects with nested: [{sampleIndex, results:[{x,y}]}]
+///   → wafer scalars are merged into each die row
+/// - Envelope object:                    {wafers:[...]} → recursed
+fn flatten_to_rows(val: &Value) -> Option<Vec<HashMap<String, String>>> {
     match val {
         Value::Array(arr) => {
             if arr.is_empty() { return None; }
-            // Check if array elements contain a nested die array
             let die_keys = ["results","die_results","dies","data","measurements","records"];
             if let Some(obj) = arr[0].as_object() {
                 let inner_key = die_keys.iter()
                     .find(|&&k| obj.get(k).map_or(false, |v| v.is_array()));
                 if let Some(&inner_key) = inner_key {
-                    return Some(arr.iter()
-                        .filter_map(|w| w.get(inner_key)?.as_array())
-                        .flatten()
-                        .collect());
+                    // Nested format: merge wafer scalars directly into string maps
+                    let mut out: Vec<HashMap<String, String>> = Vec::new();
+                    for wafer in arr.iter() {
+                        let wafer_obj = match wafer.as_object() { Some(o) => o, None => continue };
+                        // Build wafer-level scalar strings once per wafer
+                        let mut wafer_scalars: HashMap<String, String> = HashMap::new();
+                        for (k, v) in wafer_obj.iter() {
+                            if k.as_str() != inner_key && !v.is_array() && !v.is_object() {
+                                wafer_scalars.insert(k.clone(), value_to_string(v));
+                            }
+                        }
+                        if let Some(dies) = wafer.get(inner_key).and_then(|v| v.as_array()) {
+                            out.reserve(dies.len());
+                            for die in dies {
+                                let mut row = wafer_scalars.clone();
+                                flatten_value_into(die, "", &mut row);
+                                out.push(row);
+                            }
+                        }
+                    }
+                    return Some(out);
                 }
             }
-            Some(arr.iter().collect())
+            // Flat array
+            Some(arr.iter().map(|v| {
+                let mut row = HashMap::new();
+                flatten_value_into(v, "", &mut row);
+                row
+            }).collect())
         }
         Value::Object(obj) => {
-            // Prefer known wrapper keys, then fall back to any array property
             let preferred = ["wafers","results","dies","die_results","data","measurements","records"];
             let key = preferred.iter()
                 .find(|&&k| obj.get(k).map_or(false, |v| v.is_array()))
                 .map(|&k| k.to_string())
-                .or_else(|| obj.iter()
-                    .find(|(_, v)| v.is_array())
-                    .map(|(k, _)| k.clone()));
-
+                .or_else(|| obj.iter().find(|(_, v)| v.is_array()).map(|(k, _)| k.clone()));
             if let Some(k) = key {
-                find_die_rows(obj.get(&k)?)
+                flatten_to_rows(obj.get(&k)?)
             } else {
                 None
             }
@@ -279,22 +267,48 @@ fn find_die_rows(val: &Value) -> Option<Vec<&Value>> {
     }
 }
 
-/// Flatten one level of nesting: { location: { x: 0, y: 0 } } → { "location.x": "0", "location.y": "0" }
-/// Arrays within objects are stringified as-is (not recursed into).
-fn flatten_object(val: &Value) -> indexmap::IndexMap<String, Value> {
-    let mut out = indexmap::IndexMap::new();
+/// Flatten one JSON object level into a string map.
+/// Nested objects produce "parent.child" keys; arrays are stringified.
+fn flatten_value_into(val: &Value, prefix: &str, out: &mut HashMap<String, String>) {
     if let Some(obj) = val.as_object() {
         for (k, v) in obj {
+            let key = if prefix.is_empty() { k.clone() } else { format!("{}.{}", prefix, k) };
             if let Some(inner) = v.as_object() {
                 for (k2, v2) in inner {
-                    out.insert(format!("{}.{}", k, k2), v2.clone());
+                    out.insert(format!("{}.{}", key, k2), value_to_string(v2));
                 }
             } else {
-                out.insert(k.clone(), v.clone());
+                out.insert(key, value_to_string(v));
             }
         }
     }
-    out
+}
+
+/// Count total die rows without allocating the full flat vec (used for json_headers row_count).
+fn rows_len(val: &Value) -> usize {
+    match val {
+        Value::Array(arr) => {
+            let die_keys = ["results","die_results","dies","data","measurements","records"];
+            if let Some(obj) = arr.first().and_then(|v| v.as_object()) {
+                if let Some(&k) = die_keys.iter().find(|&&k| obj.get(k).map_or(false, |v| v.is_array())) {
+                    return arr.iter()
+                        .filter_map(|w| w.get(k)?.as_array())
+                        .map(|d| d.len())
+                        .sum();
+                }
+            }
+            arr.len()
+        }
+        Value::Object(obj) => {
+            let preferred = ["wafers","results","dies","die_results","data","measurements","records"];
+            let key = preferred.iter()
+                .find(|&&k| obj.get(k).map_or(false, |v| v.is_array()))
+                .map(|&k| k.to_string())
+                .or_else(|| obj.iter().find(|(_, v)| v.is_array()).map(|(k, _)| k.clone()));
+            key.and_then(|k| obj.get(&k)).map(rows_len).unwrap_or(0)
+        }
+        _ => 0,
+    }
 }
 
 fn value_to_string(v: &Value) -> String {

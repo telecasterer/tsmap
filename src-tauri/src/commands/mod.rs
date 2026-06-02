@@ -1,3 +1,4 @@
+pub mod parse_atdf;
 pub mod parse_csv;
 pub mod parse_json;
 pub mod parse_stdf;
@@ -5,6 +6,7 @@ pub mod pick_file;
 pub mod read_text_file;
 pub mod save_file;
 pub mod write_temp_html;
+pub use parse_atdf::parse_atdf;
 pub use parse_csv::{csv_headers, parse_csv};
 pub use parse_json::{json_headers, parse_json};
 pub use parse_stdf::parse_stdf;

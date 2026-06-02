@@ -1,8 +1,8 @@
 import { buildWaferMap } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
-import { analyzeWaferMap, analyzeWaferLot } from '@paulrobins/wafermap/stats';
+import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import { invoke } from '@tauri-apps/api/core';
-import { loadStdfPath, setLogFn, parseAtdfText } from './fileLoader';
+import { loadStdfPath, setLogFn } from './fileLoader';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import type { CsvMapping } from './mappingUI';
@@ -28,6 +28,7 @@ const container  = document.getElementById('map-container')!;
 const openBtn    = document.getElementById('open-btn')!;
 const addBtn     = document.getElementById('add-btn') as HTMLButtonElement;
 const resetBtn   = document.getElementById('reset-btn') as HTMLButtonElement;
+const helpBtn    = document.getElementById('help-btn') as HTMLButtonElement;
 const fileLabel  = document.getElementById('file-label')!;
 const logList    = document.getElementById('log-list')!;
 const logToggle  = document.getElementById('log-toggle')!;
@@ -81,12 +82,11 @@ if (isTauri) {
     _nativeClick.call(this);
   };
 
-  // Report buttons — wmap calls openHtmlReport() which checks window.__openHtmlReport first.
-  // WebKitGTK intercepts window.open() at the native level so we can't patch that.
-  (window as any).__openHtmlReport = (html: string) => {
+  // Route wmap HTML reports through Tauri — window.open is blocked in WebKitGTK.
+  setReportOpener((html: string) => {
     invoke('write_temp_html', { html })
       .catch(err => log('error', `Failed to open report: ${err}`));
-  };
+  });
 
   // File drop
   import('@tauri-apps/api/event').then(({ listen }) => {
@@ -111,6 +111,8 @@ function renderWafers(wafers: WaferData[], label: string) {
 
   container.innerHTML = '';
 
+  const stem = label.replace(/\.[^.]+$/, '');
+
   if (wafers.length === 1) {
     container.classList.remove('gallery');
     const waferMap = buildWaferMap({ results: wafers[0].results });
@@ -118,6 +120,7 @@ function renderWafers(wafers: WaferData[], label: string) {
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      downloadFilename: stem,
     });
   } else {
     container.classList.add('gallery');
@@ -130,6 +133,7 @@ function renderWafers(wafers: WaferData[], label: string) {
     renderWaferGallery(container, items, {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      downloadFilename: stem,
     });
   }
 }
@@ -233,8 +237,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
       if (ext === 'stdf' || ext === 'std') {
         parsed = await loadStdfPath(path);
       } else if (ext === 'atdf' || ext === 'atd') {
-        const text = await invoke<string>('read_text_file', { path });
-        parsed = parseAtdfText(text, fileName);
+        parsed = rustToLocal(await invoke<RustParsedFile>('parse_atdf', { path }), fileName);
       } else if (ext === 'json') {
         parsed = rustToLocal(await invoke<RustParsedFile>('parse_json', { path, mapping }), fileName);
       } else {
@@ -327,6 +330,60 @@ resetBtn.addEventListener('click', () => {
   if (currentWafers.length === 0) return;
   setIdle();
   showEmptyState();
+});
+
+helpBtn.addEventListener('click', () => {
+  const modal = document.createElement('div');
+  modal.className = 'tsmap-modal-backdrop';
+  modal.innerHTML = `
+    <div class="help-modal">
+      <h2>tsmap help</h2>
+
+      <h3>Opening files</h3>
+      <p>Click <strong>Open file</strong> or drag and drop a file anywhere in the window.
+         Once a file is loaded, <strong>Add files</strong> appends additional wafers to the
+         current gallery. <strong>Clear</strong> unloads the current map.</p>
+
+      <h3>Supported formats</h3>
+      <ul>
+        <li><code>.stdf</code> / <code>.std</code> — STDF v4 binary. Parsed in Rust; handles
+            multi-wafer lots, parametric (PTR) and functional (FTR) tests.</li>
+        <li><code>.atdf</code> / <code>.atd</code> — ATDF ASCII. Same data as STDF in
+            text form; pipe-delimited records.</li>
+        <li><code>.csv</code> / <code>.txt</code> / <code>.dat</code> — Comma-separated.
+            A column mapping step lets you assign roles to each column before rendering.</li>
+        <li><code>.json</code> — JSON array of row objects. Same mapping step as CSV.</li>
+      </ul>
+
+      <h3>CSV column mapping</h3>
+      <p>When you open a CSV or JSON file, a mapping overlay appears before the map renders.
+         Assign a role to each column:</p>
+      <ul>
+        <li><strong>X / Y position</strong> — die grid coordinates (required).</li>
+        <li><strong>Hard bin / Soft bin</strong> — bin number per die.</li>
+        <li><strong>Wafer ID / Lot ID</strong> — groups dies into separate wafers.</li>
+        <li><strong>Test value</strong> — numeric parametric result; give it a name in the
+            Test name column.</li>
+        <li><strong>Display info</strong> — metadata shown in tooltips. Check
+            <em>Split gallery</em> to create a separate wafer per unique value of that column.</li>
+        <li><strong>— ignore —</strong> — column is excluded from the render.</li>
+      </ul>
+      <p>Mappings are saved per file and restored automatically next time you open the same
+         column layout.</p>
+
+      <h3>Viewing maps</h3>
+      <p>Scroll to zoom, drag to pan. The toolbar provides zoom controls, plot mode switching,
+         box selection, and PNG download. The summary panel on the right shows yield, bin
+         counts, test statistics, and findings.</p>
+
+      <div class="help-close-row">
+        <button class="btn-primary" id="help-close">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('#help-close')!.addEventListener('click', close);
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
 });
 
 showEmptyState();

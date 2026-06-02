@@ -12,14 +12,21 @@
       "Bash(git log *)",
       "Bash(git diff *)",
       "mcp__semble__search",
-      "mcp__semble__find_related"
+      "mcp__semble__find_related",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e \"const m = require\\('./node_modules/@paulrobins/wafermap/package.json'\\); console.log\\(m.version\\); console.log\\(Object.keys\\(m.exports ?? {}\\)\\)\")",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/@paulrobins/wafermap/package.json'\\).version\\)\")"
     ]
   },
   "mcpServers": {
     "semble": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "semble[mcp]", "semble"]
+      "args": [
+        "--from",
+        "semble[mcp]",
+        "semble"
+      ]
     }
   }
 }

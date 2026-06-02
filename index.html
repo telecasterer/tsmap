@@ -232,6 +232,32 @@
       .tsmap-modal-buttons { display: flex; gap: 10px; justify-content: flex-end; }
       .muted { color: var(--text-faint); font-size: 12px; }
 
+      /* ── Help button + modal ───────────────────────────────────────── */
+      #help-btn {
+        background: none; border: 1px solid var(--border-muted); border-radius: 50%;
+        color: var(--text-muted); font-size: 12px; font-weight: 600;
+        width: 20px; height: 20px; padding: 0; cursor: pointer; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #help-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .help-modal {
+        background: var(--bg-modal); border: 1px solid var(--border-mid);
+        border-radius: 6px; padding: 24px; width: 520px; max-width: 90vw;
+        max-height: 80vh; overflow-y: auto; color: var(--text-light);
+      }
+      .help-modal h2 { font-size: 15px; margin-bottom: 16px; }
+      .help-modal h3 { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin: 16px 0 6px; }
+      .help-modal h3:first-of-type { margin-top: 0; }
+      .help-modal p  { font-size: 13px; color: var(--text-subdued); line-height: 1.6; margin-bottom: 8px; }
+      .help-modal ul { font-size: 13px; color: var(--text-subdued); line-height: 1.6; padding-left: 18px; margin-bottom: 8px; }
+      .help-modal li { margin-bottom: 4px; }
+      .help-modal code {
+        font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+        font-size: 11px; background: var(--bg-input); border: 1px solid var(--border-subtle);
+        border-radius: 3px; padding: 1px 5px; color: var(--text-tertiary);
+      }
+      .help-modal .help-close-row { display: flex; justify-content: flex-end; margin-top: 20px; }
+
       /* ── Log panel ─────────────────────────────────────────────── */
       #log-bar {
         flex-shrink: 0; background: var(--bg-toolbar); border-top: 1px solid var(--border-strong);
@@ -270,6 +296,7 @@
         <button id="reset-btn" style="display:none">Clear</button>
         <span>or drop a file anywhere</span>
         <span id="file-label"></span>
+        <button id="help-btn" style="margin-left:auto">?</button>
       </div>
       <div id="map-container"></div>
       <div id="log-bar">

@@ -76,8 +76,6 @@ fn zenity_run(extra_args: &[&str]) -> Option<String> {
     cmd.args(zenity_args());
     cmd.args(extra_args);
     if let Some(dir) = load_last_dir() {
-        // zenity uses --filename to set both starting dir and pre-filled name;
-        // appending a trailing slash makes it treat the value as a directory.
         let mut s = dir.to_string_lossy().into_owned();
         if !s.ends_with('/') { s.push('/'); }
         cmd.arg(format!("--filename={}", s));

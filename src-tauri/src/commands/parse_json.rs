@@ -311,6 +311,204 @@ fn rows_len(val: &Value) -> usize {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn tmp(content: &str) -> std::path::PathBuf {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.into_temp_path().keep().unwrap()
+    }
+
+    fn basic_mapping(x: &str, y: &str) -> CsvMapping {
+        CsvMapping {
+            x: x.to_string(), y: y.to_string(),
+            hbin: None, sbin: None, wafer: None, lot: None,
+            tests: vec![], meta: vec![], split_by: vec![],
+            testname_col: None, testvalue_col: None, pass_bins: vec![],
+        }
+    }
+
+    // ── json_headers ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn headers_from_flat_array() {
+        let json = r#"[{"x":1,"y":2,"hbin":1},{"x":3,"y":4,"hbin":2}]"#;
+        let path = tmp(json);
+        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.headers.contains(&"x".to_string()));
+        assert!(result.headers.contains(&"y".to_string()));
+        assert!(result.headers.contains(&"hbin".to_string()));
+        assert!(result.sample.len() <= 5);
+        assert_eq!(result.row_count, 2);
+    }
+
+    #[test]
+    fn headers_from_envelope_object() {
+        let json = r#"{"wafers":[{"x":0,"y":0}]}"#;
+        let path = tmp(json);
+        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.headers.contains(&"x".to_string()));
+    }
+
+    #[test]
+    fn headers_from_nested_results_array() {
+        let json = r#"[{"waferId":"W1","results":[{"x":0,"y":0},{"x":1,"y":1}]}]"#;
+        let path = tmp(json);
+        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.headers.contains(&"x".to_string()));
+        assert_eq!(result.row_count, 2);
+    }
+
+    #[test]
+    fn bom_stripped_before_parse() {
+        let json = "\u{feff}[{\"x\":1,\"y\":2}]";
+        let path = tmp(json);
+        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.headers.contains(&"x".to_string()));
+    }
+
+    // ── parse_json — flat array ───────────────────────────────────────────────
+
+    #[test]
+    fn flat_array_basic_dies() {
+        let json = r#"[{"x":3,"y":7},{"x":-1,"y":-2}]"#;
+        let path = tmp(json);
+        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers.len(), 1);
+        let dies = &result.wafers[0].results;
+        assert_eq!(dies.len(), 2);
+        assert!(dies.iter().any(|d| d.x == 3 && d.y == 7));
+    }
+
+    #[test]
+    fn hbin_sbin_from_fields() {
+        let json = r#"[{"x":0,"y":0,"hb":2,"sb":5}]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        m.sbin = Some("sb".to_string());
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let die = &result.wafers[0].results[0];
+        assert_eq!(die.hbin, 2);
+        assert_eq!(die.sbin, 5);
+    }
+
+    #[test]
+    fn rows_with_invalid_coords_skipped() {
+        let json = r#"[{"x":"bad","y":1},{"x":2,"y":3}]"#;
+        let path = tmp(json);
+        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].results.len(), 1);
+    }
+
+    // ── Envelope and nested formats ───────────────────────────────────────────
+
+    #[test]
+    fn envelope_object_unwrapped() {
+        let json = r#"{"wafers":[{"x":0,"y":0},{"x":1,"y":1}]}"#;
+        let path = tmp(json);
+        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].results.len(), 2);
+    }
+
+    #[test]
+    fn nested_results_array_flattened_with_wafer_scalars() {
+        // Wafer scalar (waferId) should be merged into each die row
+        let json = r#"[{"waferId":"W01","results":[{"x":0,"y":0},{"x":1,"y":1}]},
+                        {"waferId":"W02","results":[{"x":2,"y":2}]}]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.wafer = Some("waferId".to_string());
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.wafers.len(), 2);
+        let w1 = result.wafers.iter().find(|w| w.wafer_id == "W01").unwrap();
+        assert_eq!(w1.results.len(), 2);
+    }
+
+    // ── Wafer grouping and counts ─────────────────────────────────────────────
+
+    #[test]
+    fn rows_without_wafer_col_go_to_w1() {
+        let json = r#"[{"x":0,"y":0}]"#;
+        let path = tmp(json);
+        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].wafer_id, "W1");
+    }
+
+    #[test]
+    fn part_count_and_good_count_computed() {
+        let json = r#"[{"x":0,"y":0},{"x":1,"y":0},{"x":2,"y":0}]"#;
+        let path = tmp(json);
+        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let w = &result.wafers[0];
+        assert_eq!(w.part_count, Some(3));
+        assert_eq!(w.good_count, Some(3)); // pass_bins empty → all pass
+    }
+
+    #[test]
+    fn pass_bins_filter_good_count() {
+        let json = r#"[{"x":0,"y":0,"hb":1},{"x":1,"y":0,"hb":2},{"x":2,"y":0,"hb":1}]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        m.pass_bins = vec![1];
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let w = &result.wafers[0];
+        assert_eq!(w.good_count, Some(2));
+        assert_eq!(w.fail_count, Some(1));
+    }
+
+    // ── Test values ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_values_from_mapped_columns() {
+        let json = r#"[{"x":0,"y":0,"t1":1.5,"t2":3.0}]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.tests = vec![
+            super::super::parse_csv::CsvTestCol { col: "t1".to_string(), test_number: 1, name: "T1".to_string() },
+            super::super::parse_csv::CsvTestCol { col: "t2".to_string(), test_number: 2, name: "T2".to_string() },
+        ];
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let die = &result.wafers[0].results[0];
+        assert!((die.test_values["1"] - 1.5).abs() < 1e-9);
+        assert!((die.test_values["2"] - 3.0).abs() < 1e-9);
+    }
+
+    // ── Long format ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn long_format_pivot() {
+        let json = r#"[
+            {"x":0,"y":0,"test":"Vt","val":1.1},
+            {"x":0,"y":0,"test":"Idsat","val":2.2},
+            {"x":1,"y":0,"test":"Vt","val":1.3}
+        ]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.testname_col = Some("test".to_string());
+        m.testvalue_col = Some("val".to_string());
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.wafers[0].results.len(), 2);
+        assert_eq!(result.test_defs.len(), 2);
+    }
+
+    // ── Lot meta ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn lot_id_from_first_row() {
+        let json = r#"[{"x":0,"y":0,"lot":"LOT-99"}]"#;
+        let path = tmp(json);
+        let mut m = basic_mapping("x", "y");
+        m.lot = Some("lot".to_string());
+        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
+    }
+}
+
 fn value_to_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),

@@ -328,6 +328,284 @@ pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn tmp(content: &str) -> std::path::PathBuf {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.into_temp_path().keep().unwrap()
+    }
+
+    fn basic_mapping(x: &str, y: &str) -> CsvMapping {
+        CsvMapping {
+            x: x.to_string(),
+            y: y.to_string(),
+            hbin: None,
+            sbin: None,
+            wafer: None,
+            lot: None,
+            tests: vec![],
+            meta: vec![],
+            split_by: vec![],
+            testname_col: None,
+            testvalue_col: None,
+            pass_bins: vec![],
+        }
+    }
+
+    // ── csv_headers ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn headers_returns_column_names() {
+        let csv = "x,y,hbin\n1,2,1\n3,4,2\n";
+        let path = tmp(csv);
+        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert_eq!(result.headers, vec!["x", "y", "hbin"]);
+    }
+
+    #[test]
+    fn headers_trims_whitespace() {
+        let csv = " x , y , val \n1,2,3\n";
+        let path = tmp(csv);
+        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert_eq!(result.headers, vec!["x", "y", "val"]);
+    }
+
+    #[test]
+    fn sample_contains_up_to_5_rows() {
+        let mut csv = "x,y\n".to_string();
+        for i in 0..10 { csv += &format!("{i},{i}\n"); }
+        let path = tmp(&csv);
+        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert!(result.sample.len() <= 5);
+    }
+
+    #[test]
+    fn comments_skipped_in_headers() {
+        let csv = "# comment\nx,y\n1,2\n";
+        let path = tmp(csv);
+        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert_eq!(result.headers, vec!["x", "y"]);
+    }
+
+    // ── parse_csv — basic wide format ─────────────────────────────────────────
+
+    #[test]
+    fn basic_die_coordinates() {
+        let csv = "x,y\n3,7\n-1,-2\n";
+        let path = tmp(csv);
+        let mapping = basic_mapping("x", "y");
+        let result = parse_csv(path.to_str().unwrap().to_string(), mapping).unwrap();
+        assert_eq!(result.wafers.len(), 1);
+        let dies = &result.wafers[0].results;
+        assert_eq!(dies.len(), 2);
+        assert!(dies.iter().any(|d| d.x == 3 && d.y == 7));
+        assert!(dies.iter().any(|d| d.x == -1 && d.y == -2));
+    }
+
+    #[test]
+    fn hbin_sbin_parsed() {
+        let csv = "x,y,hb,sb\n0,0,2,5\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        m.sbin = Some("sb".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let die = &result.wafers[0].results[0];
+        assert_eq!(die.hbin, 2);
+        assert_eq!(die.sbin, 5);
+    }
+
+    #[test]
+    fn hbin_defaults_to_1_when_not_mapped() {
+        let csv = "x,y\n0,0\n";
+        let path = tmp(csv);
+        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].results[0].hbin, 1);
+    }
+
+    #[test]
+    fn sbin_falls_back_to_hbin_when_not_mapped() {
+        let csv = "x,y,hb\n0,0,3\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let die = &result.wafers[0].results[0];
+        assert_eq!(die.hbin, 3);
+        assert_eq!(die.sbin, 3);
+    }
+
+    #[test]
+    fn rows_with_invalid_coords_are_skipped() {
+        let csv = "x,y\n1,2\nbad,3\n4,bad\n5,6\n";
+        let path = tmp(csv);
+        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].results.len(), 2);
+    }
+
+    // ── Wafer grouping ────────────────────────────────────────────────────────
+
+    #[test]
+    fn rows_without_wafer_col_go_to_w1() {
+        let csv = "x,y\n0,0\n1,1\n";
+        let path = tmp(csv);
+        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].wafer_id, "W1");
+    }
+
+    #[test]
+    fn rows_grouped_by_wafer_column() {
+        let csv = "wafer,x,y\nW01,0,0\nW01,1,0\nW02,0,0\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.wafer = Some("wafer".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.wafers.len(), 2);
+        let w1 = result.wafers.iter().find(|w| w.wafer_id == "W01").unwrap();
+        assert_eq!(w1.results.len(), 2);
+    }
+
+    #[test]
+    fn part_and_good_count_computed() {
+        // pass_bins empty → all are good
+        let csv = "x,y,hb\n0,0,1\n1,0,1\n2,0,2\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let w = &result.wafers[0];
+        assert_eq!(w.part_count, Some(3));
+        assert_eq!(w.good_count, Some(3)); // pass_bins empty → all pass
+    }
+
+    #[test]
+    fn pass_bins_filter_good_count() {
+        let csv = "x,y,hb\n0,0,1\n1,0,2\n2,0,1\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hb".to_string());
+        m.pass_bins = vec![1];
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let w = &result.wafers[0];
+        assert_eq!(w.part_count, Some(3));
+        assert_eq!(w.good_count, Some(2));
+        assert_eq!(w.fail_count, Some(1));
+    }
+
+    // ── Test values (wide format) ─────────────────────────────────────────────
+
+    #[test]
+    fn test_values_parsed_from_mapped_columns() {
+        let csv = "x,y,t1,t2\n0,0,1.5,3.0\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.tests = vec![
+            CsvTestCol { col: "t1".to_string(), test_number: 1, name: "Test1".to_string() },
+            CsvTestCol { col: "t2".to_string(), test_number: 2, name: "Test2".to_string() },
+        ];
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let die = &result.wafers[0].results[0];
+        assert!((die.test_values["1"] - 1.5).abs() < 1e-9);
+        assert!((die.test_values["2"] - 3.0).abs() < 1e-9);
+        assert_eq!(result.test_defs["1"].name, "Test1");
+    }
+
+    #[test]
+    fn non_numeric_test_values_skipped() {
+        let csv = "x,y,t1\n0,0,n/a\n1,0,2.5\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.tests = vec![CsvTestCol { col: "t1".to_string(), test_number: 1, name: "T1".to_string() }];
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        assert!(!result.wafers[0].results[0].test_values.contains_key("1"));
+        assert!((result.wafers[0].results[1].test_values["1"] - 2.5).abs() < 1e-9);
+    }
+
+    // ── Long format ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn long_format_pivot() {
+        let csv = "x,y,test_name,test_val\n\
+                   0,0,Vt,1.1\n\
+                   0,0,Idsat,2.2\n\
+                   1,0,Vt,1.3\n\
+                   1,0,Idsat,2.4\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.testname_col = Some("test_name".to_string());
+        m.testvalue_col = Some("test_val".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.wafers[0].results.len(), 2);
+        // Two distinct test defs
+        assert_eq!(result.test_defs.len(), 2);
+        let names: Vec<_> = result.test_defs.values().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Vt"));
+        assert!(names.contains(&"Idsat"));
+    }
+
+    // ── Lot meta ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn lot_id_extracted_from_first_row() {
+        let csv = "x,y,lot\n0,0,LOT-99\n1,0,LOT-99\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.lot = Some("lot".to_string());
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
+    }
+
+    // ── Split-by ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn split_by_creates_multiple_wafers() {
+        let csv = "x,y,site\n0,0,1\n1,0,1\n0,1,2\n1,1,2\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.split_by = vec!["site".to_string()];
+        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(result.wafers.len(), 2);
+    }
+
+    // ── Gzip ─────────────────────────────────────────────────────────────────
+
+    fn gz_csv(content: &str) -> std::path::PathBuf {
+        use std::io::Write;
+        let mut f = tempfile::Builder::new().suffix(".csv.gz").tempfile().unwrap();
+        let mut enc = flate2::write::GzEncoder::new(&mut f, flate2::Compression::default());
+        enc.write_all(content.as_bytes()).unwrap();
+        enc.finish().unwrap();
+        f.into_temp_path().keep().unwrap()
+    }
+
+    #[test]
+    fn gz_csv_headers_readable() {
+        let path = gz_csv("x,y,hbin\n0,0,1\n1,1,2\n");
+        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        assert_eq!(result.headers, vec!["x", "y", "hbin"]);
+        assert_eq!(result.sample.len(), 2);
+    }
+
+    #[test]
+    fn gz_csv_parsed_same_as_plain() {
+        let csv = "x,y,hb\n0,0,1\n1,2,2\n3,4,1\n";
+        let plain_path = tmp(csv);
+        let gz_path    = gz_csv(csv);
+        let mut m1 = basic_mapping("x", "y");
+        m1.hbin = Some("hb".to_string());
+        let mut m2 = basic_mapping("x", "y");
+        m2.hbin = Some("hb".to_string());
+        let plain = parse_csv(plain_path.to_str().unwrap().to_string(), m1).unwrap();
+        let gz    = parse_csv(gz_path.to_str().unwrap().to_string(), m2).unwrap();
+        assert_eq!(gz.wafers[0].results.len(), plain.wafers[0].results.len());
+        assert_eq!(gz.wafers[0].part_count, plain.wafers[0].part_count);
+    }
+}
+
 fn build_reader(path: &str) -> Result<csv::Reader<Box<dyn Read>>, String> {
     let is_gz = std::path::Path::new(path)
         .extension().and_then(|e| e.to_str())

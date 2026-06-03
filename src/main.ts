@@ -9,6 +9,13 @@ import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef, LotMeta } from './types';
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+// Works for both Unix (/a/b/c.txt) and Windows (C:\a\b\c.txt or C:/a/b/c.txt)
+function basename(p: string): string {
+  return p.split(/[\\/]/).pop() ?? p;
+}
+
 // ── Rust command return shape ─────────────────────────────────────────────────
 
 interface RustParsedFile {
@@ -194,14 +201,14 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   for (const p of paths) {
     const ext = p.split('.').pop()?.toLowerCase() ?? '';
     if (ext === 'zip') {
-      setBusy(`Extracting ${p.split('/').pop()}…`);
+      setBusy(`Extracting ${basename(p)}…`);
       try {
         const extracted = await invoke<string[]>('extract_archive', { path: p });
-        log('info', `Extracted ${extracted.length} file${extracted.length !== 1 ? 's' : ''} from ${p.split('/').pop()}`);
+        log('info', `Extracted ${extracted.length} file${extracted.length !== 1 ? 's' : ''} from ${basename(p)}`);
         expanded.push(...extracted);
         needsCleanup = true;
       } catch (e) {
-        log('error', `Failed to extract ${p.split('/').pop()}: ${(e as Error).message}`);
+        log('error', `Failed to extract ${basename(p)}: ${(e as Error).message}`);
       }
     } else {
       expanded.push(p);
@@ -248,7 +255,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
 
     const mappablePaths = paths.filter(p => needsMapping(p.split('.').pop()?.toLowerCase() ?? ''));
     const note = mappablePaths.length > 1 ? ` — mapping applied to all ${mappablePaths.length} CSV/JSON files` : '';
-    log('info', `${firstMappablePath.split('/').pop()}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
+    log('info', `${basename(firstMappablePath)}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
 
     mappingPromise = new Promise(resolve => {
       showMappingOverlay(headersResult,
@@ -266,7 +273,7 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   // Parse all files — use per-file extension so mixed-format archives work
   const entries: FileWaferEntry[] = [];
   for (const path of paths) {
-    const fileName = path.split('/').pop() ?? path;
+    const fileName = basename(path);
     const fileExt = effectiveExt(path);
     setBusy(`Parsing ${fileName}…`);
     try {

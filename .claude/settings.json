@@ -15,7 +15,11 @@
       "mcp__semble__find_related",
       "Bash(python3 -c ' *)",
       "Bash(node -e \"const m = require\\('./node_modules/@paulrobins/wafermap/package.json'\\); console.log\\(m.version\\); console.log\\(Object.keys\\(m.exports ?? {}\\)\\)\")",
-      "Bash(node -e \"console.log\\(require\\('./node_modules/@paulrobins/wafermap/package.json'\\).version\\)\")"
+      "Bash(node -e \"console.log\\(require\\('./node_modules/@paulrobins/wafermap/package.json'\\).version\\)\")",
+      "Bash(node -e \"import\\('@paulrobins/wafermap'\\).then\\(m => console.log\\(Object.keys\\(m\\)\\)\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npm uninstall *)",
+      "Bash(grep -v \"^$\")"
     ]
   },
   "mcpServers": {

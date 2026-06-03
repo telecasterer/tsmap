@@ -41,8 +41,7 @@ python3 scripts/generate_atdf.py /tmp/test.atdf   # synthetic ATDF — same stru
 ```
 src/
   main.ts          — app entry: file open, PNG save intercept, renderWafers
-  fileLoader.ts    — loadStdfPath() for STDF; parseText() for browser file input
-  atdfParser.ts    — ATDF text parser used by fileLoader (browser drag-drop path only)
+  fileLoader.ts    — loadStdfPath() for STDF
   types.ts         — shared types: ParsedFile, WaferData, TestDef, LotMeta
 
 src-tauri/src/commands/

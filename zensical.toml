@@ -1,0 +1,25 @@
+[project]
+site_name   = "tsmap"
+site_url    = "https://telecasterer.github.io/tsmap/"
+site_author = "Paul Robins"
+repo_url    = "https://github.com/telecasterer/tsmap"
+
+nav = [
+  { "Home"        = "index.md"       },
+  { "Web app"     = "web.md"         },
+  { "Development" = "development.md" },
+]
+
+[project.theme]
+features = [
+  "navigation.tabs",
+  "content.code.copy",
+]
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums     = true
+line_spans          = "__span"
+pygments_lang_class = true

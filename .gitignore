@@ -1,5 +1,6 @@
 node_modules/
 dist/
+site/
 src-tauri/target/
 target/
 src-tauri/gen/schemas/

@@ -137,14 +137,17 @@ function makeTauriPlatform(): Platform {
 
 // ── WASM platform ─────────────────────────────────────────────────────────────
 
-type WasmModule = typeof import('../packages/parsers/pkg/testdata_parser.js');
+type WasmModule = typeof import('@paulrobins/testdata-parser');
 let wasmModule: WasmModule | null = null;
 
 async function loadWasm(): Promise<WasmModule> {
   if (wasmModule) return wasmModule;
-  const mod = await import('../packages/parsers/pkg/testdata_parser.js');
-  // The default export is the init function
-  await (mod.default as () => Promise<unknown>)();
+  // Import the WASM binary URL via Vite's ?url suffix so Vite resolves and
+  // copies the asset correctly. Without this, the package's own import.meta.url
+  // resolution points to node_modules and the dev server returns 404 HTML.
+  const wasmUrl = new URL('@paulrobins/testdata-parser/testdata_parser_bg.wasm', import.meta.url);
+  const mod = await import('@paulrobins/testdata-parser');
+  await (mod.default as (url: URL) => Promise<unknown>)(wasmUrl);
   wasmModule = mod;
   return mod;
 }
@@ -154,7 +157,7 @@ async function decompressGzip(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream('gzip');
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
-  writer.write(bytes);
+  writer.write(bytes as unknown as ArrayBuffer);
   writer.close();
   const chunks: Uint8Array[] = [];
   for (;;) {

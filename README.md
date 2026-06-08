@@ -2,20 +2,21 @@
 
 A desktop and web application for loading and visualising semiconductor wafer map data. Built with [Tauri v2](https://tauri.app/) (Rust backend), a WASM parser for the browser, and [wmap](https://github.com/telecasterer/wafermap) (canvas rendering).
 
+**[Documentation & web app →](https://telecasterer.github.io/tsmap/)**
+
 ## Features
 
 - **Open** CSV, JSON, ATDF, and STDF wafer map files
 - **Multi-wafer** — all formats support multiple wafers; renders as a gallery automatically
-- **Stats & findings** — yield, bin breakdown, ring/quadrant analysis, and spatial findings via `analyzeWaferMap`
-- **Charts** — yield heatmap and per-test box plots across wafers
-- **PNG export** — save any wafer map from the toolbar
+- **Stats & findings** — yield, bin breakdown, ring/quadrant analysis, and spatial findings
 - **Charts** — yield by wafer, bin pareto, per-test box plots and histograms
+- **PNG export** — save any wafer map from the toolbar
 - **Cross-platform** — Linux (Wayland/X11), macOS, Windows 11; also runs in the browser via WASM
 
 ## Supported formats
 
 | Format | Parsing | Notes |
-|--------|---------|-------|
+| ------ | ------- | ----- |
 | STDF | Rust | Binary V4; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
 | ATDF | Rust | ASCII; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
 | CSV | Rust | Column mapping step before render; supports wide and long (pivot) formats |
@@ -39,21 +40,34 @@ python3 scripts/generate_stdf.py /tmp/test.stdf   # synthetic STDF — 3 wafers,
 python3 scripts/generate_atdf.py /tmp/test.atdf   # synthetic ATDF — same structure
 ```
 
-### Building the WASM parser package
+### Building and publishing the WASM parser package
 
-The parsers are extracted to a shared crate (`packages/parsers`) that builds for both native Tauri and WASM. To produce the `@paulrobins/testdata-parser` npm package:
+The parsers compile to a shared crate (`packages/parsers`) that targets both native Tauri and WASM. The published npm package is [`@paulrobins/testdata-parser`](https://www.npmjs.com/package/@paulrobins/testdata-parser).
+
+Prerequisites: `wasm-pack` (`cargo install wasm-pack`) and the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`).
 
 ```bash
 cd packages/parsers
+
+# Build
 wasm-pack build --target web -s paulrobins --no-default-features --features wasm
-# output: packages/parsers/pkg/
+
+# Publish
+cd pkg
+npm publish --access public
 ```
 
-Requires `wasm-pack` (`cargo install wasm-pack`) and the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`).
+After publishing a new version, update tsmap to use it:
+
+```bash
+# from repo root
+npm install @paulrobins/testdata-parser@latest
+npx tsc --noEmit   # verify types still resolve
+```
 
 ## Architecture
 
-```
+```text
 src/
   main.ts          — app entry: file open, renderWafers, chart view
   platform.ts      — platform adapter: Tauri IPC (desktop) or WASM (browser)

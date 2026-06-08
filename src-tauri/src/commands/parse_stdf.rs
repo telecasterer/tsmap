@@ -11,8 +11,10 @@ use super::read_file::read_bytes;
 pub struct DieResult {
     pub x: i32,
     pub y: i32,
-    pub hbin: u32,
-    pub sbin: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hbin: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sbin: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub site_num: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,7 +100,13 @@ const SENTINEL_I2: i16 = -32768;
 // ── Command ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn parse_stdf(path: String) -> Result<ParsedStdf, String> {
+pub async fn parse_stdf(path: String) -> Result<ParsedStdf, String> {
+    tokio::task::spawn_blocking(move || parse_stdf_sync(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn parse_stdf_sync(path: String) -> Result<ParsedStdf, String> {
     // read_bytes decompresses .gz transparently; wrap in Cursor for BufRead + Seek
     let bytes = read_bytes(&path)?;
     let mut reader = StdfReader::from(BufReader::new(Cursor::new(bytes)), &CompressType::Uncompressed)
@@ -244,8 +252,8 @@ pub fn parse_stdf(path: String) -> Result<ParsedStdf, String> {
                 let die = DieResult {
                     x: prr.x_coord as i32,
                     y: prr.y_coord as i32,
-                    hbin: prr.hard_bin as u32,
-                    sbin: if prr.soft_bin == 65535 { prr.hard_bin as u32 } else { prr.soft_bin as u32 },
+                    hbin: Some(prr.hard_bin as u32),
+                    sbin: Some(if prr.soft_bin == 65535 { prr.hard_bin as u32 } else { prr.soft_bin as u32 }),
                     site_num,
                     part_id,
                     test_values,
@@ -293,20 +301,20 @@ mod tests {
 
     #[test]
     fn multi_wafer_lot_meta() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         assert!(result.meta.lot_id.is_some(), "expected lot_id");
         assert!(result.meta.part_type.is_some(), "expected part_type");
     }
 
     #[test]
     fn multi_wafer_count() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         assert!(result.wafers.len() > 1, "expected multiple wafers, got {}", result.wafers.len());
     }
 
     #[test]
     fn all_wafers_have_dies() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         for w in &result.wafers {
             assert!(!w.results.is_empty(), "wafer {} has no dies", w.wafer_id);
         }
@@ -314,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_defs_populated() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         assert!(!result.test_defs.is_empty(), "expected test defs");
         for (_, def) in &result.test_defs {
             assert!(def.test_type == "P" || def.test_type == "F",
@@ -324,7 +332,7 @@ mod tests {
 
     #[test]
     fn part_good_fail_counts_consistent() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         for w in &result.wafers {
             if let (Some(p), Some(g), Some(f)) = (w.part_count, w.good_count, w.fail_count) {
                 assert_eq!(p, g + f,
@@ -335,7 +343,7 @@ mod tests {
 
     #[test]
     fn die_coordinates_are_valid() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         for w in &result.wafers {
             for d in &w.results {
                 assert!(d.x != SENTINEL_I2 as i32 && d.y != SENTINEL_I2 as i32,
@@ -346,7 +354,7 @@ mod tests {
 
     #[test]
     fn sites_populated() {
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         assert!(!result.sites.is_empty(), "expected site info from SDR");
     }
 
@@ -354,21 +362,21 @@ mod tests {
 
     #[test]
     fn single_wafer_parsed() {
-        let result = parse_stdf(SINGLE_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(SINGLE_WAFER.to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
     }
 
     #[test]
     fn single_wafer_has_test_values() {
-        let result = parse_stdf(SINGLE_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(SINGLE_WAFER.to_string()).unwrap();
         let has_values = result.wafers[0].results.iter().any(|d| !d.test_values.is_empty());
         assert!(has_values, "expected at least some dies to have test values");
     }
 
     #[test]
     fn single_wafer_matches_multi_wafer_first_wafer_id() {
-        let multi = parse_stdf(MULTI_WAFER.to_string()).unwrap();
-        let single = parse_stdf(SINGLE_WAFER.to_string()).unwrap();
+        let multi = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
+        let single = parse_stdf_sync(SINGLE_WAFER.to_string()).unwrap();
         assert_eq!(single.wafers[0].wafer_id, multi.wafers[0].wafer_id);
     }
 
@@ -377,10 +385,10 @@ mod tests {
     #[test]
     fn soft_bin_sentinel_falls_back_to_hard_bin() {
         // If sbin == 65535 in PRR the parser uses hbin. We verify no die has sbin=65535.
-        let result = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         for w in &result.wafers {
             for d in &w.results {
-                assert_ne!(d.sbin, 65535, "sbin sentinel leaked into die result");
+                assert_ne!(d.sbin, Some(65535), "sbin sentinel leaked into die result");
             }
         }
     }
@@ -389,7 +397,7 @@ mod tests {
 
     #[test]
     fn nonexistent_file_returns_error() {
-        let err = parse_stdf("/nonexistent/path/test.stdf".to_string());
+        let err = parse_stdf_sync("/nonexistent/path/test.stdf".to_string());
         assert!(err.is_err());
     }
 
@@ -407,9 +415,9 @@ mod tests {
 
     #[test]
     fn gz_multi_wafer_parsed_same_as_plain() {
-        let plain  = parse_stdf(MULTI_WAFER.to_string()).unwrap();
+        let plain  = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
         let gz_path = gz_of(MULTI_WAFER);
-        let gz     = parse_stdf(gz_path.to_str().unwrap().to_string()).unwrap();
+        let gz     = parse_stdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(gz.wafers.len(), plain.wafers.len());
         assert_eq!(gz.meta.lot_id, plain.meta.lot_id);
         let plain_dies: usize = plain.wafers.iter().map(|w| w.results.len()).sum();
@@ -420,7 +428,7 @@ mod tests {
     #[test]
     fn gz_single_wafer_parsed() {
         let gz_path = gz_of(SINGLE_WAFER);
-        let result = parse_stdf(gz_path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_stdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
         assert!(!result.wafers[0].results.is_empty());
     }

@@ -46,7 +46,13 @@ fn nonempty(s: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn parse_atdf(path: String) -> Result<ParsedStdf, String> {
+pub async fn parse_atdf(path: String) -> Result<ParsedStdf, String> {
+    tokio::task::spawn_blocking(move || parse_atdf_sync(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn parse_atdf_sync(path: String) -> Result<ParsedStdf, String> {
     let raw = read_text(&path)
         .map_err(|e| format!("Failed to read {path}: {e}"))?;
 
@@ -203,8 +209,10 @@ pub fn parse_atdf(path: String) -> Result<ParsedStdf, String> {
                 let site_num = pending_site.remove(&key);
                 let test_values = pending_values.remove(&key).unwrap_or_default();
 
-                let hbin: u32 = get(&f, "HARD_BIN").parse().unwrap_or(1);
-                let sbin: u32 = get(&f, "SOFT_BIN").parse().unwrap_or(hbin);
+                let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
+                let sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok()
+                    .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
+                    .or(hbin);
                 let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
 
                 let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values };
@@ -296,7 +304,7 @@ mod tests {
     fn meta_extracted_from_mir() {
         let text = one_wafer("W1", &(pir(1,1) + &prr(1,1,0,0,1,1)));
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-01"));
         assert_eq!(result.meta.part_type.as_deref(), Some("WIDGET"));
         assert_eq!(result.meta.job_name.as_deref(), Some("JOB1"));
@@ -309,7 +317,7 @@ mod tests {
     fn empty_mir_yields_none_meta() {
         let text = format!("{}MIR:\n", far());
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.meta.lot_id.is_none());
         assert!(result.meta.part_type.is_none());
     }
@@ -321,7 +329,7 @@ mod tests {
         let inner = pir(1,1) + &prr(1,1,0,0,1,1);
         let text = one_wafer("W01", &inner);
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
         assert_eq!(result.wafers[0].wafer_id, "W01");
     }
@@ -331,7 +339,7 @@ mod tests {
         let inner = pir(1,1) + &prr(1,1,0,0,1,1);
         let text = format!("{}{}{}{}{}", far(), mir_full(), wir("WIR-ID"), inner, wrr("WRR-ID", 1, 1));
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].wafer_id, "WRR-ID");
     }
 
@@ -340,7 +348,7 @@ mod tests {
         let inner = pir(1,1) + &prr(1,1,0,0,1,1);
         let text = format!("{}{}WIR:1||1|\n{}{}", far(), mir_full(), inner, wrr("", 1, 1));
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].wafer_id, "W1");
     }
 
@@ -350,7 +358,7 @@ mod tests {
         let w2 = wir("W02") + &pir(1,1) + &prr(1,1,1,1,1,1) + &wrr("W02", 1, 1);
         let text = format!("{}{}{}{}", far(), mir_full(), w1, w2);
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers.len(), 2);
         assert_eq!(result.wafers[0].wafer_id, "W01");
         assert_eq!(result.wafers[1].wafer_id, "W02");
@@ -361,7 +369,7 @@ mod tests {
         let inner = pir(1,1) + &prr(1,1,0,0,1,1);
         let text = format!("{}{}{}{}", far(), mir_full(), wir("W1"), inner) + &wrr("W1", 10, 7);
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].part_count, Some(10));
         assert_eq!(result.wafers[0].good_count, Some(7));
         assert_eq!(result.wafers[0].fail_count, Some(3));
@@ -372,7 +380,7 @@ mod tests {
         let text = format!("{}{}{}{}",
             far(), mir_full(), wir("W1"), pir(1,1)) + &prr(1,1,0,0,1,1);
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
         assert_eq!(result.wafers[0].results.len(), 1);
     }
@@ -381,7 +389,7 @@ mod tests {
     fn no_wafers_for_empty_file() {
         let text = format!("{}{}", far(), mir_full());
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.wafers.is_empty());
     }
 
@@ -391,18 +399,18 @@ mod tests {
     fn die_coordinates_and_bins() {
         let inner = pir(1,1) + &prr(1,1,3,7,2,5);
         let path = tmp(&one_wafer("W1", &inner));
-        let die = &parse_atdf(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
+        let die = &parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
         assert_eq!(die.x, 3);
         assert_eq!(die.y, 7);
-        assert_eq!(die.hbin, 2);
-        assert_eq!(die.sbin, 5);
+        assert_eq!(die.hbin, Some(2));
+        assert_eq!(die.sbin, Some(5));
     }
 
     #[test]
     fn negative_coordinates() {
         let inner = pir(1,1) + &prr(1,1,-4,-9,1,1);
         let path = tmp(&one_wafer("W1", &inner));
-        let die = &parse_atdf(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
+        let die = &parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
         assert_eq!(die.x, -4);
         assert_eq!(die.y, -9);
     }
@@ -413,7 +421,7 @@ mod tests {
         let inner = pir(1,1) + "PRR:1|1|1|4|P|1|1||\n";
         let text = format!("{}{}{}{}{}", far(), mir_full(), wir("W1"), inner, wrr("W1", 0, 0));
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].results.len(), 0);
     }
 
@@ -421,7 +429,7 @@ mod tests {
     fn multiple_dies_on_one_wafer() {
         let inner: String = (0..4).map(|i| pir(1,1) + &prr(1,1,i,i,1,1)).collect();
         let path = tmp(&one_wafer("W1", &inner));
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].results.len(), 4);
     }
 
@@ -433,7 +441,7 @@ mod tests {
             + &ptr_rec("100", 1, 1, 1.23, 0.0, 2.0, "Vt", "mV")
             + &prr(1,1,0,0,1,1);
         let path = tmp(&one_wafer("W1", &inner));
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         let die = &result.wafers[0].results[0];
         let v = *die.test_values.get("100").unwrap();
         assert!((v - 1.23).abs() < 1e-9);
@@ -451,7 +459,7 @@ mod tests {
         let inner = pir(1,1) + &ptr_rec("1", 1, 1, 1.0, 0.0, 2.0, "First", "V") + &prr(1,1,0,0,1,1)
             + &pir(1,1) + &ptr_rec("1", 1, 1, 1.5, 10.0, 20.0, "Second", "V") + &prr(1,1,1,0,1,1);
         let path = tmp(&one_wafer("W1", &inner));
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         let def = result.test_defs.get("1").unwrap();
         assert_eq!(def.name, "First");
         assert_eq!(def.lo_limit, Some(0.0));
@@ -464,7 +472,7 @@ mod tests {
             + &ptr_rec("2", 1, 1, 3.5, 0.0, 5.0, "B", "V")
             + &prr(1,1,0,0,1,1);
         let path = tmp(&one_wafer("W1", &inner));
-        let die = &parse_atdf(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
+        let die = &parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap().wafers[0].results[0];
         assert!((die.test_values["1"] - 1.0).abs() < 1e-9);
         assert!((die.test_values["2"] - 3.5).abs() < 1e-9);
     }
@@ -476,7 +484,7 @@ mod tests {
         let inner = pir(1,1) + &ftr_rec("200", 1, 1, true)  + &prr(1,1,0,0,1,1)
             + &pir(1,1) + &ftr_rec("200", 1, 1, false) + &prr(1,1,1,0,2,2);
         let path = tmp(&one_wafer("W1", &inner));
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].results[0].test_values["200"], 1.0);
         assert_eq!(result.wafers[0].results[1].test_values["200"], 0.0);
         assert_eq!(result.test_defs["200"].test_type, "F");
@@ -492,7 +500,7 @@ mod tests {
             + &prr(1,1,0,0,1,1)
             + &prr(1,2,1,0,1,1);
         let path = tmp(&one_wafer("W1", &inner));
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         let dies = &result.wafers[0].results;
         assert_eq!(dies.len(), 2);
         let d0 = dies.iter().find(|d| d.x == 0).unwrap();
@@ -513,7 +521,7 @@ mod tests {
             + &pipe_to_comma(&prr(1,1,9,3,1,1))
             + &pipe_to_comma(&wrr("W1", 1, 1));
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         let die = &result.wafers[0].results[0];
         assert_eq!(die.x, 9);
         assert_eq!(die.y, 3);
@@ -524,7 +532,7 @@ mod tests {
         let text = mir_full()
             + &wir("W1") + &pir(1,1) + &prr(1,1,5,6,1,1) + &wrr("W1", 1, 1);
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].results[0].x, 5);
     }
 
@@ -535,7 +543,7 @@ mod tests {
         let text = one_wafer("W1", &(pir(1,1) + &prr(1,1,1,2,1,1)))
             .replace('\n', "\r\n");
         let path = tmp(&text);
-        let result = parse_atdf(path.to_str().unwrap().to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers[0].results[0].x, 1);
         assert_eq!(result.wafers[0].results[0].y, 2);
     }
@@ -545,7 +553,7 @@ mod tests {
     #[test]
     fn sample_file_multi_wafer() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../sample_data/CLUST-LOT-03.atdf");
-        let result = parse_atdf(path.to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_string()).unwrap();
         assert!(result.wafers.len() > 1, "expected multiple wafers");
         assert!(result.meta.lot_id.is_some(), "expected lot ID");
         for w in &result.wafers {
@@ -556,7 +564,7 @@ mod tests {
     #[test]
     fn sample_file_single_wafer() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../sample_data/CLUST-LOT-03_W01.atdf");
-        let result = parse_atdf(path.to_string()).unwrap();
+        let result = parse_atdf_sync(path.to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
         assert!(!result.test_defs.is_empty(), "expected test defs");
     }
@@ -576,9 +584,9 @@ mod tests {
     #[test]
     fn gz_parsed_same_as_plain() {
         let plain_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../sample_data/CLUST-LOT-03.atdf");
-        let plain  = parse_atdf(plain_path.to_string()).unwrap();
+        let plain  = parse_atdf_sync(plain_path.to_string()).unwrap();
         let gz_path = gz_of(plain_path);
-        let gz     = parse_atdf(gz_path.to_str().unwrap().to_string()).unwrap();
+        let gz     = parse_atdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(gz.wafers.len(), plain.wafers.len());
         assert_eq!(gz.meta.lot_id, plain.meta.lot_id);
         let plain_dies: usize = plain.wafers.iter().map(|w| w.results.len()).sum();

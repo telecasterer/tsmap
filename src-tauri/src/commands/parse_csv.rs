@@ -13,7 +13,7 @@ pub struct CsvHeadersResult {
     pub row_count: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CsvTestCol {
     pub col: String,
@@ -21,7 +21,7 @@ pub struct CsvTestCol {
     pub name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CsvMapping {
     pub x: String,
@@ -35,6 +35,9 @@ pub struct CsvMapping {
     pub split_by: Vec<String>,
     pub testname_col: Option<String>, // long format: column that holds test name
     pub testvalue_col: Option<String>, // long format: column that holds test value
+    pub lo_limit_col: Option<String>, // long format: column that holds the low limit
+    pub hi_limit_col: Option<String>, // long format: column that holds the high limit
+    pub units_col: Option<String>, // long format: column that holds the units
     pub pass_bins: Vec<u32>,
 }
 
@@ -44,7 +47,13 @@ use super::parse_stdf::{DieResult, LotMeta, ParsedStdf, TestDef, WaferData};
 // ── csv_headers ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn csv_headers(path: String) -> Result<CsvHeadersResult, String> {
+pub async fn csv_headers(path: String) -> Result<CsvHeadersResult, String> {
+    tokio::task::spawn_blocking(move || csv_headers_inner(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn csv_headers_inner(path: String) -> Result<CsvHeadersResult, String> {
     let mut rdr = build_reader(&path)?;
     let headers: Vec<String> = rdr
         .headers()
@@ -84,7 +93,13 @@ pub fn csv_headers(path: String) -> Result<CsvHeadersResult, String> {
 // ── parse_csv ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
+pub async fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
+    tokio::task::spawn_blocking(move || parse_csv_inner(path, mapping))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn parse_csv_inner(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
     let mut rdr = build_reader(&path)?;
     let headers: Vec<String> = rdr
         .headers()
@@ -176,10 +191,16 @@ pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String
             let tnum = *long_fmt_test_numbers.entry(test_name.clone()).or_insert_with(|| {
                 let n = next_test_num;
                 next_test_num += 1;
+                let lo_limit = mapping.lo_limit_col.as_deref()
+                    .map(|c| get(rec, c)).filter(|s| !s.is_empty()).and_then(|s| s.parse::<f64>().ok());
+                let hi_limit = mapping.hi_limit_col.as_deref()
+                    .map(|c| get(rec, c)).filter(|s| !s.is_empty()).and_then(|s| s.parse::<f64>().ok());
+                let units = mapping.units_col.as_deref()
+                    .map(|c| get(rec, c)).filter(|s| !s.is_empty());
                 test_defs.insert(n.to_string(), TestDef {
                     name: test_name.clone(),
                     test_type: "P".to_string(),
-                    lo_limit: None, hi_limit: None, units: None,
+                    lo_limit, hi_limit, units,
                 });
                 n
             });
@@ -256,19 +277,13 @@ pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String
                 None => continue,
             };
 
-            let hbin: u32 = if has_hbin {
-                mapping.hbin.as_deref()
-                    .and_then(|c| row.get(c))
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(1)
-            } else { 1 };
+            let hbin: Option<u32> = if has_hbin {
+                mapping.hbin.as_deref().and_then(|c| row.get(c)).and_then(|v| v.parse().ok())
+            } else { None };
 
-            let sbin: u32 = if has_sbin {
-                mapping.sbin.as_deref()
-                    .and_then(|c| row.get(c))
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(hbin)
-            } else { hbin };
+            let sbin: Option<u32> = if has_sbin {
+                mapping.sbin.as_deref().and_then(|c| row.get(c)).and_then(|v| v.parse().ok())
+            } else { None };
 
             let mut test_values: HashMap<String, f64> = HashMap::new();
 
@@ -297,7 +312,9 @@ pub fn parse_csv(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String
 
         let part_count = dies.len() as u32;
         let good_count = dies.iter()
-            .filter(|d| pass_bin_set.is_empty() || pass_bin_set.contains(&d.hbin))
+            .filter(|d| pass_bin_set.is_empty()
+                || d.hbin.map_or(false, |b| pass_bin_set.contains(&b))
+                || d.sbin.map_or(false, |b| pass_bin_set.contains(&b)))
             .count() as u32;
 
         wafers.push(WaferData {
@@ -352,6 +369,9 @@ mod tests {
             split_by: vec![],
             testname_col: None,
             testvalue_col: None,
+            lo_limit_col: None,
+            hi_limit_col: None,
+            units_col: None,
             pass_bins: vec![],
         }
     }
@@ -362,7 +382,7 @@ mod tests {
     fn headers_returns_column_names() {
         let csv = "x,y,hbin\n1,2,1\n3,4,2\n";
         let path = tmp(csv);
-        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.headers, vec!["x", "y", "hbin"]);
     }
 
@@ -370,7 +390,7 @@ mod tests {
     fn headers_trims_whitespace() {
         let csv = " x , y , val \n1,2,3\n";
         let path = tmp(csv);
-        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.headers, vec!["x", "y", "val"]);
     }
 
@@ -379,7 +399,7 @@ mod tests {
         let mut csv = "x,y\n".to_string();
         for i in 0..10 { csv += &format!("{i},{i}\n"); }
         let path = tmp(&csv);
-        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.sample.len() <= 5);
     }
 
@@ -387,7 +407,7 @@ mod tests {
     fn comments_skipped_in_headers() {
         let csv = "# comment\nx,y\n1,2\n";
         let path = tmp(csv);
-        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.headers, vec!["x", "y"]);
     }
 
@@ -398,7 +418,7 @@ mod tests {
         let csv = "x,y\n3,7\n-1,-2\n";
         let path = tmp(csv);
         let mapping = basic_mapping("x", "y");
-        let result = parse_csv(path.to_str().unwrap().to_string(), mapping).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), mapping).unwrap();
         assert_eq!(result.wafers.len(), 1);
         let dies = &result.wafers[0].results;
         assert_eq!(dies.len(), 2);
@@ -413,37 +433,38 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
         m.sbin = Some("sb".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         let die = &result.wafers[0].results[0];
-        assert_eq!(die.hbin, 2);
-        assert_eq!(die.sbin, 5);
+        assert_eq!(die.hbin, Some(2));
+        assert_eq!(die.sbin, Some(5));
     }
 
     #[test]
-    fn hbin_defaults_to_1_when_not_mapped() {
+    fn hbin_is_none_when_not_mapped() {
         let csv = "x,y\n0,0\n";
         let path = tmp(csv);
-        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
-        assert_eq!(result.wafers[0].results[0].hbin, 1);
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        assert_eq!(result.wafers[0].results[0].hbin, None);
+        assert_eq!(result.wafers[0].results[0].sbin, None);
     }
 
     #[test]
-    fn sbin_falls_back_to_hbin_when_not_mapped() {
+    fn sbin_is_none_when_not_mapped() {
         let csv = "x,y,hb\n0,0,3\n";
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         let die = &result.wafers[0].results[0];
-        assert_eq!(die.hbin, 3);
-        assert_eq!(die.sbin, 3);
+        assert_eq!(die.hbin, Some(3));
+        assert_eq!(die.sbin, None);
     }
 
     #[test]
     fn rows_with_invalid_coords_are_skipped() {
         let csv = "x,y\n1,2\nbad,3\n4,bad\n5,6\n";
         let path = tmp(csv);
-        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers[0].results.len(), 2);
     }
 
@@ -453,7 +474,7 @@ mod tests {
     fn rows_without_wafer_col_go_to_w1() {
         let csv = "x,y\n0,0\n1,1\n";
         let path = tmp(csv);
-        let result = parse_csv(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers[0].wafer_id, "W1");
     }
 
@@ -463,7 +484,7 @@ mod tests {
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.wafer = Some("wafer".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers.len(), 2);
         let w1 = result.wafers.iter().find(|w| w.wafer_id == "W01").unwrap();
         assert_eq!(w1.results.len(), 2);
@@ -476,7 +497,7 @@ mod tests {
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         let w = &result.wafers[0];
         assert_eq!(w.part_count, Some(3));
         assert_eq!(w.good_count, Some(3)); // pass_bins empty → all pass
@@ -489,7 +510,7 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
         m.pass_bins = vec![1];
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         let w = &result.wafers[0];
         assert_eq!(w.part_count, Some(3));
         assert_eq!(w.good_count, Some(2));
@@ -507,7 +528,7 @@ mod tests {
             CsvTestCol { col: "t1".to_string(), test_number: 1, name: "Test1".to_string() },
             CsvTestCol { col: "t2".to_string(), test_number: 2, name: "Test2".to_string() },
         ];
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         let die = &result.wafers[0].results[0];
         assert!((die.test_values["1"] - 1.5).abs() < 1e-9);
         assert!((die.test_values["2"] - 3.0).abs() < 1e-9);
@@ -520,7 +541,7 @@ mod tests {
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.tests = vec![CsvTestCol { col: "t1".to_string(), test_number: 1, name: "T1".to_string() }];
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert!(!result.wafers[0].results[0].test_values.contains_key("1"));
         assert!((result.wafers[0].results[1].test_values["1"] - 2.5).abs() < 1e-9);
     }
@@ -538,13 +559,38 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.testname_col = Some("test_name".to_string());
         m.testvalue_col = Some("test_val".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers[0].results.len(), 2);
         // Two distinct test defs
         assert_eq!(result.test_defs.len(), 2);
         let names: Vec<_> = result.test_defs.values().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"Vt"));
         assert!(names.contains(&"Idsat"));
+    }
+
+    #[test]
+    fn long_format_pivot_with_limits_and_units() {
+        let csv = "x,y,test_name,test_val,lo_limit,hi_limit,units\n\
+                   0,0,Vt,1.1,0.5,2.0,V\n\
+                   0,0,Idsat,2.2,1.0,5.0,mA\n\
+                   1,0,Vt,1.3,0.5,2.0,V\n\
+                   1,0,Idsat,2.4,1.0,5.0,mA\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.testname_col = Some("test_name".to_string());
+        m.testvalue_col = Some("test_val".to_string());
+        m.lo_limit_col = Some("lo_limit".to_string());
+        m.hi_limit_col = Some("hi_limit".to_string());
+        m.units_col = Some("units".to_string());
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
+        let vt = result.test_defs.values().find(|d| d.name == "Vt").unwrap();
+        assert_eq!(vt.lo_limit, Some(0.5));
+        assert_eq!(vt.hi_limit, Some(2.0));
+        assert_eq!(vt.units.as_deref(), Some("V"));
+        let idsat = result.test_defs.values().find(|d| d.name == "Idsat").unwrap();
+        assert_eq!(idsat.lo_limit, Some(1.0));
+        assert_eq!(idsat.hi_limit, Some(5.0));
+        assert_eq!(idsat.units.as_deref(), Some("mA"));
     }
 
     // ── Lot meta ──────────────────────────────────────────────────────────────
@@ -555,7 +601,7 @@ mod tests {
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.lot = Some("lot".to_string());
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
     }
 
@@ -567,7 +613,7 @@ mod tests {
         let path = tmp(csv);
         let mut m = basic_mapping("x", "y");
         m.split_by = vec!["site".to_string()];
-        let result = parse_csv(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers.len(), 2);
     }
 
@@ -585,7 +631,7 @@ mod tests {
     #[test]
     fn gz_csv_headers_readable() {
         let path = gz_csv("x,y,hbin\n0,0,1\n1,1,2\n");
-        let result = csv_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.headers, vec!["x", "y", "hbin"]);
         assert_eq!(result.sample.len(), 2);
     }
@@ -599,8 +645,8 @@ mod tests {
         m1.hbin = Some("hb".to_string());
         let mut m2 = basic_mapping("x", "y");
         m2.hbin = Some("hb".to_string());
-        let plain = parse_csv(plain_path.to_str().unwrap().to_string(), m1).unwrap();
-        let gz    = parse_csv(gz_path.to_str().unwrap().to_string(), m2).unwrap();
+        let plain = parse_csv_inner(plain_path.to_str().unwrap().to_string(), m1).unwrap();
+        let gz    = parse_csv_inner(gz_path.to_str().unwrap().to_string(), m2).unwrap();
         assert_eq!(gz.wafers[0].results.len(), plain.wafers[0].results.len());
         assert_eq!(gz.wafers[0].part_count, plain.wafers[0].part_count);
     }

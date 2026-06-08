@@ -133,6 +133,13 @@
       }
       #add-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #add-btn:disabled { opacity: 0.4; cursor: default; }
+      #charts-btn {
+        background: none; border: 1px solid var(--border-dim); border-radius: 4px;
+        color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
+        white-space: nowrap;
+      }
+      #charts-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #charts-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #reset-btn {
         background: none; border: 1px solid var(--border-muted); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
@@ -140,9 +147,18 @@
       }
       #reset-btn:hover { border-color: var(--error-text); color: var(--error-text); }
       #file-label { font-size: 12px; color: var(--text-muted); }
+      #busy-spinner {
+        display: none; width: 13px; height: 13px; border-radius: 50%;
+        border: 2px solid var(--border-dim); border-top-color: var(--accent);
+      }
+      #busy-spinner.active {
+        display: inline-block;
+        animation: tsmap-spin 0.7s linear infinite;
+      }
+      @keyframes tsmap-spin { to { transform: rotate(360deg); } }
 
       #map-container { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
-      #map-container.gallery { overflow-y: auto; }
+      #map-container.gallery, #map-container.charts { overflow-y: auto; }
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
@@ -184,8 +200,9 @@
       .mapping-footer {
         display: flex; align-items: center; gap: 12px; padding: 10px 16px;
         border-top: 1px solid var(--border-strong); flex-shrink: 0; background: var(--bg-toolbar);
+        justify-content: flex-end;
       }
-      .pass-bin-group { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--text-muted); }
+      .pass-bin-group { display: flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; color: var(--text-muted); }
       .pass-bin-group input { background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary); padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 80px; color-scheme: light dark; }
       .btn-primary { background: var(--btn-primary-bg); border: none; color: var(--text-white); padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
       .btn-primary:hover { background: var(--btn-primary-hover); }
@@ -245,7 +262,7 @@
         border-radius: 6px; padding: 24px; width: 520px; max-width: 90vw;
         max-height: 80vh; overflow-y: auto; color: var(--text-light);
       }
-      .help-modal h2 { font-size: 15px; margin-bottom: 16px; }
+      .help-modal h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
       .help-modal h3 { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin: 16px 0 6px; }
       .help-modal h3:first-of-type { margin-top: 0; }
       .help-modal p  { font-size: 13px; color: var(--text-subdued); line-height: 1.6; margin-bottom: 8px; }
@@ -264,7 +281,7 @@
       }
       #log-toggle {
         width: 100%; background: none; border: none; border-bottom: 1px solid transparent;
-        color: var(--text-dim); font-size: 12px; text-align: left; padding: 3px 12px;
+        color: var(--text-dim); font-size: 12px; text-align: right; padding: 3px 12px;
         cursor: pointer; user-select: none;
       }
       #log-toggle:hover { color: var(--text-tertiary); }
@@ -293,8 +310,10 @@
           <input id="file-input" type="file" accept=".csv,.json,.stdf,.std,.atdf,.atd" />
         </div>
         <button id="add-btn" disabled>Add files</button>
+        <button id="charts-btn" style="display:none">Charts</button>
         <button id="reset-btn" style="display:none">Clear</button>
         <span>or drop a file anywhere</span>
+        <span id="busy-spinner"></span>
         <span id="file-label"></span>
         <button id="help-btn" style="margin-left:auto">?</button>
       </div>

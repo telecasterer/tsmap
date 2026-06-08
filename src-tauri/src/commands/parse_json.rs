@@ -17,7 +17,13 @@ pub struct JsonHeadersResult {
 }
 
 #[tauri::command]
-pub fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
+pub async fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
+    tokio::task::spawn_blocking(move || json_headers_sync(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn json_headers_sync(path: String) -> Result<JsonHeadersResult, String> {
     let text = read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
@@ -43,7 +49,13 @@ pub fn json_headers(path: String) -> Result<JsonHeadersResult, String> {
 // ── parse_json ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
+pub async fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
+    tokio::task::spawn_blocking(move || parse_json_sync(path, mapping))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn parse_json_sync(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
     let text = read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Invalid JSON: {}", e))?;
@@ -109,10 +121,16 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
             let tnum = *long_fmt_test_numbers.entry(test_name.to_string()).or_insert_with(|| {
                 let n = next_test_num;
                 next_test_num += 1;
+                let lo_limit = mapping.lo_limit_col.as_deref()
+                    .and_then(|c| row.get(c)).filter(|s| !s.is_empty()).and_then(|s| s.parse::<f64>().ok());
+                let hi_limit = mapping.hi_limit_col.as_deref()
+                    .and_then(|c| row.get(c)).filter(|s| !s.is_empty()).and_then(|s| s.parse::<f64>().ok());
+                let units = mapping.units_col.as_deref()
+                    .and_then(|c| row.get(c)).filter(|s| !s.is_empty()).cloned();
                 test_defs.insert(n.to_string(), TestDef {
                     name: test_name.to_string(),
                     test_type: "P".to_string(),
-                    lo_limit: None, hi_limit: None, units: None,
+                    lo_limit, hi_limit, units,
                 });
                 n
             });
@@ -159,10 +177,10 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
                 Some(v) => v, None => continue,
             };
 
-            let hbin: u32 = mapping.hbin.as_deref()
-                .and_then(|c| row.get(c)).and_then(|v| v.parse().ok()).unwrap_or(1);
-            let sbin: u32 = mapping.sbin.as_deref()
-                .and_then(|c| row.get(c)).and_then(|v| v.parse().ok()).unwrap_or(hbin);
+            let hbin: Option<u32> = mapping.hbin.as_deref()
+                .and_then(|c| row.get(c)).and_then(|v| v.parse().ok());
+            let sbin: Option<u32> = mapping.sbin.as_deref()
+                .and_then(|c| row.get(c)).and_then(|v| v.parse().ok());
 
             let mut test_values: HashMap<String, f64> = HashMap::new();
             if is_long_format {
@@ -184,7 +202,9 @@ pub fn parse_json(path: String, mapping: CsvMapping) -> Result<ParsedStdf, Strin
 
         let part_count = dies.len() as u32;
         let good_count = dies.iter()
-            .filter(|d| pass_bin_set.is_empty() || pass_bin_set.contains(&d.hbin))
+            .filter(|d| pass_bin_set.is_empty()
+                || d.hbin.map_or(false, |b| pass_bin_set.contains(&b))
+                || d.sbin.map_or(false, |b| pass_bin_set.contains(&b)))
             .count() as u32;
 
         wafers.push(WaferData {
@@ -327,7 +347,9 @@ mod tests {
             x: x.to_string(), y: y.to_string(),
             hbin: None, sbin: None, wafer: None, lot: None,
             tests: vec![], meta: vec![], split_by: vec![],
-            testname_col: None, testvalue_col: None, pass_bins: vec![],
+            testname_col: None, testvalue_col: None,
+            lo_limit_col: None, hi_limit_col: None, units_col: None,
+            pass_bins: vec![],
         }
     }
 
@@ -337,7 +359,7 @@ mod tests {
     fn headers_from_flat_array() {
         let json = r#"[{"x":1,"y":2,"hbin":1},{"x":3,"y":4,"hbin":2}]"#;
         let path = tmp(json);
-        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = json_headers_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.headers.contains(&"x".to_string()));
         assert!(result.headers.contains(&"y".to_string()));
         assert!(result.headers.contains(&"hbin".to_string()));
@@ -349,7 +371,7 @@ mod tests {
     fn headers_from_envelope_object() {
         let json = r#"{"wafers":[{"x":0,"y":0}]}"#;
         let path = tmp(json);
-        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = json_headers_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.headers.contains(&"x".to_string()));
     }
 
@@ -357,7 +379,7 @@ mod tests {
     fn headers_from_nested_results_array() {
         let json = r#"[{"waferId":"W1","results":[{"x":0,"y":0},{"x":1,"y":1}]}]"#;
         let path = tmp(json);
-        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = json_headers_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.headers.contains(&"x".to_string()));
         assert_eq!(result.row_count, 2);
     }
@@ -366,7 +388,7 @@ mod tests {
     fn bom_stripped_before_parse() {
         let json = "\u{feff}[{\"x\":1,\"y\":2}]";
         let path = tmp(json);
-        let result = json_headers(path.to_str().unwrap().to_string()).unwrap();
+        let result = json_headers_sync(path.to_str().unwrap().to_string()).unwrap();
         assert!(result.headers.contains(&"x".to_string()));
     }
 
@@ -376,7 +398,7 @@ mod tests {
     fn flat_array_basic_dies() {
         let json = r#"[{"x":3,"y":7},{"x":-1,"y":-2}]"#;
         let path = tmp(json);
-        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers.len(), 1);
         let dies = &result.wafers[0].results;
         assert_eq!(dies.len(), 2);
@@ -390,17 +412,17 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
         m.sbin = Some("sb".to_string());
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         let die = &result.wafers[0].results[0];
-        assert_eq!(die.hbin, 2);
-        assert_eq!(die.sbin, 5);
+        assert_eq!(die.hbin, Some(2));
+        assert_eq!(die.sbin, Some(5));
     }
 
     #[test]
     fn rows_with_invalid_coords_skipped() {
         let json = r#"[{"x":"bad","y":1},{"x":2,"y":3}]"#;
         let path = tmp(json);
-        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers[0].results.len(), 1);
     }
 
@@ -410,7 +432,7 @@ mod tests {
     fn envelope_object_unwrapped() {
         let json = r#"{"wafers":[{"x":0,"y":0},{"x":1,"y":1}]}"#;
         let path = tmp(json);
-        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers[0].results.len(), 2);
     }
 
@@ -422,7 +444,7 @@ mod tests {
         let path = tmp(json);
         let mut m = basic_mapping("x", "y");
         m.wafer = Some("waferId".to_string());
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers.len(), 2);
         let w1 = result.wafers.iter().find(|w| w.wafer_id == "W01").unwrap();
         assert_eq!(w1.results.len(), 2);
@@ -434,7 +456,7 @@ mod tests {
     fn rows_without_wafer_col_go_to_w1() {
         let json = r#"[{"x":0,"y":0}]"#;
         let path = tmp(json);
-        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         assert_eq!(result.wafers[0].wafer_id, "W1");
     }
 
@@ -442,7 +464,7 @@ mod tests {
     fn part_count_and_good_count_computed() {
         let json = r#"[{"x":0,"y":0},{"x":1,"y":0},{"x":2,"y":0}]"#;
         let path = tmp(json);
-        let result = parse_json(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), basic_mapping("x", "y")).unwrap();
         let w = &result.wafers[0];
         assert_eq!(w.part_count, Some(3));
         assert_eq!(w.good_count, Some(3)); // pass_bins empty → all pass
@@ -455,7 +477,7 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.hbin = Some("hb".to_string());
         m.pass_bins = vec![1];
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         let w = &result.wafers[0];
         assert_eq!(w.good_count, Some(2));
         assert_eq!(w.fail_count, Some(1));
@@ -472,7 +494,7 @@ mod tests {
             super::super::parse_csv::CsvTestCol { col: "t1".to_string(), test_number: 1, name: "T1".to_string() },
             super::super::parse_csv::CsvTestCol { col: "t2".to_string(), test_number: 2, name: "T2".to_string() },
         ];
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         let die = &result.wafers[0].results[0];
         assert!((die.test_values["1"] - 1.5).abs() < 1e-9);
         assert!((die.test_values["2"] - 3.0).abs() < 1e-9);
@@ -491,7 +513,7 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.testname_col = Some("test".to_string());
         m.testvalue_col = Some("val".to_string());
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers[0].results.len(), 2);
         assert_eq!(result.test_defs.len(), 2);
     }
@@ -504,7 +526,7 @@ mod tests {
         let path = tmp(json);
         let mut m = basic_mapping("x", "y");
         m.lot = Some("lot".to_string());
-        let result = parse_json(path.to_str().unwrap().to_string(), m).unwrap();
+        let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
     }
 }

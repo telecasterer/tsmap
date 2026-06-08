@@ -19,6 +19,9 @@ export interface CsvMapping {
   splitBy: string[];
   testnameCol: string | null;
   testvalueCol: string | null;
+  loLimitCol: string | null;
+  hiLimitCol: string | null;
+  unitsCol: string | null;
   passBins: number[];
 }
 
@@ -30,7 +33,7 @@ export interface HeadersResult {
 
 // ── Column role detection — mirrors showcase detectRole ───────────────────────
 
-type ColRole = 'x' | 'y' | 'hbin' | 'sbin' | 'wafer' | 'lot' | 'testname' | 'testvalue' | 'test' | 'metadata' | '';
+type ColRole = 'x' | 'y' | 'hbin' | 'sbin' | 'wafer' | 'lot' | 'testname' | 'testvalue' | 'loLimit' | 'hiLimit' | 'units' | 'test' | 'metadata' | '';
 
 const EXACT_ROLES: { role: ColRole; patterns: string[] }[] = [
   { role: 'x',         patterns: ['x','die_x','x_loc','xloc','col','column','step_x','stepx','diex','xstep','x_step','xcoord','x_coord','xpos','x_pos'] },
@@ -40,10 +43,12 @@ const EXACT_ROLES: { role: ColRole; patterns: string[] }[] = [
   { role: 'wafer',     patterns: ['wafer','wafer_id','waferid','wafer_num','wafernum','wid','wafer_no','waferno','wfr','wfr_id','wnum'] },
   { role: 'lot',       patterns: ['lot','lot_id','lotid','lot_num','lotnum','lot_no','lotno'] },
   { role: 'testname',  patterns: ['test_name','testname','param','parameter','param_name','measurement','test_item','test_num','tnum'] },
-  { role: 'testvalue', patterns: ['result','value','val','measured','meas','reading','test_value','test_result'] },
+  { role: 'testvalue', patterns: ['result','value','val','measured','meas','reading','test_value','test_result','meas_value','meas_val'] },
+  { role: 'loLimit',   patterns: ['lo_limit','low_limit','lolimit','lower_limit','ll','lsl','spec_lo','spec_low','min_limit','lo_lim'] },
+  { role: 'hiLimit',   patterns: ['hi_limit','high_limit','hilimit','upper_limit','ul','usl','spec_hi','spec_high','max_limit','hi_lim'] },
+  { role: 'units',     patterns: ['units','unit','uom','test_units','test_unit'] },
   { role: 'metadata',  patterns: [
     'testdate','test_date','date','temp','temperature','tst_temp',
-    'lo_limit','hi_limit','low_limit','high_limit','lolimit','hilimit',
     'operator','oper','testprogram','test_program','job_nam',
     'node','node_nam','tester','tstr_typ','part_typ','part_type','device',
     'site','site_num','handler','hand_typ','sublot','sblot_id',
@@ -55,9 +60,12 @@ const REGEX_ROLES: { role: ColRole; re: RegExp }[] = [
   { role: 'x',     re: /^(?:die[_\s-]?x|x[_\s-]?(?:pos(?:ition)?|loc(?:ation)?|coord|idx|index|step)|col(?:umn)?[_\s-]?(?:idx|index|num|pos)|step[_\s-]?x|chip[_\s-]?x)$/ },
   { role: 'y',     re: /^(?:die[_\s-]?y|y[_\s-]?(?:pos(?:ition)?|loc(?:ation)?|coord|idx|index|step)|row[_\s-]?(?:idx|index|num|pos)|step[_\s-]?y|chip[_\s-]?y)$/ },
   { role: 'hbin',  re: /^(?:hard[_\s-]?bin(?:[_\s-]?(?:num|no|number))?|h[_\s-]?bin(?:[_\s-]?(?:num|no))?|bin[_\s-]?(?:num|no|number|code|result)|bin(?:_?num)?)$/ },
-  { role: 'sbin',  re: /^(?:soft[_\s-]?bin(?:[_\s-]?(?:num|no|number))?|s[_\s-]?bin(?:[_\s-]?(?:num|no))?)$/ },
-  { role: 'wafer', re: /^(?:wafer[_\s-]?(?:id|num|no|number|name|idx|index)?|wfr[_\s-]?(?:id|num|no)?|wid|w[_\s-]?num)$/ },
-  { role: 'lot',   re: /^(?:lot[_\s-]?(?:id|num|no|number|name)?)$/ },
+  { role: 'sbin',    re: /^(?:soft[_\s-]?bin(?:[_\s-]?(?:num|no|number))?|s[_\s-]?bin(?:[_\s-]?(?:num|no))?)$/ },
+  { role: 'wafer',   re: /^(?:wafer[_\s-]?(?:id|num|no|number|name|idx|index)?|wfr[_\s-]?(?:id|num|no)?|wid|w[_\s-]?num)$/ },
+  { role: 'lot',     re: /^(?:lot[_\s-]?(?:id|num|no|number|name)?)$/ },
+  { role: 'loLimit', re: /^(?:lo(?:w(?:er)?)?[_\s-]?(?:lim(?:it)?|spec|bound|thresh(?:old)?)|l[_\s-]?lim(?:it)?|min[_\s-]?(?:lim(?:it)?|spec)|spec[_\s-]?lo(?:w)?|lsl)$/ },
+  { role: 'hiLimit', re: /^(?:hi(?:gh(?:er)?)?[_\s-]?(?:lim(?:it)?|spec|bound|thresh(?:old)?)|h[_\s-]?lim(?:it)?|max[_\s-]?(?:lim(?:it)?|spec)|spec[_\s-]?hi(?:gh)?|usl)$/ },
+  { role: 'units',   re: /^(?:unit(?:s)?|u[_\s-]?o[_\s-]?m|test[_\s-]?unit(?:s)?|meas[_\s-]?unit(?:s)?)$/ },
 ];
 
 const STRUCTURAL_DISQUALIFIERS = new Set(['id','idx','index','count','total','num','number','no','diameter','radius','pitch','size','width','height','mm','um','nm','time','sec','ms','us','date','ts','timestamp']);
@@ -121,6 +129,9 @@ const ROLE_OPTIONS: { value: ColRole; label: string }[] = [
   { value: 'test',      label: 'Test value' },
   { value: 'testname',  label: 'Test name (long format)' },
   { value: 'testvalue', label: 'Test result (long format)' },
+  { value: 'loLimit',   label: 'Low limit (long format)' },
+  { value: 'hiLimit',   label: 'High limit (long format)' },
+  { value: 'units',     label: 'Units (long format)' },
   { value: 'metadata',  label: 'Display info' },
   { value: '',          label: '— ignore —' },
 ];
@@ -133,6 +144,7 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
   let hbin: string | null = null, sbin: string | null = null;
   let wafer: string | null = null, lot: string | null = null;
   let testnameCol: string | null = null, testvalueCol: string | null = null;
+  let loLimitCol: string | null = null, hiLimitCol: string | null = null, unitsCol: string | null = null;
   const tests: CsvTestCol[] = [];
   const meta: string[] = [];
   const splitBy: string[] = [];
@@ -149,6 +161,9 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
     else if (role === 'lot')   lot = col;
     else if (role === 'testname')  testnameCol = col;
     else if (role === 'testvalue') testvalueCol = col;
+    else if (role === 'loLimit') loLimitCol = col;
+    else if (role === 'hiLimit') hiLimitCol = col;
+    else if (role === 'units')   unitsCol = col;
     else if (role === 'test') {
       const nameInput = tr.querySelector<HTMLInputElement>('input[type="text"]');
       const name = nameInput?.value.trim() || col;
@@ -163,7 +178,11 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
   const passBins = passBinInput.value
     .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
 
-  return { x, y, hbin, sbin, wafer, lot, tests, meta, splitBy, testnameCol, testvalueCol, passBins: passBins.length ? passBins : [1] };
+  return {
+    x, y, hbin, sbin, wafer, lot, tests, meta, splitBy, testnameCol, testvalueCol,
+    loLimitCol, hiLimitCol, unitsCol,
+    passBins: passBins.length ? passBins : [1],
+  };
 }
 
 // ── Long-format confirmation modal ────────────────────────────────────────────
@@ -225,6 +244,9 @@ export async function showMappingOverlay(
     if (saved.lot)   savedRoles[saved.lot]   = 'lot';
     if (saved.testnameCol)  savedRoles[saved.testnameCol]  = 'testname';
     if (saved.testvalueCol) savedRoles[saved.testvalueCol] = 'testvalue';
+    if (saved.loLimitCol) savedRoles[saved.loLimitCol] = 'loLimit';
+    if (saved.hiLimitCol) savedRoles[saved.hiLimitCol] = 'hiLimit';
+    if (saved.unitsCol)   savedRoles[saved.unitsCol]   = 'units';
     saved.tests?.forEach(t => { savedRoles[t.col] = 'test'; });
     saved.meta?.forEach(c  => { savedRoles[c] = 'metadata'; });
   }

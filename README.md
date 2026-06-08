@@ -1,6 +1,6 @@
 # tsmap
 
-A desktop application for loading and visualising semiconductor wafer map data. Built with [Tauri v2](https://tauri.app/) (Rust backend) and [wmap](https://www.npmjs.com/package/@paulrobins/wafermap) (canvas rendering).
+A desktop application for loading and visualising semiconductor wafer map data. Built with [Tauri v2](https://tauri.app/) (Rust backend) and [wmap](https://github.com/telecasterer/wafermap) (canvas rendering).
 
 ## Features
 

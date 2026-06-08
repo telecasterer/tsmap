@@ -41,13 +41,13 @@ jobs:
       - name: Build web app
         run: npm run build:web
 
-      - name: Copy web app into site
-        run: mkdir -p site && cp -r dist site/app
-
       - name: Build documentation site
         run: zensical build --clean
         env:
           ZENSICAL: zensical
+
+      - name: Copy web app into site
+        run: cp -r dist site/app
 
       - uses: actions/upload-pages-artifact@v3
         with:

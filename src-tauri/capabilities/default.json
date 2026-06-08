@@ -8,6 +8,7 @@
     "opener:default",
     "opener:allow-open-path",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    "fs:allow-write-file"
   ]
 }

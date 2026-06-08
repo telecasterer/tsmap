@@ -9,7 +9,7 @@ At some point these will be converted into an implementation plan for wmap.
 |-------|-------|
 | wmap version in use | 0.13.3 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| Last updated | 2026-06-08 |
+| Last updated | 2026-06-08 (session: issue 9 fixed, issue 10 Tier 1 shipped) |
 
 ## Rust Backend Notes
 
@@ -153,33 +153,15 @@ their data's bin range. At minimum, the TSDoc should call out that omitting
 
 **Fix applied:** `softBinColor(bin)` now uses a discrete categorical palette (same as `hardBinColor`) — no `maxBin` parameter, no gradient. Remove the `maxSoftBin` computation in `src/main.ts` and call `softBinColor(bin)` directly.
 
-### 9. `analyzeWaferMap` lacks per-wafer test statistics — tsmap must re-walk results for box plots
+### ~~9. `analyzeWaferMap` lacks per-wafer test statistics — tsmap must re-walk results for box plots~~ (fixed in Unreleased)
 
 **Where:** `packages/stats/analyzeWaferMap.ts` — `computePerTestStats` aggregates test values across all dies into a single lot-level entry per test (`StatsSummary.stats.perTestStats`). There is no per-wafer breakdown.
 
 **Problem:** tsmap's box-plot chart shows one box per wafer for a selected test (min/Q1/median/Q3/max). To build this, tsmap re-walks `wafer.results` itself in `buildTestBoxplotData` (`src/charts/aggregate.ts`), duplicating the value-extraction and quantile logic that `analyzeWaferMap` already performs. This was originally logged as issue 6 requesting quartiles on `perTestStats`, but that was the wrong ask — `perTestStats` is lot-level; what tsmap needs is a per-wafer × per-test five-number summary.
 
-**Suggested fix:** Add `perWaferTestStats` to `StatsSummary` — an array of per-wafer entries, each containing the same shape as `perTestStats` plus a `waferIndex`. Computed in the same pass as `perTestStats` so the values array doesn't need to be rebuilt. tsmap can then drop `buildTestBoxplotData` entirely and read directly from `statsSummary.perWaferTestStats`.
+**Fix applied:** `perWaferTestStats` added to `LotStatsSummary` (not `StatsSummary`) — projected from `perWafer[i].summary.stats.perTestStats` in `analyzeWaferLot`. Shape matches the proposal above plus a `label` field. Only present when `enableTestValueAnalysis: true`. tsmap can drop `buildTestBoxplotData` and read `lotSummary.perWaferTestStats` directly.
 
-```ts
-// Proposed shape
-perWaferTestStats?: Array<{
-  waferIndex: number;
-  tests: Array<{
-    testNumber: number;
-    count:      number;
-    min:        number;
-    max:        number;
-    mean:       number;
-    stddev:     number;
-    median:     number;
-    q1:         number;
-    q3:         number;
-  }>;
-}>;
-```
-
-### 10. IPC data transfer and wmap input format are not designed for large test counts
+### 10. IPC data transfer and wmap input format are not designed for large test counts — investigation ongoing
 
 **Where:** tsmap `src-tauri/src/commands/` (all parsers), wmap `packages/renderer/buildWaferMap.ts` (`DieResult` input type).
 
@@ -197,6 +179,10 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 
 2. **Rust → WASM for data processing** — since both tsmap and wmap are owned projects, moving wmap's `buildWaferMap` (geometry inference, grid construction, retest policy) to a Rust/WASM module is viable. The Rust parser would produce the typed arrays directly in WASM-shared memory, bypassing the IPC bridge and JSON entirely for the hot path. Analysis (`analyzeWaferMap`) could also move to WASM. This is a larger undertaking but eliminates the serialisation round-trip completely.
 
-**Recommended first step:** Profile with a realistic large file (50k+ dies, 100+ tests) before committing to an approach. Measure time at each stage: Rust parse, IPC transfer, JS JSON parse, `buildWaferMap`, `analyzeWaferMap`. The bottleneck may be in a different place than expected — wmap's geometry inference is O(n²) in the worst case and may dominate over transfer cost.
+**Investigation completed (2026-06-08):** Full pipeline analysis and benchmarking done. Key findings:
 
-**Note:** Any columnar input format change is a breaking API change to `buildWaferMap` and requires coordinated updates to both wmap and tsmap (and the showcase demo). Design the columnar shape carefully — it should accommodate the metadata separation cleanly so that concern is solved at the same time.
+- **Tier 1 fixes shipped** (no API breakage): merged `buildView` min/max scans, replaced per-die object spread with `Float64Array` coord table (1.9 MB → 314 KB per rotated view at 20k dies), merged bin-count loop, replaced O(D) hover scan with uniform-grid spatial index (48× faster at 20k dies). See `scripts/bench-buildview.mjs` for the canonical benchmark.
+- **Synthetic scale dataset** generated: `site/data/large-parametric.csv` — 5 wafers × 2709 dies × 200 tests (~24 MB) for future profiling.
+- **Remaining bottleneck in `buildView`** is `pushDieRectangles` loop itself — irreducible O(D), ~2–3 ms at 20k dies. Memoising the ViewRect array (Tier 2) would help for pan/zoom-only redraws.
+- **IPC/columnar redesign** (Tier 3): still requires profiling with a real large STDF file to confirm the IPC boundary is actually the bottleneck. Columnar input to `buildWaferMap` is a breaking API change; Rust/WASM is viable but large effort. Do not start without profiling data.
+- **Recommended next step:** Load a real production STDF (50k+ dies, 100+ tests) in tsmap with DevTools performance timeline open. Measure Rust parse, IPC transfer, JS JSON.parse, `buildWaferMap`, `analyzeWaferMap` separately before designing Tier 2/3 changes.

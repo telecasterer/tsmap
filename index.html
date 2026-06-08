@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>tsmap</title>
     <script type="module" src="/src/main.ts" defer></script>
+    <script>window.addEventListener('error', e => { document.title = 'ERR: ' + e.message; console.error('module error', e); });</script>
     <style>
       :root {
         /* Dark theme (default) */
@@ -125,7 +126,6 @@
         white-space: nowrap; user-select: none;
       }
       #open-btn:hover { background: var(--bg-accent-hover); }
-      #file-input { display: none; }
       #add-btn {
         background: none; border: 1px solid var(--border-dim); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
@@ -306,8 +306,10 @@
       <div id="toolbar">
         <span id="toolbar-title">tsmap</span>
         <div id="drop-zone">
-          <label id="open-btn" for="file-input">Open file</label>
-          <input id="file-input" type="file" accept=".csv,.json,.stdf,.std,.atdf,.atd" />
+          <button id="open-btn">Open file</button>
+          <input id="file-input" type="file" multiple
+            accept=".stdf,.std,.atdf,.atd,.csv,.json,.gz,.zip,.txt,.dat"
+            style="display:none" />
         </div>
         <button id="add-btn" disabled>Add files</button>
         <button id="charts-btn" style="display:none">Charts</button>

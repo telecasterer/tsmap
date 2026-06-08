@@ -40,6 +40,38 @@ pub struct CsvMapping {
     pub pass_bins: Vec<u32>,
 }
 
+pub fn csv_headers_from_bytes(bytes: &[u8]) -> Result<CsvHeadersResult, String> {
+    let bytes = crate::read_file::decompress_if_gzip(bytes.to_vec())?;
+    let mut rdr = build_reader_from_bytes(&bytes);
+    let headers: Vec<String> = rdr
+        .headers()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|s| s.trim().to_string())
+        .collect();
+
+    let mut sample: Vec<HashMap<String, String>> = Vec::new();
+    for result in rdr.records() {
+        let rec = result.map_err(|e| e.to_string())?;
+        let row: HashMap<String, String> = headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (h.clone(), rec.get(i).unwrap_or("").trim().to_string()))
+            .collect();
+        sample.push(row);
+        if sample.len() >= 5 { break; }
+    }
+
+    let row_count = bytes.iter().filter(|&&b| b == b'\n').count().saturating_sub(1);
+    Ok(CsvHeadersResult { headers, sample, row_count })
+}
+
+pub fn parse_csv_from_bytes(bytes: &[u8], mapping: CsvMapping) -> Result<ParsedStdf, String> {
+    let bytes = crate::read_file::decompress_if_gzip(bytes.to_vec())?;
+    parse_csv_from_reader(build_reader_from_bytes(&bytes), mapping)
+}
+
+#[cfg(feature = "native")]
 pub fn csv_headers_inner(path: String) -> Result<CsvHeadersResult, String> {
     let mut rdr = build_reader(&path)?;
     let headers: Vec<String> = rdr
@@ -74,8 +106,13 @@ pub fn csv_headers_inner(path: String) -> Result<CsvHeadersResult, String> {
     Ok(CsvHeadersResult { headers, sample, row_count })
 }
 
+#[cfg(feature = "native")]
 pub fn parse_csv_inner(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
-    let mut rdr = build_reader(&path)?;
+    let rdr = build_reader(&path)?;
+    parse_csv_from_reader(rdr, mapping)
+}
+
+fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMapping) -> Result<ParsedStdf, String> {
     let headers: Vec<String> = rdr
         .headers()
         .map_err(|e| e.to_string())?
@@ -308,6 +345,16 @@ pub fn parse_csv_inner(path: String, mapping: CsvMapping) -> Result<ParsedStdf, 
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
 }
 
+fn build_reader_from_bytes(bytes: &[u8]) -> csv::Reader<Box<dyn Read>> {
+    let reader: Box<dyn Read> = Box::new(std::io::Cursor::new(bytes.to_vec()));
+    ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .comment(Some(b'#'))
+        .flexible(true)
+        .from_reader(reader)
+}
+
+#[cfg(feature = "native")]
 fn build_reader(path: &str) -> Result<csv::Reader<Box<dyn Read>>, String> {
     let is_gz = std::path::Path::new(path)
         .extension().and_then(|e| e.to_str())

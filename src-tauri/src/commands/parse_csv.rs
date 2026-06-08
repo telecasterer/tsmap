@@ -1,6 +1,6 @@
-pub use tsmap_parsers::parse_csv::{CsvHeadersResult, CsvMapping};
-use tsmap_parsers::parse_csv::{csv_headers_inner, parse_csv_inner};
-use tsmap_parsers::types::ParsedStdf;
+pub use testdata_parser::parse_csv::{CsvHeadersResult, CsvMapping};
+use testdata_parser::parse_csv::{csv_headers_inner, parse_csv_inner};
+use testdata_parser::types::ParsedStdf;
 
 #[tauri::command]
 pub async fn csv_headers(path: String) -> Result<CsvHeadersResult, String> {

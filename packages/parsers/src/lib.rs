@@ -25,12 +25,13 @@ mod wasm {
             .map_err(|e| JsValue::from_str(&e))
     }
 
-    // csv_headers and parse_csv require a path-based reader (csv crate streams from file).
-    // These need a bytes-based reader variant before they can be exposed via WASM.
-    // parse_json works because it reads the whole file to a string first.
     #[wasm_bindgen]
-    pub fn parse_csv(_bytes: &[u8], _mapping: JsValue) -> Result<JsValue, JsValue> {
-        Err(JsValue::from_str("parse_csv from bytes not yet implemented — needs bytes-based CSV reader"))
+    pub fn parse_csv(bytes: &[u8], mapping: JsValue) -> Result<JsValue, JsValue> {
+        let mapping: crate::parse_csv::CsvMapping = serde_wasm_bindgen::from_value(mapping)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        crate::parse_csv::parse_csv_from_bytes(bytes, mapping)
+            .map(|r| to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]

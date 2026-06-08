@@ -3,15 +3,13 @@ import type { PlotMode } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
-import { invoke } from '@tauri-apps/api/core';
-import { open as dialogOpen, save as dialogSave } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
-import { loadStdfPath, setLogFn } from './fileLoader';
+import { createPlatform, isTauri } from './platform';
+import type { FileHandle, RustParsedFile } from './platform';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
-import type { ParsedFile, WaferData, TestDef, LotMeta } from './types';
+import type { ParsedFile, WaferData, TestDef } from './types';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, listNumericTests } from './charts/aggregate';
@@ -19,21 +17,15 @@ import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 import type { TestDef as WmapTestDef } from '@paulrobins/wafermap';
 
+const platform = createPlatform();
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-// Works for both Unix (/a/b/c.txt) and Windows (C:\a\b\c.txt or C:/a/b/c.txt)
 function basename(p: string): string {
   return p.split(/[\\/]/).pop() ?? p;
 }
 
 // ── Rust command return shape ─────────────────────────────────────────────────
-
-interface RustParsedFile {
-  meta: LotMeta;
-  wafers: WaferData[];
-  testDefs: Record<string, TestDef>;
-  sites?: unknown[];
-}
 
 function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
   return { fileName, meta: r.meta, wafers: r.wafers, testDefs: r.testDefs };
@@ -52,8 +44,6 @@ const busySpinner = document.getElementById('busy-spinner')!;
 const logList    = document.getElementById('log-list')!;
 const logToggle  = document.getElementById('log-toggle')!;
 const logPanel   = document.getElementById('log-panel')!;
-
-const isTauri = '__TAURI_INTERNALS__' in window;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -90,29 +80,21 @@ function log(level: LogLevel, msg: string) {
 }
 
 logToggle.addEventListener('click', () => logPanel.classList.toggle('open'));
-setLogFn(log);
 
-// ── Tauri intercepts ──────────────────────────────────────────────────────────
+// ── Platform intercepts ───────────────────────────────────────────────────────
 
 if (isTauri) {
-  // PNG save — wmap uses a detached <a download> never in the DOM
+  // PNG save — wmap uses a detached <a download> never in the DOM; intercept in Tauri
+  // because window.open and native download are suppressed in WebKitGTK / WebView2.
   const _nativeClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
     if (this.download && this.href.startsWith('blob:')) {
       const href = this.href;
       const stem = currentFileName.replace(/\.[^.]+$/, '');
       fetch(href)
-        .then(r => r.arrayBuffer())
-        .then(async buf => {
-          const path = await dialogSave({
-            defaultPath: `${stem}.png`,
-            filters: [{ name: 'PNG image', extensions: ['png'] }],
-          });
-          if (path) {
-            await writeFile(path, new Uint8Array(buf));
-            log('info', `PNG saved: ${path}`);
-          }
-        })
+        .then(r => r.blob())
+        .then(blob => platform.savePng(blob, stem))
+        .then(() => log('info', `PNG saved: ${stem}.png`))
         .catch(err => log('error', `PNG save failed: ${err}`));
       return;
     }
@@ -120,17 +102,35 @@ if (isTauri) {
   };
 
   // Route wmap HTML reports through Tauri — window.open is blocked in WebKitGTK.
-  setReportOpener((html: string) => {
-    invoke('write_temp_html', { html })
-      .catch(err => log('error', `Failed to open report: ${err}`));
-  });
+  setReportOpener((html: string) => platform.openReport(html));
 
-  // File drop + Rust timing events
+  // File drop
   import('@tauri-apps/api/event').then(({ listen }) => {
     listen<{ paths: string[] }>('tauri://drag-drop', event => {
       const paths = event.payload.paths ?? [];
-      if (paths.length > 0) handlePaths(paths, false);
+      if (paths.length > 0) {
+        const files: FileHandle[] = paths.map(p => ({
+          name: basename(p),
+          bytes: new Uint8Array(0),
+          path: p,
+        }));
+        handleFiles(files, false);
+      }
     }).catch(e => log('warn', `File drop listener failed: ${e}`));
+  });
+} else {
+  // Web drag-drop
+  document.body.addEventListener('dragover', e => { e.preventDefault(); });
+  document.body.addEventListener('drop', async e => {
+    e.preventDefault();
+    if (busy) return;
+    const items = Array.from(e.dataTransfer?.files ?? []);
+    if (items.length === 0) return;
+    const files = await Promise.all(items.map(async f => ({
+      name: f.name,
+      bytes: new Uint8Array(await f.arrayBuffer()),
+    })));
+    handleFiles(files, false);
   });
 }
 
@@ -494,116 +494,106 @@ function injectMapBanner(container: HTMLElement, text: string) {
   container.appendChild(banner);
 }
 
-async function handlePaths(paths: string[], isAppend: boolean) {
-  if (paths.length === 0) return;
+async function handleFiles(files: FileHandle[], isAppend: boolean) {
+  if (files.length === 0) return;
   if (busy) return;
 
-  setBusy(`Reading ${paths.length} file${paths.length > 1 ? 's' : ''}…`);
+  setBusy(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`);
   // Yield two animation frames so the spinner actually paints before the
-  // first Tauri invoke (WebKitGTK may not repaint on setTimeout(0) alone).
+  // first platform call (WebKitGTK may not repaint on setTimeout(0) alone).
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-  // Expand zip archives; .gz is handled transparently by the parsers
+  // Expand archives — .gz and .zip handled per-platform
   let needsCleanup = false;
-  const expanded: string[] = [];
-  for (const p of paths) {
-    const ext = p.split('.').pop()?.toLowerCase() ?? '';
-    if (ext === 'zip') {
-      setBusy(`Extracting ${basename(p)}…`);
-      try {
-        const extracted = await invoke<string[]>('extract_archive', { path: p });
-        log('info', `Extracted ${extracted.length} file${extracted.length !== 1 ? 's' : ''} from ${basename(p)}`);
-        expanded.push(...extracted);
-        needsCleanup = true;
-      } catch (e) {
-        log('error', `Failed to extract ${basename(p)}: ${(e as Error).message}`);
-      }
-    } else {
-      expanded.push(p);
-    }
+  const anyZip = files.some(f => f.name.toLowerCase().endsWith('.zip'));
+  if (anyZip) {
+    setBusy(`Extracting archive…`);
+    needsCleanup = isTauri && anyZip;
   }
-  paths = expanded;
+  files = await platform.expandArchives(files).catch(e => {
+    log('error', `Archive extraction failed: ${e}`);
+    return files;
+  });
 
-  if (paths.length === 0) {
-    if (needsCleanup) invoke('cleanup_extract').catch(() => {});
+  if (files.length === 0) {
     setIdle('Error: no files after extraction');
     return;
   }
 
   // Determine effective extension — strip .gz wrapper to get inner format
-  const effectiveExt = (p: string) => {
-    const parts = p.split('.');
+  const effectiveExt = (name: string) => {
+    const parts = name.split('.');
     const ext = parts.pop()?.toLowerCase() ?? '';
     return ext === 'gz' ? (parts.pop()?.toLowerCase() ?? ext) : ext;
   };
 
   // Validate all files have the same extension (relaxed for mixed-format zips)
-  const exts = [...new Set(paths.map(effectiveExt))];
+  const exts = [...new Set(files.map(f => effectiveExt(f.name)))];
   if (exts.length > 1 && !needsCleanup) {
     log('error', `Mixed formats not supported: ${exts.join(', ')} — please select files of the same type`);
     setIdle('Error: mixed formats');
     return;
   }
 
-  // For CSV/JSON: show mapping overlay once for the first such file, apply to all CSV/JSON
-  // For STDF/ATDF: parse directly (no mapping needed)
+  // For CSV/JSON: show mapping overlay once for the first such file, apply to all
   const needsMapping = (e: string) => e === 'csv' || e === 'txt' || e === 'dat' || e === 'json';
-  const firstMappablePath = paths.find(p => needsMapping(effectiveExt(p)));
+  const firstMappable = files.find(f => needsMapping(effectiveExt(f.name)));
 
   let mappingPromise: Promise<CsvMapping | null> = Promise.resolve(null);
 
-  if (firstMappablePath) {
-    const firstExt = effectiveExt(firstMappablePath);
-    const command = firstExt === 'json' ? 'json_headers' : 'csv_headers';
-    setBusy(`Reading ${basename(firstMappablePath)}…`);
-    const headersResult = await invoke<{ headers: string[]; sample: Record<string, string>[]; rowCount: number }>(
-      command, { path: firstMappablePath }
+  if (firstMappable) {
+    const firstExt = effectiveExt(firstMappable.name);
+    setBusy(`Reading ${firstMappable.name}…`);
+    const headersResult = await (firstExt === 'json'
+      ? platform.jsonHeaders(firstMappable)
+      : platform.csvHeaders(firstMappable)
     ).catch(e => { log('error', `Failed to read headers: ${e}`); return null; });
 
-    if (!headersResult) { if (needsCleanup) invoke('cleanup_extract').catch(() => {}); setIdle(); return; }
+    if (!headersResult) {
+      if (needsCleanup) platform.expandArchives([]).catch(() => {});
+      setIdle();
+      return;
+    }
 
-    const mappablePaths = paths.filter(p => needsMapping(p.split('.').pop()?.toLowerCase() ?? ''));
-    const note = mappablePaths.length > 1 ? ` — mapping applied to all ${mappablePaths.length} CSV/JSON files` : '';
-    log('info', `${basename(firstMappablePath)}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
+    const mappableFiles = files.filter(f => needsMapping(effectiveExt(f.name)));
+    const note = mappableFiles.length > 1 ? ` — mapping applied to all ${mappableFiles.length} CSV/JSON files` : '';
+    log('info', `${firstMappable.name}: ${headersResult.rowCount} rows, ${headersResult.headers.length} columns${note}`);
 
     mappingPromise = new Promise(resolve => {
       showMappingOverlay(headersResult,
         (mapping) => resolve(mapping),
-        () => { if (needsCleanup) invoke('cleanup_extract').catch(() => {}); setIdle(); resolve(null); }
+        () => { setIdle(); resolve(null); }
       );
     });
   }
 
   const mapping = await mappingPromise;
-  if (mapping === null && firstMappablePath) {
+  if (mapping === null && firstMappable) {
     return; // cancelled
   }
 
-  // Parse all files — use per-file extension so mixed-format archives work
+  // Parse all files
   const entries: FileWaferEntry[] = [];
-  for (const path of paths) {
-    const fileName = basename(path);
-    const fileExt = effectiveExt(path);
-    setBusy(`Parsing ${fileName}…`);
+  for (const file of files) {
+    const fileExt = effectiveExt(file.name);
+    setBusy(`Parsing ${file.name}…`);
     try {
       let parsed: ParsedFile;
       if (fileExt === 'stdf' || fileExt === 'std') {
-        parsed = await loadStdfPath(path);
+        parsed = rustToLocal(await platform.parseStdf(file), file.name);
       } else if (fileExt === 'atdf' || fileExt === 'atd') {
-        parsed = rustToLocal(await invoke<RustParsedFile>('parse_atdf', { path }), fileName);
+        parsed = rustToLocal(await platform.parseAtdf(file), file.name);
       } else if (fileExt === 'json') {
-        parsed = rustToLocal(await invoke<RustParsedFile>('parse_json', { path, mapping }), fileName);
+        parsed = rustToLocal(await platform.parseJson(file, mapping!), file.name);
       } else {
-        parsed = rustToLocal(await invoke<RustParsedFile>('parse_csv', { path, mapping }), fileName);
+        parsed = rustToLocal(await platform.parseCsv(file, mapping!), file.name);
       }
-      entries.push({ filePath: path, fileName, parsed });
-      log('info', `Parsed ${fileName}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
+      entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
+      log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
     } catch (e) {
-      log('error', `Failed to parse ${fileName}: ${(e as Error).message}`);
+      log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
     }
   }
-
-  if (needsCleanup) invoke('cleanup_extract').catch(() => {});
 
   if (entries.length === 0) {
     setIdle('Error: no files parsed successfully');
@@ -636,7 +626,6 @@ async function handlePaths(paths: string[], isAppend: boolean) {
   if (!renamed) return;
 
   if (isAppend && currentWafers.length > 0) {
-    // Show append confirmation with mismatch warnings
     await new Promise<void>(resolve => {
       showAppendConfirm({
         incoming: renamed,
@@ -668,40 +657,58 @@ async function pickAndHandle(isAppend: boolean) {
   if (busy) return;
   const prevLabel = fileLabel.textContent ?? '';
   setBusy('Waiting for file selection…');
-  const lastDir = await invoke<string | null>('get_last_dir').catch(() => null);
-  let result: string | string[] | null;
+  let files: FileHandle[];
   try {
-    result = await dialogOpen({
-      multiple: true,
-      defaultPath: lastDir ?? undefined,
-      filters: [
-        { name: 'Wafer map files', extensions: ['stdf', 'std', 'atdf', 'atd', 'csv', 'json', 'gz', 'zip'] },
-        { name: 'STDF', extensions: ['stdf', 'std'] },
-        { name: 'ATDF', extensions: ['atdf', 'atd'] },
-        { name: 'CSV / JSON', extensions: ['csv', 'json'] },
-        { name: 'Archives', extensions: ['gz', 'zip'] },
-      ],
-    });
+    files = await platform.pickFiles();
   } catch (e) {
     log('error', `File picker failed: ${(e as Error).message}`);
     setIdle(prevLabel);
     return;
   }
-  const paths = Array.isArray(result) ? result : result ? [result] : [];
-  if (paths.length === 0) {
+  if (files.length === 0) {
     setIdle(prevLabel);
     return;
   }
-  invoke('set_last_dir', { path: paths[0] }).catch(() => {});
   busy = false;
-  handlePaths(paths, isAppend);
+  handleFiles(files, isAppend);
 }
 
-openBtn.addEventListener('click', e => {
-  if (isTauri) { e.preventDefault(); pickAndHandle(false); }
-});
+if (isTauri) {
+  openBtn.addEventListener('click', () => pickAndHandle(false));
+  addBtn.addEventListener('click', () => pickAndHandle(true));
+} else {
+  // On web, trigger the native file input synchronously from the click event
+  // so the browser treats it as a user gesture (async calls block the picker).
+  const fileInput = document.getElementById('file-input') as HTMLInputElement;
+  let appendOnPick = false;
 
-addBtn.addEventListener('click', () => { if (isTauri) pickAndHandle(true); });
+  fileInput.addEventListener('change', async () => {
+    const prevLabel = fileLabel.textContent ?? '';
+    const rawFiles = Array.from(fileInput.files ?? []);
+    fileInput.value = '';  // reset so same file can be re-picked
+    if (rawFiles.length === 0) { setIdle(prevLabel); return; }
+    busy = false;
+    const files = await Promise.all(rawFiles.map(async f => ({
+      name: f.name,
+      bytes: new Uint8Array(await f.arrayBuffer()),
+    })));
+    handleFiles(files, appendOnPick);
+  });
+
+  openBtn.addEventListener('click', () => {
+    if (busy) return;
+    appendOnPick = false;
+    setBusy('Waiting for file selection…');
+    fileInput.click();
+  });
+
+  addBtn.addEventListener('click', () => {
+    if (busy) return;
+    appendOnPick = true;
+    setBusy('Waiting for file selection…');
+    fileInput.click();
+  });
+}
 
 chartsBtn.addEventListener('click', () => {
   if (currentWafers.length < 1) return;
@@ -735,9 +742,10 @@ helpBtn.addEventListener('click', () => {
       <h2>tsmap help</h2>
 
       <h3>Opening files</h3>
-      <p>Click <strong>Open file</strong> or drag and drop a file anywhere in the window.
-         Once a file is loaded, <strong>Add files</strong> appends additional wafers to the
-         current gallery. <strong>Clear</strong> unloads the current map.</p>
+      <p>Click <strong>Open file</strong> to pick one or more files, or drag and drop files
+         anywhere in the window. Once a file is loaded, <strong>Add files</strong> appends
+         additional wafers to the current gallery. <strong>Clear</strong> unloads the
+         current map.</p>
 
       <h3>Supported formats</h3>
       <ul>
@@ -772,10 +780,25 @@ helpBtn.addEventListener('click', () => {
          column layout.</p>
 
       <h3>Viewing maps</h3>
-      <p>Scroll to zoom, drag to pan. The toolbar provides zoom controls, plot mode switching,
-         box selection, and PNG download. The summary panel on the right shows yield, bin
-         counts, test statistics, and findings. Click a finding to highlight the affected
-         dies or wafers in the gallery.</p>
+      <p>Scroll to zoom, drag to pan. The toolbar provides zoom controls, plot mode switching
+         (hard bin / soft bin / test value), box selection, and PNG download. The summary
+         panel on the right shows yield, bin counts, test statistics, and spatial findings.
+         Click a finding to highlight the affected dies or wafers in the gallery.</p>
+
+      <h3>Charts</h3>
+      <p>Click <strong>Charts</strong> to switch from the map view to the charts panel.
+         Available charts:</p>
+      <ul>
+        <li><strong>Yield by wafer</strong> — bar chart of pass yield per wafer, sortable
+            by yield or wafer ID.</li>
+        <li><strong>Bin pareto</strong> — failure count by hard or soft bin across the lot.</li>
+        <li><strong>Test value distribution</strong> — box plot showing spread, median, and
+            outliers per wafer for the selected parametric test.</li>
+        <li><strong>Value histogram</strong> — distribution of a test value across the whole
+            lot or a single wafer.</li>
+      </ul>
+      <p>Click a bar or box to jump to the corresponding wafer map. Click a stacked bin bar
+         to open a lot-stacked map showing where that bin lands spatially.</p>
 
       <div class="help-close-row">
         <button class="btn-primary" id="help-close">Close</button>

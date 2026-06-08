@@ -2,9 +2,16 @@ import { defineConfig } from "vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const isTauriBuild = !!process.env.TAURI_ENV_PLATFORM;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Use absolute paths for Tauri (serves from localhost), relative for web deploy
+  base: isTauriBuild ? '/' : './',
+
+  // Treat .wasm files as static assets so the web platform can import them
+  assetsInclude: ['**/*.wasm'],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

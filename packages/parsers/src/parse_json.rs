@@ -12,6 +12,7 @@ pub struct JsonHeadersResult {
     pub row_count: usize,
 }
 
+#[cfg(feature = "native")]
 pub fn json_headers_sync(path: String) -> Result<JsonHeadersResult, String> {
     let text = crate::read_file::read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
@@ -35,6 +36,7 @@ pub fn json_headers_sync(path: String) -> Result<JsonHeadersResult, String> {
     Ok(JsonHeadersResult { headers, sample, row_count: rows_len(&raw) })
 }
 
+#[cfg(feature = "native")]
 pub fn parse_json_sync(path: String, mapping: CsvMapping) -> Result<ParsedStdf, String> {
     let text = crate::read_file::read_text(&path).map_err(|e| e.to_string())?;
     let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
@@ -279,6 +281,7 @@ fn flatten_value_into(val: &Value, prefix: &str, out: &mut HashMap<String, Strin
     }
 }
 
+#[cfg(feature = "native")]
 fn rows_len(val: &Value) -> usize {
     match val {
         Value::Array(arr) => {

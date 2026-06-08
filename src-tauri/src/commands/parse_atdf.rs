@@ -1,5 +1,5 @@
-use tsmap_parsers::parse_atdf::parse_atdf_sync;
-use tsmap_parsers::types::ParsedStdf;
+use testdata_parser::parse_atdf::parse_atdf_sync;
+use testdata_parser::types::ParsedStdf;
 
 #[tauri::command]
 pub async fn parse_atdf(path: String) -> Result<ParsedStdf, String> {

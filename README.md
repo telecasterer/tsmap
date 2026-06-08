@@ -1,14 +1,16 @@
 # tsmap
 
-A desktop application for loading and visualising semiconductor wafer map data. Built with [Tauri v2](https://tauri.app/) (Rust backend) and [wmap](https://github.com/telecasterer/wafermap) (canvas rendering).
+A desktop and web application for loading and visualising semiconductor wafer map data. Built with [Tauri v2](https://tauri.app/) (Rust backend), a WASM parser for the browser, and [wmap](https://github.com/telecasterer/wafermap) (canvas rendering).
 
 ## Features
 
 - **Open** CSV, JSON, ATDF, and STDF wafer map files
 - **Multi-wafer** — all formats support multiple wafers; renders as a gallery automatically
 - **Stats & findings** — yield, bin breakdown, ring/quadrant analysis, and spatial findings via `analyzeWaferMap`
+- **Charts** — yield heatmap and per-test box plots across wafers
 - **PNG export** — save any wafer map from the toolbar
-- **Cross-platform** — Linux (Wayland/X11), macOS, Windows 11
+- **Charts** — yield by wafer, bin pareto, per-test box plots and histograms
+- **Cross-platform** — Linux (Wayland/X11), macOS, Windows 11; also runs in the browser via WASM
 
 ## Supported formats
 
@@ -24,9 +26,10 @@ A desktop application for loading and visualising semiconductor wafer map data. 
 ```bash
 npm install
 npm run tauri dev       # full Tauri app (Rust + frontend)
-npx vite --port 5300    # frontend only (no file parsing — all parsers need Tauri)
+npm run dev:web         # web version at http://localhost:5301 (uses WASM parser)
 cargo check             # type-check Rust (run from src-tauri/)
 npx tsc --noEmit        # type-check TypeScript
+cargo test              # run parser tests (run from packages/parsers/)
 ```
 
 ### Generating test files
@@ -36,22 +39,44 @@ python3 scripts/generate_stdf.py /tmp/test.stdf   # synthetic STDF — 3 wafers,
 python3 scripts/generate_atdf.py /tmp/test.atdf   # synthetic ATDF — same structure
 ```
 
+### Building the WASM parser package
+
+The parsers are extracted to a shared crate (`packages/parsers`) that builds for both native Tauri and WASM. To produce the `@paulrobins/testdata-parser` npm package:
+
+```bash
+cd packages/parsers
+wasm-pack build --target web -s paulrobins --no-default-features --features wasm
+# output: packages/parsers/pkg/
+```
+
+Requires `wasm-pack` (`cargo install wasm-pack`) and the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`).
+
 ## Architecture
 
 ```
 src/
-  main.ts          — app entry: file open, PNG save intercept, renderWafers
-  fileLoader.ts    — loadStdfPath() for STDF
+  main.ts          — app entry: file open, renderWafers, chart view
+  platform.ts      — platform adapter: Tauri IPC (desktop) or WASM (browser)
+  mappingUI.ts     — CSV/JSON column mapping overlay
+  multiFileUI.ts   — multi-file rename and append confirmation
+  charts/          — yield heatmap, bin pareto, box plot, histogram charts
   types.ts         — shared types: ParsedFile, WaferData, TestDef, LotMeta
 
-src-tauri/src/commands/
-  parse_stdf.rs    — parse_stdf(path) → ParsedStdf — STDF V4 binary
-  parse_atdf.rs    — parse_atdf(path) → ParsedStdf — ATDF ASCII
-  parse_csv.rs     — parse_csv(path, mapping) → ParsedStdf — CSV/TSV/DAT
-  parse_json.rs    — parse_json(path, mapping) → ParsedStdf — JSON array
-  pick_file.rs     — pick_file() / pick_files() — zenity on Linux, rfd on macOS/Windows
-  save_file.rs     — save_file(bytes, defaultName) — zenity --save on Linux, rfd elsewhere
-  write_temp_html.rs — write_temp_html(html) — opens wmap HTML reports in the system browser
+packages/parsers/  — shared Rust crate (native + WASM targets)
+  src/types.rs     — DieResult, WaferData, ParsedStdf, LotMeta, TestDef
+  src/parse_stdf.rs — STDF V4 binary parser
+  src/parse_atdf.rs — ATDF ASCII parser
+  src/parse_csv.rs  — CSV/TSV parser with column mapping
+  src/parse_json.rs — JSON array parser with column mapping
+  src/read_file.rs  — read_bytes / read_text with transparent .gz decompression
+
+src-tauri/src/commands/  — thin Tauri async wrappers over packages/parsers
+  parse_stdf.rs    — parse_stdf(path)
+  parse_atdf.rs    — parse_atdf(path)
+  parse_csv.rs     — csv_headers(path), parse_csv(path, mapping)
+  parse_json.rs    — json_headers(path), parse_json(path, mapping)
+  extract_archive.rs — extract_archive(path), cleanup_extract()
+  write_temp_html.rs — write_temp_html(html) — opens wmap HTML reports
 
 scripts/
   generate_stdf.py — generates a valid binary STDF V4 test file

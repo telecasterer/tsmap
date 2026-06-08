@@ -1,6 +1,6 @@
-use tsmap_parsers::parse_csv::CsvMapping;
-use tsmap_parsers::parse_json::{json_headers_sync, parse_json_sync, JsonHeadersResult};
-use tsmap_parsers::types::ParsedStdf;
+use testdata_parser::parse_csv::CsvMapping;
+use testdata_parser::parse_json::{json_headers_sync, parse_json_sync, JsonHeadersResult};
+use testdata_parser::types::ParsedStdf;
 
 #[tauri::command]
 pub async fn json_headers(path: String) -> Result<JsonHeadersResult, String> {

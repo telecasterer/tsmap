@@ -28,7 +28,7 @@ tauri-plugin-fs = "2.5.1"
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
 libc = "0.2.186"
 zip = "8.6.0"
-tsmap-parsers = { path = "../packages/parsers", features = ["native"] }
+testdata-parser = { path = "../packages/parsers", features = ["native"] }
 
 [dev-dependencies]
 tempfile = "3"

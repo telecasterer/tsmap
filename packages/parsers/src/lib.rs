@@ -42,4 +42,38 @@ mod wasm {
             .map(|r| to_value(&r).unwrap())
             .map_err(|e| JsValue::from_str(&e))
     }
+
+    #[wasm_bindgen]
+    pub fn stdf_test_names(bytes: &[u8]) -> Result<JsValue, JsValue> {
+        crate::parse_stdf::parse_stdf_test_names(bytes)
+            .map(|r| to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen]
+    pub fn parse_stdf_filtered(bytes: &[u8], selected: JsValue) -> Result<JsValue, JsValue> {
+        let selected: Vec<u32> = serde_wasm_bindgen::from_value(selected)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let set: std::collections::HashSet<u32> = selected.into_iter().collect();
+        crate::parse_stdf::parse_stdf_from_bytes_filtered(bytes, &set)
+            .map(|r| to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen]
+    pub fn atdf_test_names(bytes: &[u8]) -> Result<JsValue, JsValue> {
+        crate::parse_atdf::parse_atdf_test_names(bytes)
+            .map(|r| to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen]
+    pub fn parse_atdf_filtered(bytes: &[u8], selected: JsValue) -> Result<JsValue, JsValue> {
+        let selected: Vec<u32> = serde_wasm_bindgen::from_value(selected)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let set: std::collections::HashSet<u32> = selected.into_iter().collect();
+        crate::parse_atdf::parse_atdf_from_bytes_filtered(bytes, &set)
+            .map(|r| to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
+    }
 }

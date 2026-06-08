@@ -27,7 +27,7 @@ without a browser. Builds for Linux, macOS, and Windows are attached to each
 
 | Format | Notes |
 |--------|-------|
-| STDF (`.stdf`, `.std`) | Binary V4 — multi-wafer lots, PTR and FTR tests |
+| STDF (`.stdf`, `.std`) | Binary V4 — multi-wafer lots, PTR and FTR tests; test selector shown for files with >200 tests |
 | ATDF (`.atdf`, `.atd`) | ASCII equivalent of STDF |
 | CSV (`.csv`, `.txt`, `.dat`) | Column mapping step; wide and long (pivot) formats |
 | JSON (`.json`) | Flat array or nested `[{ wafer, results: [{die}] }]` |

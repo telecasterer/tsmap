@@ -19,6 +19,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["native"]
 native = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+bench = []   # enables parse_stdf_from_bytes_timed
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

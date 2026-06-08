@@ -24,6 +24,8 @@ export interface FileHandle {
   path?: string;
 }
 
+export type StdfTestNames = Record<string, TestDef>;
+
 export interface Platform {
   pickFiles(): Promise<FileHandle[]>;
   expandArchives(files: FileHandle[]): Promise<FileHandle[]>;
@@ -35,6 +37,10 @@ export interface Platform {
   jsonHeaders(file: FileHandle): Promise<HeadersResult>;
   savePng(blob: Blob, stem: string): Promise<void>;
   openReport(html: string): void;
+  stdfTestNames(file: FileHandle): Promise<StdfTestNames>;
+  atdfTestNames(file: FileHandle): Promise<StdfTestNames>;
+  parseStdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
+  parseAtdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
 }
 
 // ── Tauri platform ────────────────────────────────────────────────────────────
@@ -131,6 +137,26 @@ function makeTauriPlatform(): Platform {
 
     openReport(html) {
       getInvoke().then(invoke => invoke('write_temp_html', { html }));
+    },
+
+    async stdfTestNames(file) {
+      const invoke = await getInvoke();
+      return invoke<StdfTestNames>('stdf_test_names', { path: file.path });
+    },
+
+    async atdfTestNames(file) {
+      const invoke = await getInvoke();
+      return invoke<StdfTestNames>('atdf_test_names', { path: file.path });
+    },
+
+    async parseStdfFiltered(file, selected) {
+      const invoke = await getInvoke();
+      return invoke<RustParsedFile>('parse_stdf_filtered', { path: file.path, selected });
+    },
+
+    async parseAtdfFiltered(file, selected) {
+      const invoke = await getInvoke();
+      return invoke<RustParsedFile>('parse_atdf_filtered', { path: file.path, selected });
     },
   };
 }
@@ -288,6 +314,26 @@ function makeWebPlatform(): Platform {
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+
+    async stdfTestNames(file) {
+      const wasm = await loadWasm();
+      return wasm.stdf_test_names(file.bytes) as StdfTestNames;
+    },
+
+    async atdfTestNames(file) {
+      const wasm = await loadWasm();
+      return wasm.atdf_test_names(file.bytes) as StdfTestNames;
+    },
+
+    async parseStdfFiltered(file, selected) {
+      const wasm = await loadWasm();
+      return wasm.parse_stdf_filtered(file.bytes, selected) as RustParsedFile;
+    },
+
+    async parseAtdfFiltered(file, selected) {
+      const wasm = await loadWasm();
+      return wasm.parse_atdf_filtered(file.bytes, selected) as RustParsedFile;
     },
   };
 }

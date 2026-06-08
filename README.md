@@ -10,6 +10,7 @@ A desktop and web application for loading and visualising semiconductor wafer ma
 - **Multi-wafer** — all formats support multiple wafers; renders as a gallery automatically
 - **Stats & findings** — yield, bin breakdown, ring/quadrant analysis, and spatial findings
 - **Charts** — yield by wafer, bin pareto, per-test box plots and histograms
+- **Test selector** — for files with many tests, a two-pass flow lets you choose which tests to import before the full parse; "Filter tests…" re-opens the selector after load
 - **PNG export** — save any wafer map from the toolbar
 - **Cross-platform** — Linux (Wayland/X11), macOS, Windows 11; also runs in the browser via WASM
 
@@ -17,8 +18,8 @@ A desktop and web application for loading and visualising semiconductor wafer ma
 
 | Format | Parsing | Notes |
 | ------ | ------- | ----- |
-| STDF | Rust | Binary V4; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
-| ATDF | Rust | ASCII; handles MIR/WIR/WRR/SDR/PIR/PRR/PTR/FTR |
+| STDF | Rust | Binary V4; MIR (lot meta), SDR (site map), WIR/WRR (wafer), PIR/PRR (die — hbin, sbin, x, y), PTR/FTR (parametric/functional test values) |
+| ATDF | Rust | ASCII V4; MIR (lot meta), WIR/WRR (wafer), PIR/PRR (die — hbin, sbin, x, y), PTR/FTR (parametric/functional test values) |
 | CSV | Rust | Column mapping step before render; supports wide and long (pivot) formats |
 | JSON | Rust | Flat array or nested `[{ wafer fields, results: [{die}] }]`; same mapping step as CSV |
 
@@ -36,8 +37,9 @@ cargo test              # run parser tests (run from packages/parsers/)
 ### Generating test files
 
 ```bash
-python3 scripts/generate_stdf.py /tmp/test.stdf   # synthetic STDF — 3 wafers, 4 tests
-python3 scripts/generate_atdf.py /tmp/test.atdf   # synthetic ATDF — same structure
+python3 scripts/generate_stdf.py /tmp/test.stdf         # synthetic STDF — 3 wafers, 4 tests
+python3 scripts/generate_stdf_large.py /tmp/large.stdf  # large STDF — 25 wafers, 50 tests, ~10k dies/wafer (341 MB)
+python3 scripts/generate_atdf.py /tmp/test.atdf         # synthetic ATDF — same structure
 ```
 
 ### Building and publishing the WASM parser package
@@ -69,32 +71,38 @@ npx tsc --noEmit   # verify types still resolve
 
 ```text
 src/
-  main.ts          — app entry: file open, renderWafers, chart view
+  main.ts          — app entry: file open, two-pass test selector, renderWafers, chart view
   platform.ts      — platform adapter: Tauri IPC (desktop) or WASM (browser)
   mappingUI.ts     — CSV/JSON column mapping overlay
   multiFileUI.ts   — multi-file rename and append confirmation
+  testSelectorUI.ts — test selector overlay for large STDF/ATDF files
   charts/          — yield heatmap, bin pareto, box plot, histogram charts
   types.ts         — shared types: ParsedFile, WaferData, TestDef, LotMeta
 
 packages/parsers/  — shared Rust crate (native + WASM targets)
   src/types.rs     — DieResult, WaferData, ParsedStdf, LotMeta, TestDef
-  src/parse_stdf.rs — STDF V4 binary parser
-  src/parse_atdf.rs — ATDF ASCII parser
+  src/parse_stdf.rs — STDF V4 binary parser; includes first-pass scan and filtered parse
+  src/parse_atdf.rs — ATDF ASCII parser; includes first-pass scan and filtered parse
   src/parse_csv.rs  — CSV/TSV parser with column mapping
   src/parse_json.rs — JSON array parser with column mapping
   src/read_file.rs  — read_bytes / read_text with transparent .gz decompression
 
 src-tauri/src/commands/  — thin Tauri async wrappers over packages/parsers
-  parse_stdf.rs    — parse_stdf(path)
-  parse_atdf.rs    — parse_atdf(path)
-  parse_csv.rs     — csv_headers(path), parse_csv(path, mapping)
-  parse_json.rs    — json_headers(path), parse_json(path, mapping)
+  parse_stdf.rs      — parse_stdf(path)
+  parse_atdf.rs      — parse_atdf(path)
+  parse_csv.rs       — csv_headers(path), parse_csv(path, mapping)
+  parse_json.rs      — json_headers(path), parse_json(path, mapping)
+  stdf_test_names.rs — stdf_test_names(path) — first-pass test name scan
+  atdf_test_names.rs — atdf_test_names(path) — first-pass test name scan
+  parse_stdf_filtered.rs — parse_stdf_filtered(path, selected) — filtered parse
+  parse_atdf_filtered.rs — parse_atdf_filtered(path, selected) — filtered parse
   extract_archive.rs — extract_archive(path), cleanup_extract()
   write_temp_html.rs — write_temp_html(html) — opens wmap HTML reports
 
 scripts/
-  generate_stdf.py — generates a valid binary STDF V4 test file
-  generate_atdf.py — generates a valid ASCII ATDF test file
+  generate_stdf.py       — generates a valid binary STDF V4 test file (3 wafers, 4 tests)
+  generate_stdf_large.py — generates a large STDF (25 wafers, 50 tests, ~10k dies/wafer)
+  generate_atdf.py       — generates a valid ASCII ATDF test file
 ```
 
 ## Dependencies

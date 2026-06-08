@@ -4,9 +4,10 @@ import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render'
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
-import type { FileHandle, RustParsedFile } from './platform';
+import type { FileHandle, RustParsedFile, StdfTestNames } from './platform';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
+import { showTestSelectorOverlay } from './testSelectorUI';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
@@ -33,23 +34,28 @@ function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
-const container  = document.getElementById('map-container')!;
-const openBtn    = document.getElementById('open-btn')!;
-const addBtn     = document.getElementById('add-btn') as HTMLButtonElement;
-const chartsBtn  = document.getElementById('charts-btn') as HTMLButtonElement;
-const resetBtn   = document.getElementById('reset-btn') as HTMLButtonElement;
-const helpBtn    = document.getElementById('help-btn') as HTMLButtonElement;
-const fileLabel  = document.getElementById('file-label')!;
-const busySpinner = document.getElementById('busy-spinner')!;
-const logList    = document.getElementById('log-list')!;
-const logToggle  = document.getElementById('log-toggle')!;
-const logPanel   = document.getElementById('log-panel')!;
+const container       = document.getElementById('map-container')!;
+const openBtn         = document.getElementById('open-btn')!;
+const addBtn          = document.getElementById('add-btn') as HTMLButtonElement;
+const chartsBtn       = document.getElementById('charts-btn') as HTMLButtonElement;
+const filterTestsBtn  = document.getElementById('filter-tests-btn') as HTMLButtonElement;
+const resetBtn        = document.getElementById('reset-btn') as HTMLButtonElement;
+const helpBtn         = document.getElementById('help-btn') as HTMLButtonElement;
+const fileLabel       = document.getElementById('file-label')!;
+const busySpinner     = document.getElementById('busy-spinner')!;
+const logList         = document.getElementById('log-list')!;
+const logToggle       = document.getElementById('log-toggle')!;
+const logPanel        = document.getElementById('log-panel')!;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let currentWafers: WaferData[] = [];
 let currentFileName = 'wafermap';
 let currentTestDefs: Record<string, TestDef> = {};
+
+// Tracks the most recently loaded STDF/ATDF files so "Filter tests…" can re-parse them.
+let currentBinaryFiles: FileHandle[] = [];
+let currentBinaryExt = ''; // 'stdf' | 'std' | 'atdf' | 'atd'
 
 // ── Chart mode state ──────────────────────────────────────────────────────────
 
@@ -164,6 +170,7 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   addBtn.disabled = wafers.length === 0;
   resetBtn.style.display = '';
   chartsBtn.style.display = wafers.length > 0 ? '' : 'none';
+  filterTestsBtn.style.display = currentBinaryFiles.length > 0 ? '' : 'none';
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
@@ -434,9 +441,12 @@ function renderChartsViewWork(loadedMsg: string) {
 function showEmptyState() {
   currentWafers = [];
   currentTestDefs = {};
+  currentBinaryFiles = [];
+  currentBinaryExt = '';
   addBtn.disabled = true;
   resetBtn.style.display = 'none';
   chartsBtn.style.display = 'none';
+  filterTestsBtn.style.display = 'none';
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
@@ -572,6 +582,56 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     return; // cancelled
   }
 
+  // ── Test selector for STDF/ATDF files (two-pass) ─────────────────────────
+  const TEST_SELECTOR_THRESHOLD = 200;
+  const isBinaryExt = (e: string) => e === 'stdf' || e === 'std' || e === 'atdf' || e === 'atd';
+  const binaryFiles = files.filter(f => isBinaryExt(effectiveExt(f.name)));
+
+  let testSelection: number[] | null = null; // null = no filter (parse all tests)
+  let firstPassTestDefs: StdfTestNames | null = null; // full test def map from first-pass scan
+
+  if (binaryFiles.length > 0) {
+    // Store for "Filter tests…" button — pick the largest by byte size
+    const largestBinary = binaryFiles.reduce((a, b) => {
+      const aSize = a.bytes.length || (a.path ? Infinity : 0);
+      const bSize = b.bytes.length || (b.path ? Infinity : 0);
+      return aSize >= bSize ? a : b;
+    });
+    currentBinaryFiles = binaryFiles;
+    currentBinaryExt = effectiveExt(largestBinary.name);
+
+    setBusy(`Scanning ${largestBinary.name} for tests…`);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    try {
+      firstPassTestDefs = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
+        ? await platform.atdfTestNames(largestBinary)
+        : await platform.stdfTestNames(largestBinary);
+    } catch (e) {
+      log('warn', `Test name scan failed: ${(e as Error).message} — parsing all tests`);
+    }
+
+    if (firstPassTestDefs) {
+      const testCount = Object.keys(firstPassTestDefs).length;
+      log('info', `${largestBinary.name}: ${testCount} tests found`);
+      if (testCount > TEST_SELECTOR_THRESHOLD) {
+        testSelection = await new Promise<number[] | null>(resolve => {
+          showTestSelectorOverlay(
+            firstPassTestDefs!,
+            sel => resolve(sel),
+            () => resolve(null),
+            { fromLargestFile: binaryFiles.length > 1 },
+          );
+        });
+        if (testSelection === null) {
+          setIdle();
+          return;
+        }
+        log('info', `Test filter: ${testSelection.length} of ${testCount} tests selected`);
+      }
+    }
+  }
+
   // Parse all files
   const entries: FileWaferEntry[] = [];
   for (const file of files) {
@@ -580,13 +640,25 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     try {
       let parsed: ParsedFile;
       if (fileExt === 'stdf' || fileExt === 'std') {
-        parsed = rustToLocal(await platform.parseStdf(file), file.name);
+        parsed = testSelection !== null
+          ? rustToLocal(await platform.parseStdfFiltered(file, testSelection), file.name)
+          : rustToLocal(await platform.parseStdf(file), file.name);
       } else if (fileExt === 'atdf' || fileExt === 'atd') {
-        parsed = rustToLocal(await platform.parseAtdf(file), file.name);
+        parsed = testSelection !== null
+          ? rustToLocal(await platform.parseAtdfFiltered(file, testSelection), file.name)
+          : rustToLocal(await platform.parseAtdf(file), file.name);
       } else if (fileExt === 'json') {
         parsed = rustToLocal(await platform.parseJson(file, mapping!), file.name);
       } else {
         parsed = rustToLocal(await platform.parseCsv(file, mapping!), file.name);
+      }
+      // Backfill testDefs from the first-pass scan for any tests that were shown in
+      // the selector but never appeared as PTR records in the filtered pass
+      // (e.g. stop-on-fail: some dies never reached those tests).
+      if (testSelection !== null && firstPassTestDefs) {
+        for (const [key, def] of Object.entries(firstPassTestDefs)) {
+          if (!(key in parsed.testDefs)) parsed.testDefs[key] = def;
+        }
       }
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
@@ -732,6 +804,76 @@ resetBtn.addEventListener('click', () => {
   if (currentWafers.length === 0) return;
   setIdle();
   showEmptyState();
+});
+
+filterTestsBtn.addEventListener('click', async () => {
+  if (busy || currentBinaryFiles.length === 0) return;
+
+  const largestBinary = currentBinaryFiles.reduce((a, b) => {
+    const aSize = a.bytes.length || (a.path ? Infinity : 0);
+    const bSize = b.bytes.length || (b.path ? Infinity : 0);
+    return aSize >= bSize ? a : b;
+  });
+
+  setBusy(`Scanning ${largestBinary.name} for tests…`);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  let testNames: StdfTestNames;
+  try {
+    testNames = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
+      ? await platform.atdfTestNames(largestBinary)
+      : await platform.stdfTestNames(largestBinary);
+  } catch (e) {
+    log('error', `Test name scan failed: ${(e as Error).message}`);
+    setIdle(`${currentWafers.length} wafers loaded`);
+    return;
+  }
+
+  setIdle(`${currentWafers.length} wafers loaded`);
+
+  const testSelection = await new Promise<number[] | null>(resolve => {
+    showTestSelectorOverlay(
+      testNames,
+      sel => resolve(sel),
+      () => resolve(null),
+      { fromLargestFile: currentBinaryFiles.length > 1 },
+    );
+  });
+
+  if (testSelection === null) return;
+
+  const entries: FileWaferEntry[] = [];
+  for (const file of currentBinaryFiles) {
+    const fileExt = currentBinaryExt;
+    setBusy(`Parsing ${file.name}…`);
+    try {
+      const raw = fileExt === 'atdf' || fileExt === 'atd'
+        ? await platform.parseAtdfFiltered(file, testSelection)
+        : await platform.parseStdfFiltered(file, testSelection);
+      const parsed = rustToLocal(raw, file.name);
+      // Backfill any test defs that stop-on-fail prevents from appearing in filtered parse
+      for (const [key, def] of Object.entries(testNames)) {
+        if (!(key in parsed.testDefs)) parsed.testDefs[key] = def;
+      }
+      entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
+      log('info', `Re-parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''} (${testSelection.length} tests)`);
+    } catch (e) {
+      log('error', `Failed to re-parse ${file.name}: ${(e as Error).message}`);
+    }
+  }
+
+  if (entries.length === 0) {
+    setIdle(`${currentWafers.length} wafers loaded`);
+    return;
+  }
+
+  const allWafers = entries.flatMap(e => e.parsed.wafers);
+  const mergedDefs = Object.assign({}, ...entries.map(e => e.parsed.testDefs));
+  renderWafers(
+    allWafers,
+    entries.length === 1 ? entries[0].fileName : `${entries.length} files`,
+    mergedDefs,
+  );
 });
 
 helpBtn.addEventListener('click', () => {

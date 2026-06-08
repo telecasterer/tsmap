@@ -223,6 +223,276 @@ pub fn parse_atdf_sync(path: String) -> Result<ParsedStdf, String> {
     parse_atdf_str(&text)
 }
 
+// ── First-pass test name scan ─────────────────────────────────────────────────
+
+/// Scans the file for PTR/FTR records only, collecting test names and limits.
+/// Does not accumulate die results. Returns a flat map of test_num string → TestDef.
+pub fn parse_atdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, String> {
+    let raw = String::from_utf8(bytes.to_vec())
+        .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
+    parse_atdf_test_names_str(&raw)
+}
+
+fn parse_atdf_test_names_str(raw: &str) -> Result<HashMap<String, TestDef>, String> {
+    let mut records: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        if line.starts_with(' ') {
+            if let Some(last) = records.last_mut() {
+                last.push_str(line.trim_start());
+                continue;
+            }
+        }
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            records.push(trimmed.to_string());
+        }
+    }
+
+    let delim: char = records.iter()
+        .find(|r| r.starts_with("FAR:"))
+        .and_then(|r| r.chars().nth(5))
+        .unwrap_or('|');
+
+    let mut test_defs: HashMap<String, TestDef> = HashMap::new();
+
+    for rec in &records {
+        let colon = match rec.find(':') {
+            Some(i) => i,
+            None => continue,
+        };
+        let name = &rec[..colon];
+        let raw_fields: Vec<&str> = rec[colon + 1..].split(delim).collect();
+
+        match name {
+            "PTR" => {
+                let f = field_map(PTR, &raw_fields);
+                let test_num = get(&f, "TEST_NUM").to_string();
+                test_defs.entry(test_num.clone()).or_insert_with(|| {
+                    let lo = get(&f, "LO_LIMIT").parse::<f64>().ok();
+                    let hi = get(&f, "HI_LIMIT").parse::<f64>().ok();
+                    TestDef {
+                        name: {
+                            let t = get(&f, "TEST_TXT");
+                            if t.is_empty() { test_num.clone() } else { t.to_string() }
+                        },
+                        test_type: "P".to_string(),
+                        lo_limit: lo,
+                        hi_limit: hi,
+                        units: nonempty(get(&f, "UNITS")),
+                    }
+                });
+            }
+            "FTR" => {
+                let f = field_map(FTR, &raw_fields);
+                let test_num = get(&f, "TEST_NUM").to_string();
+                test_defs.entry(test_num.clone()).or_insert_with(|| TestDef {
+                    name: test_num.clone(),
+                    test_type: "F".to_string(),
+                    lo_limit: None,
+                    hi_limit: None,
+                    units: None,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    Ok(test_defs)
+}
+
+// ── Filtered parse ────────────────────────────────────────────────────────────
+
+/// Like `parse_atdf_from_bytes` but skips die accumulation for test numbers not
+/// in `selected`. Test defs are still registered for all tests.
+pub fn parse_atdf_from_bytes_filtered(
+    bytes: &[u8],
+    selected: &std::collections::HashSet<u32>,
+) -> Result<ParsedStdf, String> {
+    let raw = String::from_utf8(bytes.to_vec())
+        .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
+    parse_atdf_str_filtered(&raw, selected)
+}
+
+fn parse_atdf_str_filtered(
+    raw: &str,
+    selected: &std::collections::HashSet<u32>,
+) -> Result<ParsedStdf, String> {
+    let mut records: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        if line.starts_with(' ') {
+            if let Some(last) = records.last_mut() {
+                last.push_str(line.trim_start());
+                continue;
+            }
+        }
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            records.push(trimmed.to_string());
+        }
+    }
+
+    let delim: char = records.iter()
+        .find(|r| r.starts_with("FAR:"))
+        .and_then(|r| r.chars().nth(5))
+        .unwrap_or('|');
+
+    let mut meta = LotMeta::default();
+    let mut test_defs: HashMap<String, TestDef> = HashMap::new();
+    let mut wafers: Vec<WaferData> = Vec::new();
+    let mut current_wafer: Option<WaferData> = None;
+    let mut pending_values: HashMap<String, HashMap<String, f64>> = HashMap::new();
+    let mut pending_site: HashMap<String, u32> = HashMap::new();
+
+    for rec in &records {
+        let colon = match rec.find(':') {
+            Some(i) => i,
+            None => continue,
+        };
+        let name = &rec[..colon];
+        let raw_fields: Vec<&str> = rec[colon + 1..].split(delim).collect();
+
+        match name {
+            "MIR" => {
+                let f = field_map(MIR, &raw_fields);
+                meta.lot_id      = nonempty(get(&f, "LOT_ID"));
+                meta.part_type   = nonempty(get(&f, "PART_TYP"));
+                meta.job_name    = nonempty(get(&f, "JOB_NAM"));
+                meta.node_name   = nonempty(get(&f, "NODE_NAM"));
+                meta.tester_type = nonempty(get(&f, "TSTR_TYP"));
+                meta.sublot_id   = nonempty(get(&f, "SBLOT_ID"));
+            }
+            "WIR" => {
+                let f = field_map(WIR, &raw_fields);
+                let wafer_id = {
+                    let id = get(&f, "WAFER_ID");
+                    if id.is_empty() { format!("W{}", wafers.len() + 1) } else { id.to_string() }
+                };
+                current_wafer = Some(WaferData {
+                    wafer_id,
+                    results: Vec::new(),
+                    part_count: None,
+                    good_count: None,
+                    fail_count: None,
+                });
+            }
+            "WRR" => {
+                let f = field_map(WRR, &raw_fields);
+                if let Some(mut w) = current_wafer.take() {
+                    let wid = get(&f, "WAFER_ID");
+                    if !wid.is_empty() { w.wafer_id = wid.to_string(); }
+                    w.part_count = get(&f, "PART_CNT").parse().ok();
+                    w.good_count = get(&f, "GOOD_CNT").parse().ok();
+                    w.fail_count = match (w.part_count, w.good_count) {
+                        (Some(p), Some(g)) => Some(p.saturating_sub(g)),
+                        _ => None,
+                    };
+                    wafers.push(w);
+                }
+            }
+            "PIR" => {
+                let f = field_map(PIR, &raw_fields);
+                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
+                let site: u32 = get(&f, "SITE_NUM").parse().unwrap_or(1);
+                pending_site.insert(key.clone(), site);
+                pending_values.insert(key, HashMap::new());
+            }
+            "PTR" => {
+                let f = field_map(PTR, &raw_fields);
+                let test_num_str = get(&f, "TEST_NUM").to_string();
+                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
+                // Always register test def
+                test_defs.entry(test_num_str.clone()).or_insert_with(|| {
+                    let lo = get(&f, "LO_LIMIT").parse::<f64>().ok();
+                    let hi = get(&f, "HI_LIMIT").parse::<f64>().ok();
+                    TestDef {
+                        name: {
+                            let t = get(&f, "TEST_TXT");
+                            if t.is_empty() { test_num_str.clone() } else { t.to_string() }
+                        },
+                        test_type: "P".to_string(),
+                        lo_limit: lo,
+                        hi_limit: hi,
+                        units: nonempty(get(&f, "UNITS")),
+                    }
+                });
+                // Only accumulate if selected
+                let test_num_u32: Option<u32> = test_num_str.parse().ok();
+                if test_num_u32.map_or(true, |n| selected.contains(&n)) {
+                    if let Ok(result) = get(&f, "RESULT").parse::<f64>() {
+                        if let Some(vals) = pending_values.get_mut(&key) {
+                            vals.insert(test_num_str, result);
+                        }
+                    }
+                }
+            }
+            "FTR" => {
+                let f = field_map(FTR, &raw_fields);
+                let test_num_str = get(&f, "TEST_NUM").to_string();
+                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
+                // Always register test def
+                test_defs.entry(test_num_str.clone()).or_insert_with(|| TestDef {
+                    name: test_num_str.clone(),
+                    test_type: "F".to_string(),
+                    lo_limit: None,
+                    hi_limit: None,
+                    units: None,
+                });
+                // Only accumulate if selected
+                let test_num_u32: Option<u32> = test_num_str.parse().ok();
+                if test_num_u32.map_or(true, |n| selected.contains(&n)) {
+                    let passed = get(&f, "PASS_FAIL").eq_ignore_ascii_case("P");
+                    if let Some(vals) = pending_values.get_mut(&key) {
+                        vals.insert(test_num_str, if passed { 1.0 } else { 0.0 });
+                    }
+                }
+            }
+            "PRR" => {
+                let f = field_map(PRR, &raw_fields);
+                let x: i32 = match get(&f, "X_COORD").parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let y: i32 = match get(&f, "Y_COORD").parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
+                let site_num = pending_site.remove(&key);
+                let test_values = pending_values.remove(&key).unwrap_or_default();
+                let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
+                let sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok()
+                    .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
+                    .or(hbin);
+                let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
+                let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values };
+                match current_wafer.as_mut() {
+                    Some(w) => w.results.push(die),
+                    None => {
+                        let mut w = WaferData {
+                            wafer_id: format!("W{}", wafers.len() + 1),
+                            results: Vec::new(),
+                            part_count: None,
+                            good_count: None,
+                            fail_count: None,
+                        };
+                        w.results.push(die);
+                        current_wafer = Some(w);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(w) = current_wafer {
+        if !w.results.is_empty() {
+            wafers.push(w);
+        }
+    }
+
+    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

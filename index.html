@@ -140,6 +140,12 @@
       }
       #charts-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #charts-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #filter-tests-btn {
+        background: none; border: 1px solid var(--border-dim); border-radius: 4px;
+        color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
+        white-space: nowrap;
+      }
+      #filter-tests-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #reset-btn {
         background: none; border: 1px solid var(--border-muted); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
@@ -313,6 +319,7 @@
         </div>
         <button id="add-btn" disabled>Add files</button>
         <button id="charts-btn" style="display:none">Charts</button>
+        <button id="filter-tests-btn" style="display:none">Filter tests…</button>
         <button id="reset-btn" style="display:none">Clear</button>
         <span>or drop a file anywhere</span>
         <span id="busy-spinner"></span>

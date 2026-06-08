@@ -12,6 +12,10 @@ Click **Open file** to pick one or more files from your device, or drag and drop
 anywhere in the window. Multiple files are loaded as a batch and merged into a single
 gallery, with a rename step to label each wafer.
 
+For STDF and ATDF files with more than 200 tests, a test selector overlay appears before
+parsing — pick which tests to import, then click **Import**. A **Filter tests…** button in
+the toolbar lets you change your selection at any time after load.
+
 ## Supported formats
 
 All four formats are supported in the browser:

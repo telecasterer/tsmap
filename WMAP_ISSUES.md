@@ -7,9 +7,9 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.13.3 |
+| wmap version in use | 0.13.4 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| Last updated | 2026-06-08 (session: issue 9 fixed, issue 10 Tier 1 shipped) |
+| Last updated | 2026-06-09 (session: updated to 0.13.4; issues 9 and 11 now fixed) |
 
 ## Rust Backend Notes
 
@@ -153,7 +153,7 @@ their data's bin range. At minimum, the TSDoc should call out that omitting
 
 **Fix applied:** `softBinColor(bin)` now uses a discrete categorical palette (same as `hardBinColor`) — no `maxBin` parameter, no gradient. Remove the `maxSoftBin` computation in `src/main.ts` and call `softBinColor(bin)` directly.
 
-### ~~9. `analyzeWaferMap` lacks per-wafer test statistics — tsmap must re-walk results for box plots~~ (fixed in Unreleased)
+### ~~9. `analyzeWaferMap` lacks per-wafer test statistics — tsmap must re-walk results for box plots~~ (fixed in v0.13.4)
 
 **Where:** `packages/stats/analyzeWaferMap.ts` — `computePerTestStats` aggregates test values across all dies into a single lot-level entry per test (`StatsSummary.stats.perTestStats`). There is no per-wafer breakdown.
 
@@ -161,15 +161,13 @@ their data's bin range. At minimum, the TSDoc should call out that omitting
 
 **Fix applied:** `perWaferTestStats` added to `LotStatsSummary` (not `StatsSummary`) — projected from `perWafer[i].summary.stats.perTestStats` in `analyzeWaferLot`. Shape matches the proposal above plus a `label` field. Only present when `enableTestValueAnalysis: true`. tsmap can drop `buildTestBoxplotData` and read `lotSummary.perWaferTestStats` directly.
 
-### 11. Die hover tooltip has no row cap — becomes taller than the viewport with many tests
+### ~~11. Die hover tooltip has no row cap — becomes taller than the viewport with many tests~~ (fixed in v0.13.4)
 
 **Where:** wmap die tooltip renderer (wherever per-die `testValues` are listed in the hover popup).
 
 **Problem:** When a die has many `testValues` (e.g. 30+ selected tests after filtering), the tooltip grows to match, easily exceeding the viewport height. There is no cap on the number of rows shown and no scrolling or truncation.
 
-**Suggested fix:** Cap tooltip test rows at a sensible limit (e.g. 10–15), add a "…and N more" overflow line, or make the tooltip scrollable with a `max-height` and `overflow-y: auto`. The cap should be configurable via a render option.
-
-**Current workaround in tsmap:** None — the host has no access to the tooltip DOM. The test selector limits which tests are imported, so users can reduce the count manually, but there is no automatic cap.
+**Fix applied:** `buildHoverText` now accepts a `testLimit` parameter (default 12). When the die has more tests than the limit, the remainder are replaced with `…and N more`. `RenderOptions.tooltipTestLimit` threads the value through from `renderWaferMap`. tsmap can pass `tooltipTestLimit` if it needs a different cap.
 
 ---
 

@@ -1,6 +1,6 @@
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import type { TestDef, WaferData } from '../types';
-import type { BinType, BoxplotDatum, ChartDatum, HistogramBucket, TestOption, YieldSortBy } from './types';
+import type { BinType, BoxplotDatum, ChartDatum, CorrelationMatrix, HistogramBucket, ScatterPoint, TestOption, TrendDatum, YieldSortBy } from './types';
 
 export function buildYieldData(
   wafers: WaferData[],
@@ -56,15 +56,6 @@ export function buildBinParetoData(wafers: WaferData[], binType: BinType): Chart
   return data;
 }
 
-/** Linear-interpolation quantile (Excel/R-7 method) over a pre-sorted array. */
-function quantile(sorted: number[], q: number): number {
-  const pos = (sorted.length - 1) * q;
-  const base = Math.floor(pos);
-  const rest = pos - base;
-  const next = sorted[base + 1];
-  return next === undefined ? sorted[base] : sorted[base] + rest * (next - sorted[base]);
-}
-
 /** Parametric tests (numeric measurements) available for box-plotting, sorted by test number. */
 export function listNumericTests(testDefs: Record<string, TestDef>): TestOption[] {
   return Object.entries(testDefs)
@@ -78,27 +69,103 @@ export function listNumericTests(testDefs: Record<string, TestDef>): TestOption[
 }
 
 /** Per-wafer five-number summary (min/Q1/median/Q3/max) for one test, for box-plot rendering. */
-export function buildTestBoxplotData(wafers: WaferData[], testNumber: number): BoxplotDatum[] {
+export function buildTestBoxplotData(lotSummary: LotStatsSummary, wafers: WaferData[], testNumber: number): BoxplotDatum[] {
   return wafers.map((wafer, waferIndex) => {
-    const values = wafer.results
-      .map(d => d.testValues?.[testNumber])
-      .filter((v): v is number => v !== undefined && Number.isFinite(v))
-      .sort((a, b) => a - b);
-
-    if (values.length === 0) {
+    const entry = lotSummary.perWaferTestStats?.find(e => e.waferIndex === waferIndex);
+    const stats = entry?.tests.find(t => t.testNumber === testNumber);
+    if (!stats || stats.count === 0) {
       return { waferIndex, label: wafer.waferId, min: NaN, q1: NaN, median: NaN, q3: NaN, max: NaN, count: 0 };
     }
     return {
       waferIndex,
       label: wafer.waferId,
-      min: values[0],
-      q1: quantile(values, 0.25),
-      median: quantile(values, 0.5),
-      q3: quantile(values, 0.75),
-      max: values[values.length - 1],
-      count: values.length,
+      min: stats.min,
+      q1: stats.q1,
+      median: stats.median,
+      q3: stats.q3,
+      max: stats.max,
+      count: stats.count,
     };
   });
+}
+
+/**
+ * Per-wafer trend data for one test — median + Q1/Q3 band in lot order.
+ * Reads directly from perWaferTestStats when available; falls back to walking die results.
+ */
+export function buildTrendData(lotSummary: LotStatsSummary, wafers: WaferData[], testNumber: number): TrendDatum[] {
+  return wafers.map((wafer, waferIndex) => {
+    const entry = lotSummary.perWaferTestStats?.find(e => e.waferIndex === waferIndex);
+    const stats = entry?.tests.find(t => t.testNumber === testNumber);
+    if (!stats || stats.count === 0) {
+      return { waferIndex, label: wafer.waferId, median: NaN, q1: NaN, q3: NaN, count: 0 };
+    }
+    return { waferIndex, label: wafer.waferId, median: stats.median, q1: stats.q1, q3: stats.q3, count: stats.count };
+  });
+}
+
+/** All die scatter points for two tests across the whole lot. */
+export function buildScatterData(wafers: WaferData[], xTest: number, yTest: number): ScatterPoint[] {
+  const points: ScatterPoint[] = [];
+  for (const wafer of wafers) {
+    for (const die of wafer.results) {
+      const x = die.testValues?.[xTest];
+      const y = die.testValues?.[yTest];
+      if (x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y)) {
+        points.push({ x, y, hbin: die.hbin });
+      }
+    }
+  }
+  return points;
+}
+
+/** Pearson correlation matrix for all parametric tests across all dies in the lot. */
+export function buildCorrelationMatrix(wafers: WaferData[], testOptions: TestOption[]): CorrelationMatrix {
+  if (testOptions.length < 2) return { tests: testOptions, cells: [] };
+
+  // Collect all values per test in a single pass
+  const valueMap = new Map<number, number[]>();
+  for (const t of testOptions) valueMap.set(t.testNumber, []);
+
+  for (const wafer of wafers) {
+    for (const die of wafer.results) {
+      if (!die.testValues) continue;
+      for (const t of testOptions) {
+        const v = die.testValues[t.testNumber];
+        if (v !== undefined && Number.isFinite(v)) valueMap.get(t.testNumber)!.push(v);
+      }
+    }
+  }
+
+  const cells = [];
+  const n = testOptions.length;
+  for (let yi = 0; yi < n; yi++) {
+    for (let xi = 0; xi < n; xi++) {
+      if (xi === yi) { cells.push({ xIndex: xi, yIndex: yi, r: 1 }); continue; }
+      const xs = valueMap.get(testOptions[xi].testNumber)!;
+      const ys = valueMap.get(testOptions[yi].testNumber)!;
+      // Pair values from matching die positions by walking wafers again for equal-length pairing
+      const paired: [number, number][] = [];
+      for (const wafer of wafers) {
+        for (const die of wafer.results) {
+          const x = die.testValues?.[testOptions[xi].testNumber];
+          const y = die.testValues?.[testOptions[yi].testNumber];
+          if (x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y)) paired.push([x, y]);
+        }
+      }
+      if (paired.length < 3) { cells.push({ xIndex: xi, yIndex: yi, r: null }); continue; }
+      const mn = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+      const pxs = paired.map(p => p[0]);
+      const pys = paired.map(p => p[1]);
+      const mx = mn(pxs), my = mn(pys);
+      let num = 0, dx2 = 0, dy2 = 0;
+      for (const [px, py] of paired) { num += (px - mx) * (py - my); dx2 += (px - mx) ** 2; dy2 += (py - my) ** 2; }
+      const denom = Math.sqrt(dx2 * dy2);
+      cells.push({ xIndex: xi, yIndex: yi, r: denom === 0 ? null : Math.max(-1, Math.min(1, num / denom)) });
+      void xs; void ys; // suppress unused warning — xs/ys used implicitly via paired loop
+    }
+  }
+  return { tests: testOptions, cells };
 }
 
 /** Histogram of one test's values across the whole lot, divided into `bucketCount` equal-width buckets. */

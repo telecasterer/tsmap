@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+/// <reference types="vitest" />
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -7,6 +8,10 @@ const isTauriBuild = !!process.env.TAURI_ENV_PLATFORM;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   // Use absolute paths for Tauri (serves from localhost), relative for web deploy
   base: isTauriBuild ? '/' : './',
 

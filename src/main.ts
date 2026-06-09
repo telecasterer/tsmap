@@ -1,36 +1,24 @@
 import { buildWaferMap } from '@paulrobins/wafermap';
-import type { PlotMode } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
-import type { FileHandle, RustParsedFile, StdfTestNames } from './platform';
+import type { FileHandle, StdfTestNames } from './platform';
+import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
-import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, disconnectAllObservers } from './charts/render';
+import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
-import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, listNumericTests } from './charts/aggregate';
+import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, buildScatterData, listNumericTests } from './charts/aggregate';
 import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
-import type { TestDef as WmapTestDef } from '@paulrobins/wafermap';
+
 
 const platform = createPlatform();
-
-// ── Utilities ─────────────────────────────────────────────────────────────────
-
-function basename(p: string): string {
-  return p.split(/[\\/]/).pop() ?? p;
-}
-
-// ── Rust command return shape ─────────────────────────────────────────────────
-
-function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
-  return { fileName, meta: r.meta, wafers: r.wafers, testDefs: r.testDefs };
-}
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
@@ -38,7 +26,7 @@ const container       = document.getElementById('map-container')!;
 const openBtn         = document.getElementById('open-btn')!;
 const addBtn          = document.getElementById('add-btn') as HTMLButtonElement;
 const chartsBtn       = document.getElementById('charts-btn') as HTMLButtonElement;
-const filterTestsBtn  = document.getElementById('filter-tests-btn') as HTMLButtonElement;
+const filterTestsBtn    = document.getElementById('filter-tests-btn') as HTMLButtonElement;
 const resetBtn        = document.getElementById('reset-btn') as HTMLButtonElement;
 const helpBtn         = document.getElementById('help-btn') as HTMLButtonElement;
 const fileLabel       = document.getElementById('file-label')!;
@@ -56,6 +44,8 @@ let currentTestDefs: Record<string, TestDef> = {};
 // Tracks the most recently loaded STDF/ATDF files so "Filter tests…" can re-parse them.
 let currentBinaryFiles: FileHandle[] = [];
 let currentBinaryExt = ''; // 'stdf' | 'std' | 'atdf' | 'atd'
+let currentTestNames: StdfTestNames | null = null; // first-pass scan result, reused by "Filter tests…"
+
 
 // ── Chart mode state ──────────────────────────────────────────────────────────
 
@@ -65,9 +55,23 @@ let viewMode: ViewMode = 'map';
 let yieldSortBy: YieldSortBy = 'yield';
 let binType: BinType = 'hbin';
 let chartColorScheme = 'default';
+// Boxplot test selector (independent)
 let selectedTestNumber: number | null = null;
 let boxplotLogScale = false;
+// Histogram has its own test selector and wafer selector
+let histogramTestNumber: number | null = null;
 let histogramWaferIndex: number | null = null;
+// Scatter has independent X and Y test selectors
+let scatterXTest: number | null = null;
+let scatterYTest: number | null = null;
+
+// Cached computed results — invalidated in renderWafers() whenever currentWafers changes.
+let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
+let cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
+let cachedBoxplotData: Map<number, ReturnType<typeof buildTestBoxplotData>> = new Map();
+let cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
+let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
+let cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
 
 // ── Log panel ─────────────────────────────────────────────────────────────────
 
@@ -142,24 +146,15 @@ if (isTauri) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-/** Convert tsmap's `Record<string, TestDef>` (loLimit/hiLimit/units) to wmap's `TestDef[]` (limitLow/limitHigh/unit). */
-function toWmapTestDefs(testDefs: Record<string, TestDef>): WmapTestDef[] {
-  return Object.entries(testDefs).map(([key, def]) => ({
-    testNumber: Number(key),
-    name: def.name,
-    unit: def.units,
-    limitLow: def.loLimit,
-    limitHigh: def.hiLimit,
-  }));
-}
-
 function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof buildWaferMap>[]; lotStatsSummary: LotStatsSummary } {
+  const testDefs = toWmapTestDefs(currentTestDefs);
   const items = wafers.map(w => {
-    const waferMap = buildWaferMap({ results: w.results });
-    const statsSummary = analyzeWaferMap(waferMap);
+    const waferMap = buildWaferMap({ results: w.results, testDefs });
+    const statsSummary = analyzeWaferMap(waferMap, { enableTestValueAnalysis: true });
     return { ...waferMap, label: w.waferId, statsSummary };
   });
-  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries: items.map(i => i.statsSummary) });
+  const perWaferSummaries = items.map(i => i.statsSummary);
+  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries, enableTestValueAnalysis: true });
   return { items, lotStatsSummary };
 }
 
@@ -167,10 +162,16 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   currentWafers = wafers;
   currentFileName = label;
   currentTestDefs = testDefs;
+  cachedLotStats = null;
+  cachedBinData.clear();
+  cachedBoxplotData.clear();
+  cachedHistogramData.clear();
+  cachedCorrelationMatrix = null;
+  cachedScatterData.clear();
   addBtn.disabled = wafers.length === 0;
   resetBtn.style.display = '';
   chartsBtn.style.display = wafers.length > 0 ? '' : 'none';
-  filterTestsBtn.style.display = currentBinaryFiles.length > 0 ? '' : 'none';
+  filterTestsBtn.style.display = Object.keys(currentTestDefs).length > 0 ? '' : 'none';
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
@@ -189,13 +190,6 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   }));
 }
 
-function autoPlotMode(wafers: WaferData[]): PlotMode {
-  const sample = wafers[0]?.results ?? [];
-  const hasHbin = sample.some(d => d.hbin !== undefined);
-  const hasSbin = sample.some(d => d.sbin !== undefined);
-  const hasValues = sample.some(d => d.testValues && Object.keys(d.testValues).length > 0);
-  return hasHbin ? 'hardBin' : hasSbin ? 'softBin' : hasValues ? 'value' : 'hardBin';
-}
 
 function renderWaferView(wafers: WaferData[], label: string) {
   disconnectAllObservers();
@@ -203,9 +197,10 @@ function renderWaferView(wafers: WaferData[], label: string) {
   const stem = label.replace(/\.[^.]+$/, '');
 
   const plotMode = autoPlotMode(wafers);
+  const wmapTestDefs = toWmapTestDefs(currentTestDefs);
   if (wafers.length === 1) {
     container.classList.remove('gallery', 'charts');
-    const waferMap = buildWaferMap({ results: wafers[0].results });
+    const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs });
     const statsSummary = analyzeWaferMap(waferMap);
     renderWaferMap(container, waferMap, {
       statsSummary,
@@ -215,7 +210,8 @@ function renderWaferView(wafers: WaferData[], label: string) {
     });
   } else {
     container.classList.add('gallery');
-    const { items, lotStatsSummary } = buildLotStatsSummary(wafers);
+    cachedLotStats ??= buildLotStatsSummary(wafers);
+    const { items, lotStatsSummary } = cachedLotStats;
     renderWaferGallery(container, items, {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
@@ -340,18 +336,63 @@ function renderChartsView() {
 
 function renderChartsViewWork(loadedMsg: string) {
   disconnectAllObservers();
-  const { lotStatsSummary } = buildLotStatsSummary(currentWafers);
-
-  const yieldData = buildYieldData(currentWafers, lotStatsSummary, yieldSortBy);
-  const binData = buildBinParetoData(currentWafers, binType);
+  cachedLotStats ??= buildLotStatsSummary(currentWafers);
+  const { lotStatsSummary } = cachedLotStats;
 
   const testOptions = listNumericTests(currentTestDefs);
-  if (selectedTestNumber === null || !testOptions.some(t => t.testNumber === selectedTestNumber)) {
-    selectedTestNumber = testOptions[0]?.testNumber ?? null;
-  }
-  const selectedTest = testOptions.find(t => t.testNumber === selectedTestNumber);
-  const boxplotData = selectedTestNumber !== null ? buildTestBoxplotData(currentWafers, selectedTestNumber) : [];
+  const firstTest = testOptions[0]?.testNumber ?? null;
 
+  // Each chart has its own independent test selection — default to first test.
+  if (selectedTestNumber === null || !testOptions.some(t => t.testNumber === selectedTestNumber)) selectedTestNumber = firstTest;
+  if (histogramTestNumber === null || !testOptions.some(t => t.testNumber === histogramTestNumber)) histogramTestNumber = firstTest;
+  if (scatterXTest === null || !testOptions.some(t => t.testNumber === scatterXTest)) scatterXTest = firstTest;
+  if (scatterYTest === null || !testOptions.some(t => t.testNumber === scatterYTest)) scatterYTest = testOptions[1]?.testNumber ?? firstTest;
+
+  // ── Yield ──────────────────────────────────────────────────────────────────
+  const yieldData = buildYieldData(currentWafers, lotStatsSummary, yieldSortBy);
+
+  // ── Bin pareto ─────────────────────────────────────────────────────────────
+  if (!cachedBinData.has(binType)) cachedBinData.set(binType, buildBinParetoData(currentWafers, binType));
+  const binData = cachedBinData.get(binType)!;
+
+  // ── Callbacks for self-contained panels ───────────────────────────────────
+  function getBoxplotData(testNumber: number) {
+    if (!cachedBoxplotData.has(testNumber)) {
+      cachedBoxplotData.set(testNumber, buildTestBoxplotData(lotStatsSummary, currentWafers, testNumber));
+    }
+    return cachedBoxplotData.get(testNumber)!;
+  }
+
+  function getBoxplotTestMeta(testNumber: number) {
+    const def = currentTestDefs[String(testNumber)];
+    const opt = testOptions.find(t => t.testNumber === testNumber);
+    return { unit: opt?.unit, limitLow: def?.loLimit, limitHigh: def?.hiLimit };
+  }
+
+  function getHistogramData(testNumber: number, waferIndex: number | null) {
+    const key = `${testNumber}:${waferIndex}`;
+    if (!cachedHistogramData.has(key)) {
+      const wafers = waferIndex !== null ? [currentWafers[waferIndex]] : currentWafers;
+      cachedHistogramData.set(key, buildTestHistogramData(wafers, testNumber));
+    }
+    return cachedHistogramData.get(key)!;
+  }
+
+  function getHistogramTestMeta(testNumber: number) {
+    const def = currentTestDefs[String(testNumber)];
+    const opt = testOptions.find(t => t.testNumber === testNumber);
+    return { unit: opt?.unit, limitLow: def?.loLimit, limitHigh: def?.hiLimit };
+  }
+
+  function getScatterPoints(xTest: number, yTest: number) {
+    const key = `${xTest}:${yTest}`;
+    if (!cachedScatterData.has(key)) {
+      cachedScatterData.set(key, buildScatterData(currentWafers, xTest, yTest));
+    }
+    return cachedScatterData.get(key)!;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   const scheme = getColorScheme(chartColorScheme);
   const binColorFn = scheme.forBin;
 
@@ -372,13 +413,11 @@ function renderChartsViewWork(loadedMsg: string) {
       kind: 'binPareto',
       title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
       data: binData,
-      controls: [
-        makeSelect(
-          [['hbin', 'Hard bins'], ['sbin', 'Soft bins']],
-          binType,
-          v => { binType = v as BinType; renderChartsView(); },
-        ),
-      ],
+      controls: [makeSelect(
+        [['hbin', 'Hard bins'], ['sbin', 'Soft bins']],
+        binType,
+        v => { binType = v as BinType; renderChartsView(); },
+      )],
       barColor: datum => datum.binCode === undefined ? scheme.forValue(0) : binColorFn(datum.binCode),
     },
   ];
@@ -387,30 +426,44 @@ function renderChartsViewWork(loadedMsg: string) {
     title: 'Test value distribution by wafer',
     testOptions,
     selectedTestNumber,
-    unit: selectedTest?.unit,
-    data: boxplotData,
+    getData: getBoxplotData,
+    getTestMeta: getBoxplotTestMeta,
     logScale: boxplotLogScale,
     colorScheme: chartColorScheme,
-    onSelectTest: (testNumber) => { selectedTestNumber = testNumber; renderChartsView(); },
-    onToggleLogScale: () => { boxplotLogScale = !boxplotLogScale; renderChartsView(); },
+    onStateChange: (n) => { selectedTestNumber = n; },
+    onToggleLogScale: () => { boxplotLogScale = !boxplotLogScale; },
     onOpen: (waferIndex) => { if (selectedTestNumber !== null) openTestValueWafer(waferIndex, selectedTestNumber); },
   });
 
-  if (histogramWaferIndex !== null && histogramWaferIndex >= currentWafers.length) histogramWaferIndex = null;
-  const histogramWafers = histogramWaferIndex !== null ? [currentWafers[histogramWaferIndex]] : currentWafers;
-  const histogramData = selectedTestNumber !== null ? buildTestHistogramData(histogramWafers, selectedTestNumber) : [];
-  const histogramScope = histogramWaferIndex !== null ? currentWafers[histogramWaferIndex]?.waferId ?? `#${histogramWaferIndex}` : 'whole lot';
-  const testDef = selectedTestNumber !== null ? currentTestDefs[String(selectedTestNumber)] : undefined;
   const histogramCard = renderHistogramPanel({
-    title: selectedTest ? `${selectedTest.label} — value histogram (${histogramScope})` : 'Test value histogram',
-    unit: selectedTest?.unit,
-    buckets: histogramData,
+    title: 'Value histogram',
+    testOptions,
+    selectedTestNumber: histogramTestNumber,
+    getData: getHistogramData,
+    getTestMeta: getHistogramTestMeta,
     colorScheme: chartColorScheme,
     waferLabels: currentWafers.map(w => w.waferId),
     selectedWafer: histogramWaferIndex,
-    onSelectWafer: (waferIndex) => { histogramWaferIndex = waferIndex; renderChartsView(); },
-    limitLow: testDef?.loLimit,
-    limitHigh: testDef?.hiLimit,
+    onStateChange: (n, waferIndex) => { histogramTestNumber = n; histogramWaferIndex = waferIndex; },
+  });
+
+  cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
+
+  const { card: scatterCard, setXY: setScatterXY } = renderScatterPanel({
+    title: 'Test correlation',
+    testOptions,
+    xTestNumber: scatterXTest,
+    yTestNumber: scatterYTest,
+    getPoints: getScatterPoints,
+    colorScheme: chartColorScheme,
+    onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
+  });
+
+  const correlationCard = renderCorrelationPanel({
+    title: 'Test correlation matrix',
+    matrix: cachedCorrelationMatrix,
+    colorScheme: chartColorScheme,
+    onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; setScatterXY(x, y); },
   });
 
   const colorSchemeLabel = document.createElement('span');
@@ -422,7 +475,7 @@ function renderChartsViewWork(loadedMsg: string) {
     v => { chartColorScheme = v; renderChartsView(); },
   );
 
-  renderChartGrid(container, [...panels, boxplotCard, histogramCard], {
+  renderChartGrid(container, [...panels, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
       if (waferIndices.length === 0) return;
       if (datum.binCode !== undefined) openStackedBin(currentWafers.map((_, i) => i), datum);
@@ -443,6 +496,7 @@ function showEmptyState() {
   currentTestDefs = {};
   currentBinaryFiles = [];
   currentBinaryExt = '';
+  currentTestNames = null;
   addBtn.disabled = true;
   resetBtn.style.display = 'none';
   chartsBtn.style.display = 'none';
@@ -582,16 +636,18 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     return; // cancelled
   }
 
-  // ── Test selector for STDF/ATDF files (two-pass) ─────────────────────────
-  const TEST_SELECTOR_THRESHOLD = 200;
+  // ── Parse phase ──────────────────────────────────────────────────────────
+  // For STDF/ATDF: first-pass scan to get testDefs cheaply, then filtered parse.
+  // For CSV/JSON: parse fully now (fast), use parsed testDefs for the selector.
   const isBinaryExt = (e: string) => e === 'stdf' || e === 'std' || e === 'atdf' || e === 'atd';
   const binaryFiles = files.filter(f => isBinaryExt(effectiveExt(f.name)));
 
-  let testSelection: number[] | null = null; // null = no filter (parse all tests)
-  let firstPassTestDefs: StdfTestNames | null = null; // full test def map from first-pass scan
+  // firstPassTestDefs: merged testDefs from first-pass scan (STDF/ATDF) and/or full parse (CSV/JSON).
+  let firstPassTestDefs: StdfTestNames | null = null;
+  // Pre-parsed CSV/JSON results — reused after the selector so we don't parse twice.
+  const preParsed = new Map<string, ParsedFile>();
 
   if (binaryFiles.length > 0) {
-    // Store for "Filter tests…" button — pick the largest by byte size
     const largestBinary = binaryFiles.reduce((a, b) => {
       const aSize = a.bytes.length || (a.path ? Infinity : 0);
       const bSize = b.bytes.length || (b.path ? Infinity : 0);
@@ -604,62 +660,108 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     try {
-      firstPassTestDefs = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
+      const scanResult = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
         ? await platform.atdfTestNames(largestBinary)
         : await platform.stdfTestNames(largestBinary);
+      currentTestNames = scanResult;
+      firstPassTestDefs = scanResult;
+      log('info', `${largestBinary.name}: ${Object.keys(scanResult).length} tests found`);
     } catch (e) {
       log('warn', `Test name scan failed: ${(e as Error).message} — parsing all tests`);
     }
-
-    if (firstPassTestDefs) {
-      const testCount = Object.keys(firstPassTestDefs).length;
-      log('info', `${largestBinary.name}: ${testCount} tests found`);
-      if (testCount > TEST_SELECTOR_THRESHOLD) {
-        testSelection = await new Promise<number[] | null>(resolve => {
-          showTestSelectorOverlay(
-            firstPassTestDefs!,
-            sel => resolve(sel),
-            () => resolve(null),
-            { fromLargestFile: binaryFiles.length > 1 },
-          );
-        });
-        if (testSelection === null) {
-          setIdle();
-          return;
-        }
-        log('info', `Test filter: ${testSelection.length} of ${testCount} tests selected`);
-      }
-    }
   }
 
-  // Parse all files
-  const entries: FileWaferEntry[] = [];
-  for (const file of files) {
+  // Parse CSV/JSON files now; collect their testDefs for the selector.
+  const nonBinaryFiles = files.filter(f => !isBinaryExt(effectiveExt(f.name)));
+  for (const file of nonBinaryFiles) {
     const fileExt = effectiveExt(file.name);
     setBusy(`Parsing ${file.name}…`);
     try {
-      let parsed: ParsedFile;
-      if (fileExt === 'stdf' || fileExt === 'std') {
-        parsed = testSelection !== null
-          ? rustToLocal(await platform.parseStdfFiltered(file, testSelection), file.name)
-          : rustToLocal(await platform.parseStdf(file), file.name);
-      } else if (fileExt === 'atdf' || fileExt === 'atd') {
-        parsed = testSelection !== null
-          ? rustToLocal(await platform.parseAtdfFiltered(file, testSelection), file.name)
-          : rustToLocal(await platform.parseAtdf(file), file.name);
-      } else if (fileExt === 'json') {
-        parsed = rustToLocal(await platform.parseJson(file, mapping!), file.name);
-      } else {
-        parsed = rustToLocal(await platform.parseCsv(file, mapping!), file.name);
+      const parsed: ParsedFile = fileExt === 'json'
+        ? rustToLocal(await platform.parseJson(file, mapping!), file.name)
+        : rustToLocal(await platform.parseCsv(file, mapping!), file.name);
+      preParsed.set(file.name, parsed);
+      log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
+      // Merge testDefs from this file into firstPassTestDefs for the selector.
+      if (Object.keys(parsed.testDefs).length > 0) {
+        firstPassTestDefs = { ...(firstPassTestDefs ?? {}), ...parsed.testDefs };
       }
-      // Backfill testDefs from the first-pass scan for any tests that were shown in
-      // the selector but never appeared as PTR records in the filtered pass
-      // (e.g. stop-on-fail: some dies never reached those tests).
-      if (testSelection !== null && firstPassTestDefs) {
-        for (const [key, def] of Object.entries(firstPassTestDefs)) {
-          if (!(key in parsed.testDefs)) parsed.testDefs[key] = def;
-        }
-      }
+    } catch (e) {
+      log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
+    }
+  }
+
+  // ── Test selector ─────────────────────────────────────────────────────────
+  // Always shown when any file has test data (non-empty merged testDefs).
+  let testSelection: number[] | null = null;
+  let overlayNameOverrides: Map<number, string> = new Map();
+
+  if (firstPassTestDefs && Object.keys(firstPassTestDefs).length > 0) {
+    const allTestNums = new Set(Object.keys(firstPassTestDefs).map(Number));
+    let initialSelection: number[];
+    let nameOverrides: Map<number, string> | undefined;
+
+    initialSelection = [];
+
+    testSelection = await new Promise<number[] | null>(resolve => {
+      showTestSelectorOverlay(
+        firstPassTestDefs!,
+        (sel, names) => { overlayNameOverrides = names; resolve(sel); },
+        () => resolve(null),
+        {
+          fromLargestFile: binaryFiles.length > 1,
+          initialSelection,
+          nameOverrides,
+          onSave: async (saveEntries) => {
+            const lines = [
+              '# tsmap test list',
+              `# Saved: ${new Date().toISOString()}`,
+              ...saveEntries.map(e => `${e.num},${e.name}`),
+            ];
+            await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+          },
+          onLoad: async () => (await platform.pickTextFile())?.content ?? null,
+          onLog: log,
+        },
+      );
+    });
+    if (testSelection === null) {
+      setIdle();
+      return;
+    }
+    log('info', `Test filter: ${testSelection.length} of ${allTestNums.size} tests selected`);
+  }
+
+  // ── Full parse for STDF/ATDF, prune/backfill pre-parsed CSV/JSON ──────────
+  const entries: FileWaferEntry[] = [];
+
+  // Finalise pre-parsed CSV/JSON entries — prune to selection.
+  for (const [, parsed] of preParsed) {
+    applyTestSelection(parsed, testSelection ?? [], null, overlayNameOverrides);
+  }
+
+  for (const file of files) {
+    const fileExt = effectiveExt(file.name);
+
+    // CSV/JSON already parsed above — just collect.
+    if (!isBinaryExt(fileExt)) {
+      const pre = preParsed.get(file.name);
+      if (pre) entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed: pre });
+      continue;
+    }
+
+    setBusy(`Parsing ${file.name}…`);
+    try {
+      // If scan failed (firstPassTestDefs null), fall back to unfiltered parse.
+      const raw = firstPassTestDefs === null
+        ? (fileExt === 'atdf' || fileExt === 'atd'
+          ? await platform.parseAtdf(file)
+          : await platform.parseStdf(file))
+        : (fileExt === 'atdf' || fileExt === 'atd'
+          ? await platform.parseAtdfFiltered(file, testSelection ?? [])
+          : await platform.parseStdfFiltered(file, testSelection ?? []));
+      const parsed = rustToLocal(raw, file.name);
+      applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayNameOverrides);
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
     } catch (e) {
@@ -807,41 +909,74 @@ resetBtn.addEventListener('click', () => {
 });
 
 filterTestsBtn.addEventListener('click', async () => {
-  if (busy || currentBinaryFiles.length === 0) return;
+  if (busy || Object.keys(currentTestDefs).length === 0) return;
+  // For CSV/JSON (no binary files), we only support in-memory filtering — no re-parse available.
+  // For STDF/ATDF we use currentTestNames from the first-pass scan (may re-parse if user adds tests).
+  const selectorTestDefs: StdfTestNames = currentTestNames ?? currentTestDefs;
 
-  const largestBinary = currentBinaryFiles.reduce((a, b) => {
-    const aSize = a.bytes.length || (a.path ? Infinity : 0);
-    const bSize = b.bytes.length || (b.path ? Infinity : 0);
-    return aSize >= bSize ? a : b;
-  });
-
-  setBusy(`Scanning ${largestBinary.name} for tests…`);
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  let testNames: StdfTestNames;
-  try {
-    testNames = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
-      ? await platform.atdfTestNames(largestBinary)
-      : await platform.stdfTestNames(largestBinary);
-  } catch (e) {
-    log('error', `Test name scan failed: ${(e as Error).message}`);
-    setIdle(`${currentWafers.length} wafers loaded`);
-    return;
-  }
-
-  setIdle(`${currentWafers.length} wafers loaded`);
-
+  let filterOverrideNames: Map<number, string> = new Map();
   const testSelection = await new Promise<number[] | null>(resolve => {
     showTestSelectorOverlay(
-      testNames,
-      sel => resolve(sel),
+      selectorTestDefs,
+      (sel, names) => { filterOverrideNames = names; resolve(sel); },
       () => resolve(null),
-      { fromLargestFile: currentBinaryFiles.length > 1 },
+      {
+        fromLargestFile: currentBinaryFiles.length > 1,
+        initialSelection: Object.keys(currentTestDefs).map(Number),
+        nameOverrides: new Map(),
+        onSave: async (entries) => {
+          const lines = [
+            '# tsmap test list',
+            `# Saved: ${new Date().toISOString()}`,
+            ...entries.map(e => `${e.num},${e.name}`),
+          ];
+          await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+        },
+        onLoad: async () => (await platform.pickTextFile())?.content ?? null,
+        onLog: log,
+      },
     );
   });
 
   if (testSelection === null) return;
 
+  // If the new selection is a subset of already-loaded tests, filter in memory —
+  // no re-parse needed. CSV/JSON always use in-memory path (no re-parse available).
+  const loadedTestNumbers = new Set(Object.keys(currentTestDefs).map(Number));
+  const needsReparse = currentBinaryFiles.length > 0 && testSelection.some(n => !loadedTestNumbers.has(n));
+
+  if (!needsReparse) {
+    const keepSet = new Set(testSelection);
+    const filteredWafers = currentWafers.map(w => ({
+      ...w,
+      results: w.results.map(d => {
+        if (!d.testValues) return d;
+        const testValues: typeof d.testValues = {};
+        for (const [k, v] of Object.entries(d.testValues)) {
+          if (keepSet.has(Number(k))) testValues[Number(k)] = v;
+        }
+        return { ...d, testValues };
+      }),
+    }));
+    const filteredDefs: Record<string, TestDef> = {};
+    for (const key of Object.keys(currentTestDefs)) {
+      if (keepSet.has(Number(key))) filteredDefs[key] = currentTestDefs[key];
+    }
+    for (const [num, name] of filterOverrideNames) {
+      if (String(num) in filteredDefs) {
+        filteredDefs[String(num)] = { ...filteredDefs[String(num)], name };
+      }
+    }
+    log('info', `Test filter: ${testSelection.length} of ${Object.keys(selectorTestDefs).length} tests (in-memory)`);
+    renderWafers(
+      filteredWafers,
+      currentFileName,
+      filteredDefs,
+    );
+    return;
+  }
+
+  // New selection adds tests not in the current load — must re-parse.
   const entries: FileWaferEntry[] = [];
   for (const file of currentBinaryFiles) {
     const fileExt = currentBinaryExt;
@@ -851,10 +986,7 @@ filterTestsBtn.addEventListener('click', async () => {
         ? await platform.parseAtdfFiltered(file, testSelection)
         : await platform.parseStdfFiltered(file, testSelection);
       const parsed = rustToLocal(raw, file.name);
-      // Backfill any test defs that stop-on-fail prevents from appearing in filtered parse
-      for (const [key, def] of Object.entries(testNames)) {
-        if (!(key in parsed.testDefs)) parsed.testDefs[key] = def;
-      }
+      applyTestSelection(parsed, testSelection, currentTestNames, filterOverrideNames);
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Re-parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''} (${testSelection.length} tests)`);
     } catch (e) {
@@ -875,6 +1007,7 @@ filterTestsBtn.addEventListener('click', async () => {
     mergedDefs,
   );
 });
+
 
 helpBtn.addEventListener('click', () => {
   const modal = document.createElement('div');

@@ -9,6 +9,8 @@
     "opener:allow-open-path",
     "dialog:default",
     "fs:default",
-    "fs:allow-write-file"
+    "fs:allow-write-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file"
   ]
 }

@@ -2,36 +2,31 @@ import type { TestDef } from './types';
 
 export interface TestSelectorOptions {
   fromLargestFile?: boolean;
+  initialSelection?: number[];
+  nameOverrides?: Map<number, string>;
+  onSave?: (entries: Array<{ num: number; name: string }>) => Promise<void>;
+  onLoad?: () => Promise<string | null>;
+  onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
-const LS_KEY_PREFIX = 'tsmap-test-sel-';
-
-function fingerprint(testNums: number[]): string {
-  return LS_KEY_PREFIX + testNums.length + '-' + (testNums[0] ?? 0) + '-' + (testNums[testNums.length - 1] ?? 0);
-}
-
-function loadSavedSelection(key: string): Set<number> | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const arr = JSON.parse(raw) as number[];
-    return new Set(arr);
-  } catch {
-    return null;
+export function parseTestListFile(text: string): Array<{ num: number; name?: string }> {
+  const results: Array<{ num: number; name?: string }> = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const tokens = line.split(/[,;\s]+/).filter(t => t.length > 0);
+    if (tokens.length === 0) continue;
+    const num = parseInt(tokens[0], 10);
+    if (isNaN(num)) continue;
+    const name = tokens.length > 1 ? tokens.slice(1).join(' ') : undefined;
+    results.push({ num, name });
   }
-}
-
-function saveSelection(key: string, selected: number[]): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(selected));
-  } catch {
-    // ignore quota errors
-  }
+  return results;
 }
 
 export function showTestSelectorOverlay(
   testDefs: Record<string, TestDef>,
-  onConfirm: (selected: number[]) => void,
+  onConfirm: (selected: number[], nameOverrides: Map<number, string>) => void,
   onCancel: () => void,
   options: TestSelectorOptions = {},
 ): void {
@@ -41,11 +36,16 @@ export function showTestSelectorOverlay(
     .sort((a, b) => a.num - b.num);
 
   const allNums = entries.map(e => e.num);
-  const lsKey = fingerprint(allNums);
-  const saved = loadSavedSelection(lsKey);
 
-  // Default: all selected (or restore saved)
-  const selected = new Set<number>(saved ?? allNums);
+  // Default: nothing selected, or caller-supplied initial selection
+  const selected = new Set<number>(options.initialSelection ?? []);
+
+  // Name overrides: loaded from file, shadow the STDF-supplied names for display only
+  const nameOverrides = new Map<number, string>(options.nameOverrides ?? []);
+
+  function displayName(num: number, def: TestDef): string {
+    return nameOverrides.get(num) ?? def.name;
+  }
 
   // ── Overlay shell ─────────────────────────────────────────────────────────
 
@@ -277,7 +277,7 @@ export function showTestSelectorOverlay(
       if (activeType !== 'all' && e.def.testType !== activeType) return false;
       if (q) {
         const numMatch = e.num.toString().includes(q);
-        const nameMatch = e.def.name.toLowerCase().includes(q);
+        const nameMatch = displayName(e.num, e.def).toLowerCase().includes(q);
         if (!numMatch && !nameMatch) return false;
       }
       return true;
@@ -331,7 +331,7 @@ export function showTestSelectorOverlay(
 
       const nameSpan = document.createElement('span');
       nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-      nameSpan.textContent = e.def.name || e.num.toString();
+      nameSpan.textContent = displayName(e.num, e.def) || e.num.toString();
 
       const metaSpan = document.createElement('span');
       metaSpan.style.cssText = 'color:var(--text-dim);font-size:11px;flex-shrink:0';
@@ -353,9 +353,15 @@ export function showTestSelectorOverlay(
 
   const footerNote = document.createElement('div');
   footerNote.style.cssText = 'font-size:12px;color:var(--text-dim);opacity:0.7';
-  if (options.fromLargestFile) {
-    footerNote.textContent = 'Test list from largest file — use Filter after load if tests are missing.';
+
+  function setFooterNotes(loadWarning?: string): void {
+    const parts: string[] = [];
+    if (options.fromLargestFile) parts.push('Test list from largest file — use Filter after load if tests are missing.');
+    if (loadWarning) parts.push(loadWarning);
+    footerNote.textContent = parts.join(' ');
+    footerNote.style.display = parts.length > 0 ? '' : 'none';
   }
+  setFooterNotes();
 
   const footerRow = document.createElement('div');
   footerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
@@ -366,12 +372,74 @@ export function showTestSelectorOverlay(
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;gap:8px';
 
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = [
+  const secondaryBtnCss = [
     'padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid)',
     'background:none;color:var(--text-secondary);cursor:pointer;font-size:13px',
   ].join(';');
+
+  if (options.onSave) {
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save list';
+    saveBtn.style.cssText = secondaryBtnCss;
+    saveBtn.addEventListener('click', async () => {
+      const saveEntries = Array.from(selected)
+        .sort((a, b) => a - b)
+        .map(num => {
+          const def = entries.find(e => e.num === num)!.def;
+          return { num, name: displayName(num, def) || String(num) };
+        });
+      try {
+        await options.onSave!(saveEntries);
+        options.onLog?.('info', `Test list saved: ${saveEntries.length} test${saveEntries.length !== 1 ? 's' : ''}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        options.onLog?.('error', `Failed to save test list: ${msg}`);
+      }
+    });
+    btnRow.appendChild(saveBtn);
+  }
+
+  if (options.onLoad) {
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = 'Load list';
+    loadBtn.style.cssText = secondaryBtnCss;
+    loadBtn.addEventListener('click', async () => {
+      let text: string | null;
+      try {
+        text = await options.onLoad!();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        options.onLog?.('error', `Failed to load test list: ${msg}`);
+        return;
+      }
+      if (text === null) return;
+      const parsed = parseTestListFile(text);
+      if (parsed.length === 0) {
+        options.onLog?.('warn', 'Test list file contained no valid entries');
+        return;
+      }
+      const allNumsSet = new Set(allNums);
+      let unknownCount = 0;
+      selected.clear();
+      for (const { num, name } of parsed) {
+        if (!allNumsSet.has(num)) { unknownCount++; continue; }
+        selected.add(num);
+        if (name) nameOverrides.set(num, name);
+      }
+      if (unknownCount > 0) {
+        options.onLog?.('warn', `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored`);
+      }
+      options.onLog?.('info', `Test list loaded: ${selected.size} test${selected.size !== 1 ? 's' : ''} selected`);
+      setFooterNotes(unknownCount > 0 ? `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored.` : undefined);
+      renderList();
+      updateFooter();
+    });
+    btnRow.appendChild(loadBtn);
+  }
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = secondaryBtnCss;
   cancelBtn.addEventListener('click', () => { cleanup(); onCancel(); });
 
   const confirmBtn = document.createElement('button');
@@ -381,25 +449,22 @@ export function showTestSelectorOverlay(
   ].join(';');
   confirmBtn.addEventListener('click', () => {
     const sel = Array.from(selected).sort((a, b) => a - b);
-    if (sel.length === 0) return;
-    saveSelection(lsKey, sel);
+    if (sel.length === 0) {
+      if (!confirm('No tests selected — only bin data will be loaded. Continue?')) return;
+    }
     cleanup();
-    onConfirm(sel);
+    onConfirm(sel, new Map(nameOverrides));
   });
 
   function updateFooter(): void {
     const n = selected.size;
     countLabel.textContent = `${n} of ${allNums.length} tests selected`;
-    confirmBtn.textContent = `Import ${n} test${n !== 1 ? 's' : ''} →`;
-    confirmBtn.disabled = n === 0;
-    confirmBtn.style.opacity = n === 0 ? '0.4' : '1';
-    confirmBtn.style.cursor = n === 0 ? 'not-allowed' : 'pointer';
+    confirmBtn.textContent = n === 0 ? 'Import (bin data only) →' : `Import ${n} test${n !== 1 ? 's' : ''} →`;
   }
 
   btnRow.append(cancelBtn, confirmBtn);
   footerRow.append(countLabel, btnRow);
-  if (options.fromLargestFile) footer.appendChild(footerNote);
-  footer.appendChild(footerRow);
+  footer.append(footerNote, footerRow);
 
   // ── Backdrop click ────────────────────────────────────────────────────────
 

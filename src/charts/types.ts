@@ -43,3 +43,33 @@ export interface HistogramBucket {
   rangeHigh: number;
   count: number;
 }
+
+/** Per-wafer trend point for one test — median ± IQR band, in lot order. */
+export interface TrendDatum {
+  waferIndex: number;
+  label: string;
+  median: number;
+  q1: number;
+  q3: number;
+  count: number;
+}
+
+/** One die's X/Y test values for a scatter plot. */
+export interface ScatterPoint {
+  x: number;
+  y: number;
+  hbin: number | undefined;
+}
+
+/** Pearson r for a pair of tests — drives the correlation matrix. */
+export interface CorrelationCell {
+  xIndex: number;
+  yIndex: number;
+  r: number | null; // null = insufficient data
+}
+
+/** Full correlation matrix: ordered test list + NxN cells. */
+export interface CorrelationMatrix {
+  tests: TestOption[];
+  cells: CorrelationCell[];
+}

@@ -71,12 +71,12 @@ const REGEX_ROLES: { role: ColRole; re: RegExp }[] = [
 const STRUCTURAL_DISQUALIFIERS = new Set(['id','idx','index','count','total','num','number','no','diameter','radius','pitch','size','width','height','mm','um','nm','time','sec','ms','us','date','ts','timestamp']);
 const NON_TEST_TOKENS = new Set(['index','idx','num','no','number','id','count','grid','rows','cols','size','width','height','bits','label','class','site','head','seq','order','rank','flag','code','type','ver','rev','mm','um','nm','sec','ms','us','ns','time','duration','elapsed','diameter','radius','pitch']);
 
-function tokenize(col: string): string[] {
+export function tokenize(col: string): string[] {
   return col.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .toLowerCase().split(/[\s_\-.\/]+/).filter(Boolean);
 }
 
-function detectRole(col: string, sample: Record<string, string>[]): ColRole {
+export function detectRole(col: string, sample: Record<string, string>[]): ColRole {
   const key = col.toLowerCase().trim();
   for (const { role, patterns } of EXACT_ROLES) if (patterns.includes(key)) return role;
   for (const { role, re } of REGEX_ROLES) if (re.test(key)) return role;

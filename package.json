@@ -1,24 +1,27 @@
 {
   "name": "tsmap",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "scripts": {
     "predev": "node scripts/check-wmap-update.js",
     "prebuild": "node scripts/check-wmap-update.js",
-    "dev": "vite",
-    "dev:web": "vite --port 5301",
+    "dev": "vite --force",
+    "dev:web": "vite --force --port 5301",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
     "build:site": "npm run build:web && ${ZENSICAL:-/home/paul/projects/wmap/.venv/bin/zensical} build --clean && cp -r dist site/app",
     "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "env -u GTK_PATH -u GTK_EXE_PREFIX -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR -u GIO_MODULE_DIR -u GTK_IM_MODULE_FILE -u LOCPATH tauri",
+    "postinstall": "rm -rf node_modules/.vite/deps",
     "install-bin": "ln -sf $PWD/src-tauri/target/release/tsmap ~/.local/bin/tsmap"
   },
   "dependencies": {
     "@paulrobins/testdata-parser": "file:packages/parsers/pkg",
-    "@paulrobins/wafermap": "^0.13.3",
+    "@paulrobins/wafermap": "^0.13.4",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
@@ -29,6 +32,7 @@
     "@tauri-apps/cli": "^2",
     "playwright": "^1.60.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

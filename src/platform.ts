@@ -41,6 +41,8 @@ export interface Platform {
   atdfTestNames(file: FileHandle): Promise<StdfTestNames>;
   parseStdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
   parseAtdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
+  saveTextFile(content: string, defaultName: string): Promise<void>;
+  pickTextFile(): Promise<{ content: string; name: string } | null>;
 }
 
 // ── Tauri platform ────────────────────────────────────────────────────────────
@@ -157,6 +159,29 @@ function makeTauriPlatform(): Platform {
     async parseAtdfFiltered(file, selected) {
       const invoke = await getInvoke();
       return invoke<RustParsedFile>('parse_atdf_filtered', { path: file.path, selected });
+    },
+
+    async saveTextFile(content, defaultName) {
+      const { save: dialogSave } = await getDialog();
+      const { writeTextFile } = await getFs();
+      const path = await dialogSave({
+        defaultPath: defaultName,
+        filters: [{ name: 'Test list', extensions: ['csv', 'txt'] }],
+      });
+      if (path) await writeTextFile(path, content);
+    },
+
+    async pickTextFile() {
+      const { open: dialogOpen } = await getDialog();
+      const { readTextFile } = await getFs();
+      const path = await dialogOpen({
+        multiple: false,
+        filters: [{ name: 'Test list', extensions: ['csv', 'txt', '*'] }],
+      });
+      if (!path || Array.isArray(path)) return null;
+      const content = await readTextFile(path);
+      const name = path.split(/[\\/]/).pop() ?? path;
+      return { content, name };
     },
   };
 }
@@ -334,6 +359,36 @@ function makeWebPlatform(): Platform {
     async parseAtdfFiltered(file, selected) {
       const wasm = await loadWasm();
       return wasm.parse_atdf_filtered(file.bytes, selected) as RustParsedFile;
+    },
+
+    async saveTextFile(content, defaultName) {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+
+    pickTextFile() {
+      return new Promise<{ content: string; name: string } | null>(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv,.txt';
+        input.addEventListener('change', () => {
+          const file = input.files?.[0];
+          if (!file) { resolve(null); return; }
+          const reader = new FileReader();
+          reader.onload = () => resolve({ content: reader.result as string, name: file.name });
+          reader.onerror = () => resolve(null);
+          reader.readAsText(file);
+        });
+        input.addEventListener('cancel', () => resolve(null));
+        input.click();
+      });
     },
   };
 }

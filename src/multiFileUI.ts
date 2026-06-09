@@ -94,7 +94,7 @@ export function showRenameOverlay(
 }
 
 /** Resolve a good wafer ID from the content ID and/or filename stem. */
-function resolveWaferId(contentId: string, fileName: string): string {
+export function resolveWaferId(contentId: string, fileName: string): string {
   const generic = /^W\d+$/.test(contentId); // W1, W01, W12 etc.
   if (!generic) return contentId;
   // Try to extract something meaningful from the filename
@@ -152,7 +152,7 @@ export function showAppendConfirm({ incoming, existing, onConfirm, onCancel }: A
   modal.querySelector('#append-confirm')!.addEventListener('click', () => { modal.remove(); onConfirm(); });
 }
 
-function detectMismatches(incoming: RenamedWafer[], existing: WaferData[]): AppendWarning[] {
+export function detectMismatches(incoming: RenamedWafer[], existing: WaferData[]): AppendWarning[] {
   const warnings: AppendWarning[] = [];
   if (existing.length === 0) return warnings;
 

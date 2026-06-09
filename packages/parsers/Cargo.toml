@@ -1,6 +1,6 @@
 [package]
 name = "testdata-parser"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Rust/WASM parsers for semiconductor test data formats (STDF, ATDF, CSV, JSON)"
 repository = "https://github.com/paulrobins/tsmap"

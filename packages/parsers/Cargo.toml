@@ -1,6 +1,6 @@
 [package]
 name = "testdata-parser"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Rust/WASM parsers for semiconductor test data formats (STDF, ATDF, CSV, JSON)"
 repository = "https://github.com/paulrobins/tsmap"
@@ -18,7 +18,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["native"]
 native = ["dep:tokio"]
-wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen", "dep:js-sys"]
 bench = []   # enables parse_stdf_from_bytes_timed
 
 [dependencies]
@@ -31,6 +31,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 tokio = { version = "1", features = ["rt", "rt-multi-thread"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

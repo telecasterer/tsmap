@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { readFileSync } from "fs";
 /// <reference types="vitest" />
 
 // @ts-expect-error process is a nodejs global
@@ -6,8 +7,14 @@ const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
 const isTauriBuild = !!process.env.TAURI_ENV_PLATFORM;
 
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],

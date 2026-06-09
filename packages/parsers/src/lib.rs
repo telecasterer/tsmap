@@ -8,45 +8,58 @@ pub mod parse_json;
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use wasm_bindgen::prelude::*;
-    use serde_wasm_bindgen::to_value;
+    use serde::Serialize;
     use crate::parse_csv::CsvMapping;
+
+    fn to_js<T: Serialize>(val: &T) -> JsValue {
+        val.serialize(&serde_wasm_bindgen::Serializer::json_compatible()).unwrap()
+    }
 
     #[wasm_bindgen]
     pub fn parse_stdf(bytes: &[u8]) -> Result<JsValue, JsValue> {
         crate::parse_stdf::parse_stdf_from_bytes(bytes)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]
     pub fn parse_atdf(bytes: &[u8]) -> Result<JsValue, JsValue> {
         crate::parse_atdf::parse_atdf_from_bytes(bytes)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]
     pub fn parse_csv(bytes: &[u8], mapping: JsValue) -> Result<JsValue, JsValue> {
-        let mapping: crate::parse_csv::CsvMapping = serde_wasm_bindgen::from_value(mapping)
+        // Round-trip through JSON so null fields deserialise as Option::None correctly.
+        // serde_wasm_bindgen::from_value treats JS null differently from undefined,
+        // causing Option<String> fields to fail when the TS side sends null.
+        let json = js_sys::JSON::stringify(&mapping)
+            .map_err(|e| JsValue::from_str(&format!("mapping stringify failed: {:?}", e)))?;
+        let json_str: String = json.into();
+        let mapping: crate::parse_csv::CsvMapping = serde_json::from_str(&json_str)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         crate::parse_csv::parse_csv_from_bytes(bytes, mapping)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]
     pub fn parse_json(bytes: &[u8], mapping: JsValue) -> Result<JsValue, JsValue> {
-        let mapping: CsvMapping = serde_wasm_bindgen::from_value(mapping)
+        let json = js_sys::JSON::stringify(&mapping)
+            .map_err(|e| JsValue::from_str(&format!("mapping stringify failed: {:?}", e)))?;
+        let json_str: String = json.into();
+        let mapping: CsvMapping = serde_json::from_str(&json_str)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         crate::parse_json::parse_json_from_bytes(bytes, mapping)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]
     pub fn stdf_test_names(bytes: &[u8]) -> Result<JsValue, JsValue> {
         crate::parse_stdf::parse_stdf_test_names(bytes)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
@@ -56,14 +69,14 @@ mod wasm {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let set: std::collections::HashSet<u32> = selected.into_iter().collect();
         crate::parse_stdf::parse_stdf_from_bytes_filtered(bytes, &set)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
     #[wasm_bindgen]
     pub fn atdf_test_names(bytes: &[u8]) -> Result<JsValue, JsValue> {
         crate::parse_atdf::parse_atdf_test_names(bytes)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 
@@ -73,7 +86,7 @@ mod wasm {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let set: std::collections::HashSet<u32> = selected.into_iter().collect();
         crate::parse_atdf::parse_atdf_from_bytes_filtered(bytes, &set)
-            .map(|r| to_value(&r).unwrap())
+            .map(|r| to_js(&r))
             .map_err(|e| JsValue::from_str(&e))
     }
 }

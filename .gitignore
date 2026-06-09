@@ -3,6 +3,7 @@ dist/
 site/
 src-tauri/target/
 target/
+packages/parsers/pkg/
 src-tauri/gen/schemas/
 .vscode/
 scratch/

@@ -1,3 +1,6 @@
+declare const __APP_VERSION__: string;
+declare const __BUILD_DATE__: string;
+
 import { buildWaferMap } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
@@ -90,6 +93,8 @@ function log(level: LogLevel, msg: string) {
 }
 
 logToggle.addEventListener('click', () => logPanel.classList.toggle('open'));
+
+log('info', `tsmap v${__APP_VERSION__} (${__BUILD_DATE__})`);
 
 // ── Platform intercepts ───────────────────────────────────────────────────────
 

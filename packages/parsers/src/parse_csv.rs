@@ -345,9 +345,21 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
 }
 
+fn detect_delimiter(bytes: &[u8]) -> u8 {
+    // Scan the first line to detect whether the file is comma, tab, or semicolon delimited.
+    let first_line_end = bytes.iter().position(|&b| b == b'\n').unwrap_or(bytes.len());
+    let first_line = &bytes[..first_line_end];
+    let commas = first_line.iter().filter(|&&b| b == b',').count();
+    let tabs   = first_line.iter().filter(|&&b| b == b'\t').count();
+    let semis  = first_line.iter().filter(|&&b| b == b';').count();
+    if tabs >= commas && tabs >= semis { b'\t' } else if semis > commas { b';' } else { b',' }
+}
+
 fn build_reader_from_bytes(bytes: &[u8]) -> csv::Reader<Box<dyn Read>> {
+    let delim = detect_delimiter(bytes);
     let reader: Box<dyn Read> = Box::new(std::io::Cursor::new(bytes.to_vec()));
     ReaderBuilder::new()
+        .delimiter(delim)
         .trim(csv::Trim::All)
         .comment(Some(b'#'))
         .flexible(true)
@@ -645,6 +657,40 @@ mod tests {
         let result = csv_headers_inner(path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.headers, vec!["x", "y", "hbin"]);
         assert_eq!(result.sample.len(), 2);
+    }
+
+    #[test]
+    fn json_mapping_deserialises_tests() {
+        // Exact JSON string produced by js_sys::JSON::stringify in the WASM path.
+        let json = r#"{"x":"X_LOC","y":"Y_LOC","hbin":null,"sbin":"SBIN","wafer":"WAFER_ID","lot":"LOT_ID","tests":[{"col":"GAIN_DB","testNumber":1001,"name":"GAIN_DB"},{"col":"NF_DB","testNumber":1002,"name":"NF_DB"},{"col":"IP3_DBM","testNumber":1003,"name":"IP3_DBM"},{"col":"IDQ_MA","testNumber":1004,"name":"IDQ_MA"}],"meta":["TEMP","TESTDATE"],"splitBy":[],"testnameCol":null,"testvalueCol":null,"loLimitCol":null,"hiLimitCol":null,"unitsCol":null,"passBins":[1]}"#;
+        let mapping: CsvMapping = serde_json::from_str(json).expect("mapping deserialisation failed");
+        assert_eq!(mapping.tests.len(), 4, "expected 4 test cols, got {}", mapping.tests.len());
+        assert_eq!(mapping.tests[0].col, "GAIN_DB");
+        assert_eq!(mapping.tests[0].test_number, 1001);
+    }
+
+    #[test]
+    fn parse_csv_from_bytes_with_test_cols() {
+        let csv = "X_LOC,Y_LOC,SBIN,WAFER_ID,LOT_ID,TEMP,TESTDATE,GAIN_DB,NF_DB,IP3_DBM,IDQ_MA\n\
+                   1,1,1,W1,LOT1,25,2024-01-01,10.5,2.1,15.3,100.0\n\
+                   1,2,1,W1,LOT1,25,2024-01-01,11.0,2.3,14.9,98.0\n";
+        let json = r#"{"x":"X_LOC","y":"Y_LOC","hbin":null,"sbin":"SBIN","wafer":"WAFER_ID","lot":"LOT_ID","tests":[{"col":"GAIN_DB","testNumber":1001,"name":"GAIN_DB"},{"col":"NF_DB","testNumber":1002,"name":"NF_DB"},{"col":"IP3_DBM","testNumber":1003,"name":"IP3_DBM"},{"col":"IDQ_MA","testNumber":1004,"name":"IDQ_MA"}],"meta":["TEMP","TESTDATE"],"splitBy":[],"testnameCol":null,"testvalueCol":null,"loLimitCol":null,"hiLimitCol":null,"unitsCol":null,"passBins":[1]}"#;
+        let mapping: CsvMapping = serde_json::from_str(json).unwrap();
+        let result = parse_csv_from_bytes(csv.as_bytes(), mapping).unwrap();
+        assert_eq!(result.test_defs.len(), 4, "expected 4 test_defs, got {}: {:?}", result.test_defs.len(), result.test_defs.keys().collect::<Vec<_>>());
+        assert!(result.wafers[0].results[0].test_values.contains_key("1001"), "expected testValues key 1001");
+    }
+
+    #[test]
+    fn tab_delimited_csv_parses_test_cols() {
+        let csv = "X_LOC\tY_LOC\tSBIN\tWAFER_ID\tGAIN_DB\n\
+                   1\t1\t1\tW1\t10.5\n\
+                   1\t2\t1\tW1\t11.0\n";
+        let json = r#"{"x":"X_LOC","y":"Y_LOC","hbin":null,"sbin":"SBIN","wafer":"WAFER_ID","lot":null,"tests":[{"col":"GAIN_DB","testNumber":1001,"name":"GAIN_DB"}],"meta":[],"splitBy":[],"testnameCol":null,"testvalueCol":null,"loLimitCol":null,"hiLimitCol":null,"unitsCol":null,"passBins":[]}"#;
+        let mapping: CsvMapping = serde_json::from_str(json).unwrap();
+        let result = parse_csv_from_bytes(csv.as_bytes(), mapping).unwrap();
+        assert_eq!(result.test_defs.len(), 1, "test_defs should have 1 entry for tab-delimited CSV");
+        assert!(result.wafers[0].results[0].test_values.contains_key("1001"));
     }
 
     #[test]

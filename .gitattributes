@@ -1,0 +1,6 @@
+# Normalize line endings on checkout to avoid CRLF issues on Windows CI runners.
+* text=auto
+
+# Keep Rust lock/TOML files as LF regardless of platform.
+*.lock text eol=lf
+*.toml text eol=lf

@@ -42,9 +42,10 @@ if (cargoTomlVersion !== pkgVersion) {
 }
 
 // Cargo.lock (root) — the [[package]] block whose name is "tsmap".
+// Use \r?\n to tolerate CRLF line endings on Windows CI runners.
 const cargoLock = read('Cargo.lock');
 const lockVersion = cargoLock
-  .match(/name = "tsmap"\nversion = "([^"]+)"/)?.[1];
+  .match(/name = "tsmap"\r?\nversion = "([^"]+)"/)?.[1];
 if (lockVersion !== pkgVersion) {
   mismatches.push(`    Cargo.lock                ${lockVersion ?? '(missing)'}  →  run \`cargo check\` to refresh`);
 }

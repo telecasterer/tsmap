@@ -1,14 +1,14 @@
 {
   "name": "tsmap",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "scripts": {
     "predev": "node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
     "prebuild": "node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
     "prebuild:web": "node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
     "dev": "vite --force",
-    "dev:web": "vite --force --port 5301",
+    "dev:web": "vite --force --port 5301 --host",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
     "build:site": "npm run build:web && ${ZENSICAL:-zensical} build --clean && cp -r dist site/app",
@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@paulrobins/testdata-parser": "^0.2.2",
-    "@paulrobins/wafermap": "^0.13.4",
+    "@paulrobins/wafermap": "^0.13.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",

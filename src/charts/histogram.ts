@@ -14,22 +14,26 @@ export interface HistogramPanelOptions {
   title: string;
   testOptions: TestOption[];
   selectedTestNumber: number | null;
-  getData: (testNumber: number, waferIndex: number | null) => HistogramBucket[];
+  getData: (testNumber: number, waferIndex: number | null, axisIncludesLimits: boolean) => HistogramBucket[];
   getTestMeta: (testNumber: number) => { unit?: string; limitLow?: number; limitHigh?: number };
   colorScheme: string;
   waferLabels: string[];
   selectedWafer: number | null;
+  axisIncludesLimits: boolean;
   onStateChange: (testNumber: number, waferIndex: number | null) => void;
+  onToggleAxisIncludesLimits: () => void;
+  savePng?: (blob: Blob, stem: string) => void;
 }
 
 const HISTOGRAM_LOT_VALUE = 'lot';
 
 export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElement {
-  const { title, testOptions, colorScheme, getData, getTestMeta, waferLabels, onStateChange } = options;
-  const { card, controlsRow, body } = cardShell(title);
+  const { title, testOptions, colorScheme, getData, getTestMeta, waferLabels, onStateChange, onToggleAxisIncludesLimits } = options;
+  const { card, controlsRow, body } = cardShell(title, options.savePng);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let activeWafer = options.selectedWafer;
+  let axisIncludesLimits = options.axisIncludesLimits;
 
   // Test selector
   const testSelect = document.createElement('select');
@@ -77,6 +81,20 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
   });
   controlsRow.appendChild(waferSelect);
 
+  const limLabel = document.createElement('label');
+  limLabel.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${cssVar('--text-muted')};cursor:pointer;user-select:none;`;
+  const limCheckbox = document.createElement('input');
+  limCheckbox.type = 'checkbox';
+  limCheckbox.checked = axisIncludesLimits;
+  limCheckbox.style.cssText = 'margin:0;cursor:pointer;';
+  limCheckbox.addEventListener('change', () => {
+    axisIncludesLimits = limCheckbox.checked;
+    onToggleAxisIncludesLimits();
+    rebuildBody();
+  });
+  limLabel.append(limCheckbox, document.createTextNode('Axis includes limits'));
+  controlsRow.appendChild(limLabel);
+
   function rebuildBody() {
     body.innerHTML = '';
     if (activeTest === null) {
@@ -87,7 +105,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
       return;
     }
 
-    const buckets = getData(activeTest, activeWafer);
+    const buckets = getData(activeTest, activeWafer, axisIncludesLimits);
     const { unit, limitLow, limitHigh } = getTestMeta(activeTest);
 
     if (buckets.length === 0) {
@@ -175,7 +193,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
       const xForVal = (v: number) => plotX + ((v - bucketMin) / bucketSpan) * plotMaxWidth;
       ctx.font = '10px system-ui, sans-serif';
       for (const [limit, label] of [[limitLow, 'LSL'], [limitHigh, 'USL']] as const) {
-        if (limit === undefined || limit < bucketMin || limit > bucketMin + bucketSpan) continue;
+        if (limit === undefined) continue;
         const x = xForVal(limit);
         ctx.strokeStyle = textColor;
         ctx.setLineDash([3, 3]);

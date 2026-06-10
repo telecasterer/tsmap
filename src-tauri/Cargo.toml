@@ -1,6 +1,6 @@
 [package]
 name = "tsmap"
-version = "0.1.8"
+version = "0.1.9"
 description = "Desktop application for loading and visualising semiconductor wafer map data"
 authors = ["Paul Robins"]
 edition = "2024"

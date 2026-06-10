@@ -68,39 +68,55 @@ export function listNumericTests(testDefs: Record<string, TestDef>): TestOption[
     .sort((a, b) => a.testNumber - b.testNumber);
 }
 
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return NaN;
+  const pos = q * (sorted.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
 /** Per-wafer five-number summary (min/Q1/median/Q3/max) for one test, for box-plot rendering. */
-export function buildTestBoxplotData(lotSummary: LotStatsSummary, wafers: WaferData[], testNumber: number): BoxplotDatum[] {
+export function buildTestBoxplotData(wafers: WaferData[], testNumber: number): BoxplotDatum[] {
   return wafers.map((wafer, waferIndex) => {
-    const entry = lotSummary.perWaferTestStats?.find(e => e.waferIndex === waferIndex);
-    const stats = entry?.tests.find(t => t.testNumber === testNumber);
-    if (!stats || stats.count === 0) {
+    const values = wafer.results
+      .map(d => d.testValues?.[testNumber])
+      .filter((v): v is number => v !== undefined && Number.isFinite(v))
+      .sort((a, b) => a - b);
+    if (values.length === 0) {
       return { waferIndex, label: wafer.waferId, min: NaN, q1: NaN, median: NaN, q3: NaN, max: NaN, count: 0 };
     }
     return {
       waferIndex,
       label: wafer.waferId,
-      min: stats.min,
-      q1: stats.q1,
-      median: stats.median,
-      q3: stats.q3,
-      max: stats.max,
-      count: stats.count,
+      min: values[0],
+      q1: quantile(values, 0.25),
+      median: quantile(values, 0.5),
+      q3: quantile(values, 0.75),
+      max: values[values.length - 1],
+      count: values.length,
     };
   });
 }
 
-/**
- * Per-wafer trend data for one test — median + Q1/Q3 band in lot order.
- * Reads directly from perWaferTestStats when available; falls back to walking die results.
- */
-export function buildTrendData(lotSummary: LotStatsSummary, wafers: WaferData[], testNumber: number): TrendDatum[] {
+/** Per-wafer trend data for one test — median + Q1/Q3 band in lot order. */
+export function buildTrendData(wafers: WaferData[], testNumber: number): TrendDatum[] {
   return wafers.map((wafer, waferIndex) => {
-    const entry = lotSummary.perWaferTestStats?.find(e => e.waferIndex === waferIndex);
-    const stats = entry?.tests.find(t => t.testNumber === testNumber);
-    if (!stats || stats.count === 0) {
+    const values = wafer.results
+      .map(d => d.testValues?.[testNumber])
+      .filter((v): v is number => v !== undefined && Number.isFinite(v))
+      .sort((a, b) => a - b);
+    if (values.length === 0) {
       return { waferIndex, label: wafer.waferId, median: NaN, q1: NaN, q3: NaN, count: 0 };
     }
-    return { waferIndex, label: wafer.waferId, median: stats.median, q1: stats.q1, q3: stats.q3, count: stats.count };
+    return {
+      waferIndex,
+      label: wafer.waferId,
+      median: quantile(values, 0.5),
+      q1: quantile(values, 0.25),
+      q3: quantile(values, 0.75),
+      count: values.length,
+    };
   });
 }
 
@@ -119,57 +135,117 @@ export function buildScatterData(wafers: WaferData[], xTest: number, yTest: numb
   return points;
 }
 
-/** Pearson correlation matrix for all parametric tests across all dies in the lot. */
+/** Pearson correlation matrix for all parametric tests across all dies in the lot.
+ *
+ *  Running-accumulator algorithm: one die-walk, 6 Float64 accumulators per upper-triangle
+ *  pair (count, sumX, sumY, sumXX, sumYY, sumXY). No pair arrays stored — O(N²) memory,
+ *  O(N×D + N²) time.
+ */
 export function buildCorrelationMatrix(wafers: WaferData[], testOptions: TestOption[]): CorrelationMatrix {
   if (testOptions.length < 2) return { tests: testOptions, cells: [] };
 
-  // Collect all values per test in a single pass
-  const valueMap = new Map<number, number[]>();
-  for (const t of testOptions) valueMap.set(t.testNumber, []);
+  const n = testOptions.length;
+  const nums = testOptions.map(t => t.testNumber);
+  const pairs = (n * (n - 1)) / 2;
+
+  // Flat typed arrays: 6 accumulators per upper-triangle pair, indexed by pairIndex(xi,yi).
+  // pairIndex(xi, yi) for xi < yi: xi*n - xi*(xi+1)/2 + (yi - xi - 1)
+  const cnt   = new Float64Array(pairs);
+  const sumX  = new Float64Array(pairs);
+  const sumY  = new Float64Array(pairs);
+  const sumXX = new Float64Array(pairs);
+  const sumYY = new Float64Array(pairs);
+  const sumXY = new Float64Array(pairs);
+
+  function pairIndex(xi: number, yi: number): number {
+    // xi < yi guaranteed at call sites
+    return xi * n - ((xi * (xi + 1)) >> 1) + (yi - xi - 1);
+  }
 
   for (const wafer of wafers) {
     for (const die of wafer.results) {
       if (!die.testValues) continue;
-      for (const t of testOptions) {
-        const v = die.testValues[t.testNumber];
-        if (v !== undefined && Number.isFinite(v)) valueMap.get(t.testNumber)!.push(v);
+      // Read all test values for this die once
+      const vals = new Float64Array(n);
+      const valid = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const v = die.testValues[nums[i]];
+        if (v !== undefined && Number.isFinite(v)) { vals[i] = v; valid[i] = 1; }
+      }
+      for (let xi = 0; xi < n; xi++) {
+        if (!valid[xi]) continue;
+        const x = vals[xi];
+        for (let yi = xi + 1; yi < n; yi++) {
+          if (!valid[yi]) continue;
+          const y = vals[yi];
+          const pi = pairIndex(xi, yi);
+          cnt[pi]++;
+          sumX[pi]  += x;
+          sumY[pi]  += y;
+          sumXX[pi] += x * x;
+          sumYY[pi] += y * y;
+          sumXY[pi] += x * y;
+        }
       }
     }
   }
 
-  const cells = [];
-  const n = testOptions.length;
+  function pearsonFromAccumulators(pi: number): number | null {
+    const c = cnt[pi];
+    if (c < 3) return null;
+    const mx = sumX[pi] / c, my = sumY[pi] / c;
+    const covXY = sumXY[pi] / c - mx * my;
+    const varX  = sumXX[pi] / c - mx * mx;
+    const varY  = sumYY[pi] / c - my * my;
+    const denom = Math.sqrt(varX * varY);
+    return denom === 0 ? null : Math.max(-1, Math.min(1, covXY / denom));
+  }
+
+  const cells: CorrelationMatrix['cells'] = [];
   for (let yi = 0; yi < n; yi++) {
     for (let xi = 0; xi < n; xi++) {
       if (xi === yi) { cells.push({ xIndex: xi, yIndex: yi, r: 1 }); continue; }
-      const xs = valueMap.get(testOptions[xi].testNumber)!;
-      const ys = valueMap.get(testOptions[yi].testNumber)!;
-      // Pair values from matching die positions by walking wafers again for equal-length pairing
-      const paired: [number, number][] = [];
-      for (const wafer of wafers) {
-        for (const die of wafer.results) {
-          const x = die.testValues?.[testOptions[xi].testNumber];
-          const y = die.testValues?.[testOptions[yi].testNumber];
-          if (x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y)) paired.push([x, y]);
-        }
-      }
-      if (paired.length < 3) { cells.push({ xIndex: xi, yIndex: yi, r: null }); continue; }
-      const mn = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
-      const pxs = paired.map(p => p[0]);
-      const pys = paired.map(p => p[1]);
-      const mx = mn(pxs), my = mn(pys);
-      let num = 0, dx2 = 0, dy2 = 0;
-      for (const [px, py] of paired) { num += (px - mx) * (py - my); dx2 += (px - mx) ** 2; dy2 += (py - my) ** 2; }
-      const denom = Math.sqrt(dx2 * dy2);
-      cells.push({ xIndex: xi, yIndex: yi, r: denom === 0 ? null : Math.max(-1, Math.min(1, num / denom)) });
-      void xs; void ys; // suppress unused warning — xs/ys used implicitly via paired loop
+      const lo = Math.min(xi, yi), hi = Math.max(xi, yi);
+      const r = pearsonFromAccumulators(pairIndex(lo, hi));
+      cells.push({ xIndex: xi, yIndex: yi, r });
     }
   }
   return { tests: testOptions, cells };
 }
 
-/** Histogram of one test's values across the whole lot, divided into `bucketCount` equal-width buckets. */
-export function buildTestHistogramData(wafers: WaferData[], testNumber: number, bucketCount = 16): HistogramBucket[] {
+/**
+ * From a fully-computed correlation matrix, return the top `limit` tests ranked
+ * by mean |r| across all their non-diagonal, non-null pairings — i.e. the tests
+ * most correlated with *something*. Result is in original test-number order so
+ * the matrix axes stay sorted. When the matrix has ≤ limit tests, returns all.
+ */
+export function topCorrelatedTests(matrix: CorrelationMatrix, limit: number): TestOption[] {
+  const n = matrix.tests.length;
+  if (n <= limit) return matrix.tests;
+
+  const sumAbsR = new Float64Array(n);
+  const count = new Int32Array(n);
+  for (const cell of matrix.cells) {
+    if (cell.xIndex === cell.yIndex || cell.r === null) continue;
+    sumAbsR[cell.xIndex] += Math.abs(cell.r);
+    count[cell.xIndex]++;
+  }
+  const meanAbsR = Array.from({ length: n }, (_, i) => count[i] > 0 ? sumAbsR[i] / count[i] : 0);
+
+  const indices = Array.from({ length: n }, (_, i) => i)
+    .sort((a, b) => meanAbsR[b] - meanAbsR[a])
+    .slice(0, limit)
+    .sort((a, b) => a - b); // restore test-number order
+
+  return indices.map(i => matrix.tests[i]);
+}
+
+/** Histogram of one test's values across the whole lot, divided into `bucketCount` equal-width buckets.
+ *  If limitLow/limitHigh are provided the axis range is expanded to include them so limit lines always draw. */
+export function buildTestHistogramData(
+  wafers: WaferData[], testNumber: number, bucketCount = 16,
+  limitLow?: number, limitHigh?: number,
+): HistogramBucket[] {
   const values: number[] = [];
   for (const wafer of wafers) {
     for (const die of wafer.results) {
@@ -179,8 +255,10 @@ export function buildTestHistogramData(wafers: WaferData[], testNumber: number, 
   }
   if (values.length === 0) return [];
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const min = limitLow  !== undefined ? Math.min(dataMin, limitLow)  : dataMin;
+  const max = limitHigh !== undefined ? Math.max(dataMax, limitHigh) : dataMax;
   const span = max - min || 1;
   const width = span / bucketCount;
 

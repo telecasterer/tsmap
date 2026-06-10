@@ -27,7 +27,7 @@ const MAX_VISIBLE_ROWS = 12;
 
 function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLElement {
   const { title, data, controls, barColor, valueLabel } = panel;
-  const { card, controlsRow, body } = cardShell(title);
+  const { card, controlsRow, body } = cardShell(title, options.savePng);
 
   if (controls?.length) {
     for (const control of controls) controlsRow.appendChild(control);

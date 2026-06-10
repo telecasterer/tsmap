@@ -16,7 +16,7 @@ import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
-import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, buildScatterData, listNumericTests } from './charts/aggregate';
+import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, topCorrelatedTests, buildScatterData, listNumericTests } from './charts/aggregate';
 import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 
@@ -61,18 +61,22 @@ let chartColorScheme = 'default';
 // Boxplot test selector (independent)
 let selectedTestNumber: number | null = null;
 let boxplotLogScale = false;
+let boxplotAxisIncludesLimits = false;
 // Histogram has its own test selector and wafer selector
 let histogramTestNumber: number | null = null;
 let histogramWaferIndex: number | null = null;
+let histogramAxisIncludesLimits = false;
 // Scatter has independent X and Y test selectors
 let scatterXTest: number | null = null;
 let scatterYTest: number | null = null;
+// Correlation matrix — limit controls how many tests are shown (top N by mean |r|)
+let correlationMatrixLimit = 25;
 
-// Cached computed results — invalidated in renderWafers() whenever currentWafers changes.
 let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
 let cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
 let cachedBoxplotData: Map<number, ReturnType<typeof buildTestBoxplotData>> = new Map();
 let cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
+// Full N×N matrix cached once per file load; display matrix recomputed when limit changes.
 let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
 let cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
 
@@ -104,23 +108,6 @@ log('info', `tsmap v${__APP_VERSION__} (${__BUILD_DATE__})`);
 // ── Platform intercepts ───────────────────────────────────────────────────────
 
 if (isTauri) {
-  // PNG save — wmap uses a detached <a download> never in the DOM; intercept in Tauri
-  // because window.open and native download are suppressed in WebKitGTK / WebView2.
-  const _nativeClick = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
-    if (this.download && this.href.startsWith('blob:')) {
-      const href = this.href;
-      const stem = currentFileName.replace(/\.[^.]+$/, '');
-      fetch(href)
-        .then(r => r.blob())
-        .then(blob => platform.savePng(blob, stem))
-        .then(() => log('info', `PNG saved: ${stem}.png`))
-        .catch(err => log('error', `PNG save failed: ${err}`));
-      return;
-    }
-    _nativeClick.call(this);
-  };
-
   // Route wmap HTML reports through Tauri — window.open is blocked in WebKitGTK.
   setReportOpener((html: string) => platform.openReport(html));
 
@@ -156,15 +143,33 @@ if (isTauri) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
+function makeHeavyChartPlaceholder(title: string, message: string): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'chart-card';
+  const heading = document.createElement('div');
+  heading.className = 'chart-card-title';
+  heading.textContent = title;
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:16px 0;color:var(--text-muted);font-size:12px;line-height:1.5;';
+  body.textContent = message;
+  card.appendChild(heading);
+  card.appendChild(body);
+  return card;
+}
+
 function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof buildWaferMap>[]; lotStatsSummary: LotStatsSummary } {
   const testDefs = toWmapTestDefs(currentTestDefs);
   const items = wafers.map(w => {
     const waferMap = buildWaferMap({ results: w.results, testDefs });
-    const statsSummary = analyzeWaferMap(waferMap, { enableTestValueAnalysis: true });
+    for (const warning of waferMap.warnings) {
+      const conf = warning.confidence !== undefined ? ` (confidence ${(warning.confidence * 100).toFixed(0)}%)` : '';
+      log('warn', `Wafer ${w.waferId}: ${warning.message}${conf}`);
+    }
+    const statsSummary = analyzeWaferMap(waferMap);
     return { ...waferMap, label: w.waferId, statsSummary };
   });
   const perWaferSummaries = items.map(i => i.statsSummary);
-  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries, enableTestValueAnalysis: true });
+  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries });
   return { items, lotStatsSummary };
 }
 
@@ -201,6 +206,16 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
 }
 
 
+// Route wmap PNG saves through the native dialog in Tauri; undefined on web uses the default download.
+const onSaveImage = isTauri
+  ? (blob: Blob, suggestedName: string) => {
+      const stem = suggestedName.replace(/\.png$/i, '');
+      platform.savePng(blob, stem)
+        .then(() => log('info', `PNG saved: ${suggestedName}`))
+        .catch((err: unknown) => log('error', `PNG save failed: ${err}`));
+    }
+  : undefined;
+
 function renderWaferView(wafers: WaferData[], label: string) {
   disconnectAllObservers();
   container.innerHTML = '';
@@ -216,6 +231,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       downloadFilename: stem,
+      onSaveImage,
       viewOptions: { plotMode },
     });
   } else {
@@ -226,6 +242,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       downloadFilename: stem,
+      onSaveImage,
       viewOptions: { plotMode },
     });
   }
@@ -289,6 +306,7 @@ function openStackedBin(waferIndices: number[], datum: ChartDatum) {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       downloadFilename: stem,
+      onSaveImage,
       viewOptions: { plotMode: 'value' },
     });
     setIdle(label);
@@ -320,6 +338,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       downloadFilename: stem,
+      onSaveImage,
       viewOptions: { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
     });
     injectMapBanner(container, `${wafer.waferId} — ${testLabel}`);
@@ -368,7 +387,7 @@ function renderChartsViewWork(loadedMsg: string) {
   // ── Callbacks for self-contained panels ───────────────────────────────────
   function getBoxplotData(testNumber: number) {
     if (!cachedBoxplotData.has(testNumber)) {
-      cachedBoxplotData.set(testNumber, buildTestBoxplotData(lotStatsSummary, currentWafers, testNumber));
+      cachedBoxplotData.set(testNumber, buildTestBoxplotData(currentWafers, testNumber));
     }
     return cachedBoxplotData.get(testNumber)!;
   }
@@ -379,11 +398,14 @@ function renderChartsViewWork(loadedMsg: string) {
     return { unit: opt?.unit, limitLow: def?.loLimit, limitHigh: def?.hiLimit };
   }
 
-  function getHistogramData(testNumber: number, waferIndex: number | null) {
-    const key = `${testNumber}:${waferIndex}`;
+  function getHistogramData(testNumber: number, waferIndex: number | null, axisIncludesLimits: boolean) {
+    const key = `${testNumber}:${waferIndex}:${axisIncludesLimits}`;
     if (!cachedHistogramData.has(key)) {
       const wafers = waferIndex !== null ? [currentWafers[waferIndex]] : currentWafers;
-      cachedHistogramData.set(key, buildTestHistogramData(wafers, testNumber));
+      const def = currentTestDefs[String(testNumber)];
+      const limitLow  = axisIncludesLimits ? def?.loLimit  : undefined;
+      const limitHigh = axisIncludesLimits ? def?.hiLimit : undefined;
+      cachedHistogramData.set(key, buildTestHistogramData(wafers, testNumber, 16, limitLow, limitHigh));
     }
     return cachedHistogramData.get(key)!;
   }
@@ -401,6 +423,14 @@ function renderChartsViewWork(loadedMsg: string) {
     }
     return cachedScatterData.get(key)!;
   }
+
+  // Die count threshold above which per-die-per-test charts (correlation matrix, scatter)
+  // are skipped — walking N tests × D dies for N up to 400 and D up to 250k is feasible,
+  // but the in-memory parsed representation itself can be several GB at that scale.
+  // 500k is a conservative ceiling; users hitting it should use test-selector filtering.
+  const totalDies = currentWafers.reduce((s, w) => s + w.results.length, 0);
+  const HEAVY_CHART_DIE_LIMIT = 500_000;
+  const tooManyDies = totalDies > HEAVY_CHART_DIE_LIMIT;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const scheme = getColorScheme(chartColorScheme);
@@ -439,10 +469,13 @@ function renderChartsViewWork(loadedMsg: string) {
     getData: getBoxplotData,
     getTestMeta: getBoxplotTestMeta,
     logScale: boxplotLogScale,
+    axisIncludesLimits: boxplotAxisIncludesLimits,
     colorScheme: chartColorScheme,
     onStateChange: (n) => { selectedTestNumber = n; },
     onToggleLogScale: () => { boxplotLogScale = !boxplotLogScale; },
+    onToggleAxisIncludesLimits: () => { boxplotAxisIncludesLimits = !boxplotAxisIncludesLimits; },
     onOpen: (waferIndex) => { if (selectedTestNumber !== null) openTestValueWafer(waferIndex, selectedTestNumber); },
+    savePng: onSaveImage,
   });
 
   const histogramCard = renderHistogramPanel({
@@ -454,27 +487,56 @@ function renderChartsViewWork(loadedMsg: string) {
     colorScheme: chartColorScheme,
     waferLabels: currentWafers.map(w => w.waferId),
     selectedWafer: histogramWaferIndex,
+    axisIncludesLimits: histogramAxisIncludesLimits,
     onStateChange: (n, waferIndex) => { histogramTestNumber = n; histogramWaferIndex = waferIndex; },
+    onToggleAxisIncludesLimits: () => { histogramAxisIncludesLimits = !histogramAxisIncludesLimits; },
+    savePng: onSaveImage,
   });
 
-  cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
+  let correlationCard: HTMLElement;
+  let scatterCard: HTMLElement;
 
-  const { card: scatterCard, setXY: setScatterXY } = renderScatterPanel({
-    title: 'Test correlation',
-    testOptions,
-    xTestNumber: scatterXTest,
-    yTestNumber: scatterYTest,
-    getPoints: getScatterPoints,
-    colorScheme: chartColorScheme,
-    onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
-  });
+  if (tooManyDies) {
+    const msg = `Correlation matrix and scatter charts are unavailable for lots with more than ${HEAVY_CHART_DIE_LIMIT.toLocaleString()} dies (this lot has ${totalDies.toLocaleString()}). Use "Filter tests…" to reduce the dataset first.`;
+    correlationCard = makeHeavyChartPlaceholder('Test correlation matrix', msg);
+    scatterCard = makeHeavyChartPlaceholder('Test correlation', msg);
+  } else {
+    cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
+    const displayMatrix = topCorrelatedTests(cachedCorrelationMatrix, correlationMatrixLimit);
+    // Build a trimmed matrix for display — reuse cached cells, just filter to the display tests.
+    const displayTestNums = new Set(displayMatrix.map(t => t.testNumber));
+    const displayTestIndices = new Map(cachedCorrelationMatrix.tests.map((t, i) => [t.testNumber, i]));
+    const displayIndexMap = new Map(displayMatrix.map((t, newI) => [displayTestIndices.get(t.testNumber)!, newI]));
+    const trimmedMatrix = {
+      tests: displayMatrix,
+      cells: cachedCorrelationMatrix.cells
+        .filter(c => displayTestNums.has(cachedCorrelationMatrix!.tests[c.xIndex].testNumber) &&
+                     displayTestNums.has(cachedCorrelationMatrix!.tests[c.yIndex].testNumber))
+        .map(c => ({ xIndex: displayIndexMap.get(c.xIndex)!, yIndex: displayIndexMap.get(c.yIndex)!, r: c.r })),
+    };
 
-  const correlationCard = renderCorrelationPanel({
-    title: 'Test correlation matrix',
-    matrix: cachedCorrelationMatrix,
-    colorScheme: chartColorScheme,
-    onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; setScatterXY(x, y); },
-  });
+    const scatterResult = renderScatterPanel({
+      title: 'Test correlation',
+      testOptions,
+      xTestNumber: scatterXTest,
+      yTestNumber: scatterYTest,
+      getPoints: getScatterPoints,
+      getTestMeta: getBoxplotTestMeta,
+      colorScheme: chartColorScheme,
+      onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
+      savePng: onSaveImage,
+    });
+    scatterCard = scatterResult.card;
+
+    correlationCard = renderCorrelationPanel({
+      title: 'Test correlation matrix',
+      matrix: trimmedMatrix,
+      colorScheme: chartColorScheme,
+      totalTests: testOptions.length,
+      onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; scatterResult.setXY(x, y); },
+      savePng: onSaveImage,
+    });
+  }
 
   const colorSchemeLabel = document.createElement('span');
   colorSchemeLabel.textContent = 'Chart colour scheme:';
@@ -484,6 +546,22 @@ function renderChartsViewWork(loadedMsg: string) {
     chartColorScheme,
     v => { chartColorScheme = v; renderChartsView(); },
   );
+
+  const matrixLimitLabel = document.createElement('label');
+  matrixLimitLabel.textContent = 'Matrix size:';
+  matrixLimitLabel.style.cssText = 'color:var(--text-muted);font-size:12px;display:flex;align-items:center;gap:4px;';
+  const matrixLimitInput = document.createElement('input');
+  matrixLimitInput.type = 'number';
+  matrixLimitInput.min = '5';
+  matrixLimitInput.max = '100';
+  matrixLimitInput.value = String(correlationMatrixLimit);
+  matrixLimitInput.style.cssText = 'width:52px;font-size:12px;padding:2px 4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-mid);border-radius:3px;color-scheme:light dark;';
+  matrixLimitInput.addEventListener('change', () => {
+    const v = Math.max(5, Math.min(100, parseInt(matrixLimitInput.value, 10) || 25));
+    matrixLimitInput.value = String(v);
+    if (v !== correlationMatrixLimit) { correlationMatrixLimit = v; renderChartsView(); }
+  });
+  matrixLimitLabel.appendChild(matrixLimitInput);
 
   renderChartGrid(container, [...panels, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
@@ -495,7 +573,8 @@ function renderChartsViewWork(loadedMsg: string) {
       if (waferIndices.length === 0) return;
       openSingleWafer(waferIndices);
     },
-  }, [colorSchemeLabel, colorSchemeSelect]);
+    savePng: onSaveImage,
+  }, [colorSchemeLabel, colorSchemeSelect, matrixLimitLabel]);
 
   setIdle(loadedMsg);
 }

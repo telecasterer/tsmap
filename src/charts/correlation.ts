@@ -10,21 +10,33 @@ export interface CorrelationPanelOptions {
   title: string;
   matrix: CorrelationMatrix;
   colorScheme: string;
+  /** Total tests before capping — when set and > matrix.tests.length, shows a "top N of M" note. */
+  totalTests?: number;
   /** Called when user clicks a non-diagonal cell — use to link scatter X/Y selectors. */
   onSelectPair?: (xTestNumber: number, yTestNumber: number) => void;
+  savePng?: (blob: Blob, stem: string) => void;
 }
 
 export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLElement {
-  const { title, matrix, colorScheme, onSelectPair } = options;
-  const { card, body } = cardShell(title);
+  const { title, matrix, colorScheme, totalTests, onSelectPair, savePng } = options;
+  const { card, body } = cardShell(title, savePng);
 
   // Enable horizontal scroll so matrix never clips
   body.style.overflowX = 'auto';
 
-  const hint = document.createElement('div');
+  const hintRow = document.createElement('div');
+  hintRow.style.cssText = 'display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap;';
+  const hint = document.createElement('span');
   hint.textContent = 'Pearson r · –1 = anti-correlated, +1 = correlated · click cell to view that pair in scatter';
-  hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:6px;`;
-  card.insertBefore(hint, body);
+  hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;`;
+  hintRow.appendChild(hint);
+  if (totalTests !== undefined && totalTests > matrix.tests.length) {
+    const capNote = document.createElement('span');
+    capNote.textContent = `Showing top ${matrix.tests.length} of ${totalTests} tests by mean |r|`;
+    capNote.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;font-style:italic;`;
+    hintRow.appendChild(capNote);
+  }
+  card.insertBefore(hintRow, body);
 
   if (matrix.tests.length < 2) {
     const empty = document.createElement('div');

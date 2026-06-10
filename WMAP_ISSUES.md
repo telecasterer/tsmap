@@ -7,9 +7,9 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.13.4 |
+| wmap version in use | 0.13.5 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| Last updated | 2026-06-09 (session: updated to 0.13.4; issues 9 and 11 now fixed) |
+| Last updated | 2026-06-10 (updated to 0.13.5 — issues 12 and 13 resolved) |
 
 ## Rust Backend Notes
 
@@ -200,7 +200,7 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 
 ---
 
-### 12. No save/download hook in the render API — host must monkey-patch the DOM
+### ~~12. No save/download hook in the render API — host must monkey-patch the DOM~~ (fixed in 0.13.5)
 
 **Where:** wmap canvas-adapter toolbar (the PNG download button in `renderWaferMap` / `renderWaferGallery`). It triggers a download with `<a download href="blob:…">.click()`.
 
@@ -210,7 +210,17 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 
 ---
 
-### 13. No structured warnings channel on `WaferMapResult` / `analyzeWaferMap`
+### 14. `enableTestValueAnalysis` computation model doesn't match tsmap's usage pattern
+
+**Where:** `analyzeWaferMap` / `analyzeWaferLot` in wmap stats.
+
+**Problem:** When `enableTestValueAnalysis: true` is passed, wmap eagerly computes per-test quartiles **and** five additional Welch t-test region-family passes (edge/corner/center/quadrant/half-wafer) for every test, on every wafer, up-front. This is 5–8× slower than `false` (benchmarked: ~32ms vs ~160ms per wafer at 1w × 2k dies × 50 tests). tsmap used this flag to get `perWaferTestStats` for its boxplot panels, but only ever needs the quartiles — never the regional Welch findings. The eager all-tests all-regions model caused severe UI hangs on large lots (25w × 10k dies × 400 tests).
+
+**Workaround in tsmap:** Reverted to computing boxplot quartiles directly from die data in tsmap's own `buildTestBoxplotData` / `buildTrendData` functions (lazy, one test at a time, only on panel interaction). `analyzeWaferMap` is now called without the flag.
+
+**Suggested fix in wmap:** Split the flag into two independent options: (a) `computePerTestStats: true` — only the quartile scan, no region passes, cheap; (b) `enableTestValueAnalysis: true` — full regional Welch t-tests, expensive, opt-in separately. This lets hosts get lightweight quartiles without paying for spatial analysis they don't use.
+
+### ~~13. No structured warnings channel on `WaferMapResult` / `analyzeWaferMap`~~ (fixed in 0.13.5)
 
 **Where:** wmap `buildWaferMap` and `analyzeWaferMap` return shapes.
 

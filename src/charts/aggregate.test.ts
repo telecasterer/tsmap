@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildTrendData, buildScatterData, listNumericTests } from './aggregate';
 import type { WaferData } from '../types';
-import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -110,36 +109,10 @@ describe('buildBinParetoData', () => {
 
 // ── buildTestBoxplotData ──────────────────────────────────────────────────────
 
-function makeLotSummary(perWaferTestStats: LotStatsSummary['perWaferTestStats']): LotStatsSummary {
-  return {
-    level: 'lot',
-    hasNotableFindings: false,
-    findings: [],
-    stats: { waferCount: 1 },
-    lotYieldSeries: [],
-    perWafer: [],
-    perWaferTestStats,
-  };
-}
-
-function makeTestStats(testNumber: number, values: number[]) {
-  const sorted = [...values].sort((a, b) => a - b);
-  const q = (p: number) => {
-    const pos = (sorted.length - 1) * p;
-    const base = Math.floor(pos);
-    const rest = pos - base;
-    return sorted[base + 1] === undefined ? sorted[base] : sorted[base] + rest * (sorted[base + 1] - sorted[base]);
-  };
-  return { testNumber, label: `Test ${testNumber}`, count: sorted.length, min: sorted[0], max: sorted[sorted.length - 1], mean: 0, stddev: 0, median: q(0.5), q1: q(0.25), q3: q(0.75) };
-}
-
 describe('buildTestBoxplotData', () => {
-  it('reads stats from perWaferTestStats', () => {
-    const lotSummary = makeLotSummary([
-      { waferIndex: 0, tests: [makeTestStats(1, [1, 2, 3, 4, 5])] },
-    ]);
-    const wafers = [wafer('W1', [])];
-    const [r] = buildTestBoxplotData(lotSummary, wafers, 1);
+  it('computes five-number summary from die data', () => {
+    const wafers = [wafer('W1', [1, 2, 3, 4, 5].map(v => ({ testValues: { 1: v } })))];
+    const [r] = buildTestBoxplotData(wafers, 1);
     expect(r.min).toBe(1);
     expect(r.max).toBe(5);
     expect(r.median).toBe(3);
@@ -147,40 +120,32 @@ describe('buildTestBoxplotData', () => {
   });
 
   it('returns NaN stats when test absent for that wafer', () => {
-    const lotSummary = makeLotSummary([
-      { waferIndex: 0, tests: [makeTestStats(2, [1.0])] },
-    ]);
-    const wafers = [wafer('W1', [])];
-    const [r] = buildTestBoxplotData(lotSummary, wafers, 1);
+    const wafers = [wafer('W1', [{ testValues: { 2: 1.0 } }])];
+    const [r] = buildTestBoxplotData(wafers, 1);
     expect(r.count).toBe(0);
     expect(Number.isNaN(r.min)).toBe(true);
     expect(Number.isNaN(r.median)).toBe(true);
   });
 
-  it('returns NaN stats when perWaferTestStats is absent', () => {
-    const lotSummary = makeLotSummary(undefined);
+  it('returns NaN stats when wafer has no dies', () => {
     const wafers = [wafer('W1', [])];
-    const [r] = buildTestBoxplotData(lotSummary, wafers, 1);
+    const [r] = buildTestBoxplotData(wafers, 1);
     expect(r.count).toBe(0);
     expect(Number.isNaN(r.min)).toBe(true);
   });
 
   it('returns one datum per wafer', () => {
-    const lotSummary = makeLotSummary([
-      { waferIndex: 0, tests: [makeTestStats(1, [1])] },
-      { waferIndex: 1, tests: [makeTestStats(1, [2])] },
-      { waferIndex: 2, tests: [makeTestStats(1, [3])] },
-    ]);
-    const wafers = [wafer('W1', []), wafer('W2', []), wafer('W3', [])];
-    expect(buildTestBoxplotData(lotSummary, wafers, 1)).toHaveLength(3);
+    const wafers = [
+      wafer('W1', [{ testValues: { 1: 1 } }]),
+      wafer('W2', [{ testValues: { 1: 2 } }]),
+      wafer('W3', [{ testValues: { 1: 3 } }]),
+    ];
+    expect(buildTestBoxplotData(wafers, 1)).toHaveLength(3);
   });
 
   it('labels datum with wafer ID', () => {
-    const lotSummary = makeLotSummary([
-      { waferIndex: 0, tests: [makeTestStats(1, [1])] },
-    ]);
-    const wafers = [wafer('LOT-W3', [])];
-    expect(buildTestBoxplotData(lotSummary, wafers, 1)[0].label).toBe('LOT-W3');
+    const wafers = [wafer('LOT-W3', [{ testValues: { 1: 1 } }])];
+    expect(buildTestBoxplotData(wafers, 1)[0].label).toBe('LOT-W3');
   });
 });
 
@@ -245,38 +210,27 @@ describe('buildTestHistogramData', () => {
 // ── buildTrendData ────────────────────────────────────────────────────────────
 
 describe('buildTrendData', () => {
-  it('reads median/q1/q3 from perWaferTestStats', () => {
-    const lotSummary = makeLotSummary([
-      { waferIndex: 0, tests: [makeTestStats(1, [1, 2, 3, 4, 5])] },
-      { waferIndex: 1, tests: [makeTestStats(1, [6, 7, 8, 9, 10])] },
-    ]);
-    const wafers = [wafer('W1', []), wafer('W2', [])];
-    const result = buildTrendData(lotSummary, wafers, 1);
+  it('computes median/q1/q3 from die data', () => {
+    const wafers = [
+      wafer('W1', [1, 2, 3, 4, 5].map(v => ({ testValues: { 1: v } }))),
+      wafer('W2', [6, 7, 8, 9, 10].map(v => ({ testValues: { 1: v } }))),
+    ];
+    const result = buildTrendData(wafers, 1);
     expect(result).toHaveLength(2);
     expect(result[0].median).toBeCloseTo(3);
     expect(result[1].median).toBeCloseTo(8);
   });
 
   it('returns NaN for wafer with no data for that test', () => {
-    const lotSummary = makeLotSummary([{ waferIndex: 0, tests: [] }]);
     const wafers = [wafer('W1', [])];
-    const [r] = buildTrendData(lotSummary, wafers, 1);
-    expect(r.count).toBe(0);
-    expect(Number.isNaN(r.median)).toBe(true);
-  });
-
-  it('returns NaN when perWaferTestStats is absent', () => {
-    const lotSummary = makeLotSummary(undefined);
-    const wafers = [wafer('W1', [])];
-    const [r] = buildTrendData(lotSummary, wafers, 1);
+    const [r] = buildTrendData(wafers, 1);
     expect(r.count).toBe(0);
     expect(Number.isNaN(r.median)).toBe(true);
   });
 
   it('labels each datum with wafer ID', () => {
-    const lotSummary = makeLotSummary([{ waferIndex: 0, tests: [makeTestStats(1, [1])] }]);
-    const wafers = [wafer('LOT-W1', [])];
-    expect(buildTrendData(lotSummary, wafers, 1)[0].label).toBe('LOT-W1');
+    const wafers = [wafer('LOT-W1', [{ testValues: { 1: 1 } }])];
+    expect(buildTrendData(wafers, 1)[0].label).toBe('LOT-W1');
   });
 });
 

@@ -12,8 +12,10 @@ export interface ScatterPanelOptions {
   xTestNumber: number | null;
   yTestNumber: number | null;
   getPoints: (xTest: number, yTest: number) => ScatterPoint[];
+  getTestMeta: (testNumber: number) => { unit?: string; limitLow?: number; limitHigh?: number };
   colorScheme: string;
   onStateChange: (xTest: number, yTest: number) => void;
+  savePng?: (blob: Blob, stem: string) => void;
 }
 
 const SCATTER_LEFT = 52;
@@ -22,8 +24,8 @@ const SCATTER_TOP = 16;
 const SCATTER_BOTTOM = 36;
 
 export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLElement; setXY: (x: number, y: number) => void } {
-  const { title, testOptions, colorScheme, getPoints, onStateChange } = options;
-  const { card, controlsRow, body } = cardShell(title);
+  const { title, testOptions, colorScheme, getPoints, getTestMeta, onStateChange } = options;
+  const { card, controlsRow, body } = cardShell(title, options.savePng);
 
   let activeX = options.xTestNumber ?? testOptions[0]?.testNumber ?? null;
   let activeY = options.yTestNumber ?? testOptions[1]?.testNumber ?? activeX;
@@ -194,6 +196,45 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // Spec limit lines — vertical for X test, horizontal for Y test
+    if (activeX !== null && activeY !== null) {
+      const xMeta = getTestMeta(activeX);
+      const yMeta = getTestMeta(activeY);
+      const limitColor = cssVar('--text-muted') || '#888';
+      ctx.strokeStyle = limitColor;
+      ctx.fillStyle = limitColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textBaseline = 'top';
+
+      // X limits → vertical lines
+      for (const [lim, label] of [[xMeta.limitLow, 'LSL'], [xMeta.limitHigh, 'USL']] as const) {
+        if (lim === undefined || lim < xLo || lim > xHi) continue;
+        const cx = SCATTER_LEFT + ((lim - xLo) / xSpan) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(cx, SCATTER_TOP);
+        ctx.lineTo(cx, SCATTER_TOP + plotH);
+        ctx.stroke();
+        ctx.textAlign = 'left';
+        ctx.fillText(label, cx + 2, SCATTER_TOP + 2);
+      }
+
+      // Y limits → horizontal lines
+      for (const [lim, label] of [[yMeta.limitLow, 'LSL'], [yMeta.limitHigh, 'USL']] as const) {
+        if (lim === undefined || lim < yLo || lim > yHi) continue;
+        const cy = SCATTER_TOP + (1 - (lim - yLo) / ySpan) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(SCATTER_LEFT, cy);
+        ctx.lineTo(SCATTER_LEFT + plotW, cy);
+        ctx.stroke();
+        ctx.textAlign = 'right';
+        ctx.fillText(label, SCATTER_LEFT + plotW - 2, cy + 2);
+      }
+
+      ctx.setLineDash([]);
+    }
 
     ctx.strokeStyle = axisColor;
     ctx.lineWidth = 1;

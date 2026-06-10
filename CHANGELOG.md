@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-06-10
+
+### Added
+
+- **Spec limit lines on scatter plot** — when the selected X or Y test has spec limits (LSL/USL), dashed vertical lines (X limits) and horizontal lines (Y limits) are drawn on the scatter canvas. Together they form a pass-region rectangle when both tests have both limits.
+- **"Axis includes limits" toggle on boxplot and histogram** — checkbox in each panel's controls row. When on, the axis range expands to include LSL/USL so limit lines are always visible even when they fall outside the data range. Default off (axis fits data only).
+- **wmap geometry warnings in log panel** — `WaferMapResult.warnings` (new in wafermap 0.13.5) is now surfaced in the tsmap log panel. The `partial-coverage` advisory fires when inferred wafer geometry may be wrong due to partial data; it now appears as a visible warning instead of a silent `console.warn`.
+- **Long-format CSV test data** — `scripts/generate_test_suite.py` generates `*_long.csv` files (one row per die per test with `test_name`, `test_val`, `lo_limit`, `hi_limit`, `units` columns). The mapping UI auto-detects these columns so limits are imported automatically.
+
+### Fixed
+
+- **Chart card PNG save broken** — removing the `HTMLAnchorElement.prototype.click` monkey-patch (see Changed below) also broke the ⤓ save buttons on chart cards (boxplot, histogram, correlation matrix, scatter). Fixed by threading `savePng` through `RenderChartsOptions` and all panel options interfaces down to `cardShell`, so each card's save button calls `platform.savePng` in Tauri and does a proper `document.body`-anchored browser download on web.
+
+### Changed
+
+- **wafermap updated to 0.13.5** — picks up performance improvements (`buildView` scan merges, `getDieAtPoint` spatial index), accessibility improvements (keyboard navigation, ARIA roles), and two new features used by tsmap (see above).
+- **PNG save hook replaces DOM monkey-patch** — `renderWaferMap` / `renderWaferGallery` now receive `onSaveImage` (new in wafermap 0.13.5) instead of the previous `HTMLAnchorElement.prototype.click` global override. Cleaner, host-agnostic, no longer affects every anchor on the page. Logged as WMAP_ISSUES.md #12; now resolved.
+- **`dev:web` now binds to all interfaces** (`--host` flag added) so the web build is reachable from other devices on the local network (e.g. a Chromebook at `http://<host-ip>:5301`).
+- **Lazy boxplot/trend quartile computation** — reverted `enableTestValueAnalysis: true` which caused a 5–8× slowdown on map load (wmap was running five Welch t-test region passes per wafer, per test, up-front — work tsmap never uses). Quartiles are now computed directly from die data in `buildTestBoxplotData` / `buildTrendData`, lazily on panel interaction. Logged as WMAP_ISSUES.md #14.
+
 ### Added
 
 - **Web parsing runs in a Worker** — the browser build now parses STDF/ATDF/CSV/JSON in a dedicated module worker (`parserWorker.ts`) instead of on the UI thread, so large files no longer freeze the page. The `platform.ts` web branch routes all eight WASM entry points through the worker (id-correlated messages, bytes transferred, errors/traps reject the pending promise). Tauri is unaffected (it already parses off-thread via `spawn_blocking`).

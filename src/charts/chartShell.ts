@@ -33,6 +33,7 @@ export interface ChartPanel {
 export interface RenderChartsOptions {
   onOpen: (waferIndices: number[], datum: ChartDatum) => void;
   onOpenSelection: (waferIndices: number[], data: ChartDatum[]) => void;
+  savePng?: (blob: Blob, stem: string) => void;
 }
 
 // ── Shared layout constants ─────────────────────────────────────────────────────
@@ -64,15 +65,25 @@ export function drawAxisUnit(ctx: CanvasRenderingContext2D, unit: string, x: num
   Object.assign(ctx, prev);
 }
 
-/** Trigger a PNG download of a canvas element. Uses a blob: URL so the Tauri download intercept fires. */
-export function saveCanvasPng(canvas: HTMLCanvasElement, filename: string) {
+/** Trigger a PNG save of a canvas element. Routes through savePng when provided (Tauri native dialog); falls back to browser download. */
+export function saveCanvasPng(
+  canvas: HTMLCanvasElement,
+  filename: string,
+  savePng?: (blob: Blob, stem: string) => void,
+) {
   canvas.toBlob(blob => {
     if (!blob) return;
+    if (savePng) {
+      savePng(blob, filename);
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = filename;
     link.href = url;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }, 'image/png');
 }
@@ -102,7 +113,7 @@ export function makeExpandBtn(card: HTMLElement, title: string): HTMLElement {
   return btn;
 }
 
-export function cardShell(title: string): { card: HTMLElement; heading: HTMLElement; controlsRow: HTMLElement; body: HTMLElement; saveCanvas: (filename: string) => void } {
+export function cardShell(title: string, savePng?: (blob: Blob, stem: string) => void): { card: HTMLElement; heading: HTMLElement; controlsRow: HTMLElement; body: HTMLElement; saveCanvas: (filename: string) => void } {
   const card = document.createElement('div');
   card.className = 'chart-card';
   card.style.cssText = `display:flex;flex-direction:column;background:${cssVar('--bg-overlay')};border:1px solid ${cssVar('--border-subtle')};border-radius:6px;padding:12px;min-width:0;`;
@@ -130,7 +141,7 @@ export function cardShell(title: string): { card: HTMLElement; heading: HTMLElem
 
   function saveCanvas(filename: string) {
     const canvas = card.querySelector<HTMLCanvasElement>('canvas');
-    if (canvas) saveCanvasPng(canvas, filename);
+    if (canvas) saveCanvasPng(canvas, filename, savePng);
   }
 
   saveBtn.addEventListener('click', e => { e.stopPropagation(); saveCanvas(`${title}.png`); });

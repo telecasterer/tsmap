@@ -19,18 +19,22 @@ export interface BoxplotPanelOptions {
   getData: (testNumber: number) => BoxplotDatum[];
   getTestMeta: (testNumber: number) => { unit?: string; limitLow?: number; limitHigh?: number };
   logScale: boolean;
+  axisIncludesLimits: boolean;
   colorScheme: string;
   onStateChange: (testNumber: number) => void;
   onToggleLogScale: () => void;
+  onToggleAxisIncludesLimits: () => void;
   onOpen: (waferIndex: number) => void;
+  savePng?: (blob: Blob, stem: string) => void;
 }
 
 export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
-  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onOpen } = options;
-  const { card, controlsRow, body } = cardShell(title);
+  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onOpen } = options;
+  const { card, controlsRow, body } = cardShell(title, options.savePng);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let logScale = options.logScale;
+  let axisIncludesLimits = options.axisIncludesLimits;
 
   const select = document.createElement('select');
   select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:240px;';
@@ -69,6 +73,20 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
   logLabel.append(logCheckbox, document.createTextNode('Log scale'));
   controlsRow.appendChild(logLabel);
 
+  const limLabel = document.createElement('label');
+  limLabel.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${cssVar('--text-muted')};cursor:pointer;user-select:none;`;
+  const limCheckbox = document.createElement('input');
+  limCheckbox.type = 'checkbox';
+  limCheckbox.checked = axisIncludesLimits;
+  limCheckbox.style.cssText = 'margin:0;cursor:pointer;';
+  limCheckbox.addEventListener('change', () => {
+    axisIncludesLimits = limCheckbox.checked;
+    onToggleAxisIncludesLimits();
+    rebuildBody();
+  });
+  limLabel.append(limCheckbox, document.createTextNode('Axis includes limits'));
+  controlsRow.appendChild(limLabel);
+
   const hint = document.createElement('div');
   hint.textContent = 'Click a wafer\'s box to open it · box = Q1–Q3, line = median, whiskers = min/max';
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:6px;`;
@@ -106,8 +124,10 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
     const dpr = window.devicePixelRatio || 1;
 
     const finite = data.filter(d => d.count > 0);
-    const globalMin = Math.min(...finite.map(d => d.min));
-    const globalMax = Math.max(...finite.map(d => d.max));
+    const dataMin = Math.min(...finite.map(d => d.min));
+    const dataMax = Math.max(...finite.map(d => d.max));
+    const globalMin = axisIncludesLimits && limitLow  !== undefined ? Math.min(dataMin, limitLow)  : dataMin;
+    const globalMax = axisIncludesLimits && limitHigh !== undefined ? Math.max(dataMax, limitHigh) : dataMax;
     const span = globalMax - globalMin || 1;
     const useLog = logScale && globalMin > 0;
     const logMin = useLog ? Math.log10(globalMin) : 0;
@@ -222,7 +242,7 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
 
       ctx.font = '10px system-ui, sans-serif';
       for (const [limit, limLabel] of [[limitLow, 'LSL'], [limitHigh, 'USL']] as const) {
-        if (limit === undefined || limit < globalMin || limit > globalMax) continue;
+        if (limit === undefined) continue;
         const x = xFor(limit, plotX, plotMaxWidth);
         ctx.strokeStyle = textColor;
         ctx.setLineDash([3, 3]);

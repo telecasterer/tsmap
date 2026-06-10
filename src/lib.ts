@@ -10,7 +10,7 @@ export function basename(p: string): string {
 }
 
 export function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
-  return { fileName, meta: r.meta, wafers: r.wafers, testDefs: r.testDefs };
+  return { fileName, meta: r.meta, wafers: r.wafers, testDefs: r.testDefs, warnings: r.warnings };
 }
 
 /** Convert tsmap's `Record<string, TestDef>` to wmap's `TestDef[]`. */

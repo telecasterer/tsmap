@@ -72,7 +72,8 @@ npx tsc --noEmit   # verify types still resolve
 ```text
 src/
   main.ts          — app entry: file open, two-pass test selector, renderWafers, chart view
-  platform.ts      — platform adapter: Tauri IPC (desktop) or WASM (browser)
+  platform.ts      — platform adapter: Tauri IPC (desktop) or WASM-in-a-Worker (browser)
+  parserWorker.ts  — web-only module worker running the WASM parsers off the UI thread
   mappingUI.ts     — CSV/JSON column mapping overlay
   multiFileUI.ts   — multi-file rename and append confirmation
   testSelectorUI.ts — test selector overlay for large STDF/ATDF files
@@ -110,4 +111,4 @@ scripts/
 - [`@paulrobins/wafermap`](https://www.npmjs.com/package/@paulrobins/wafermap) — wafer map rendering and analysis
 - [`@tauri-apps/api`](https://www.npmjs.com/package/@tauri-apps/api) — Tauri IPC
 - [`rust-stdf`](https://crates.io/crates/rust-stdf) — STDF V4 binary parser (Rust)
-- `zenity` — native file dialogs on Linux (system dependency; pre-installed on GNOME desktops)
+- [`tauri-plugin-dialog`](https://crates.io/crates/tauri-plugin-dialog) — native file open/save dialogs (all platforms). On Linux its `rfd` backend uses the XDG desktop portal, falling back to `zenity` if present.

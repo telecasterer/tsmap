@@ -43,6 +43,19 @@ fn nonempty(s: &str) -> Option<String> {
     if t.is_empty() { None } else { Some(t.to_string()) }
 }
 
+/// Build the soft-bin advisory shown to the host when SOFT_BIN was the sentinel
+/// 65535 ("no soft bin") and we mirrored the hard bin instead. Returns an empty
+/// vec when no fabrication happened, so the field is omitted from serialisation.
+fn soft_bin_warning(fabricated: usize) -> Vec<String> {
+    if fabricated == 0 {
+        vec![]
+    } else {
+        vec![format!(
+            "{fabricated} die(s) had no soft bin (sentinel 65535) — mirrored the hard bin"
+        )]
+    }
+}
+
 pub fn parse_atdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
     let raw = String::from_utf8(bytes.to_vec())
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
@@ -75,6 +88,7 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
     let mut current_wafer: Option<WaferData> = None;
     let mut pending_values: HashMap<String, HashMap<String, f64>> = HashMap::new();
     let mut pending_site: HashMap<String, u32> = HashMap::new();
+    let mut soft_bin_fabricated: usize = 0;
 
     for rec in &records {
         let colon = match rec.find(':') {
@@ -183,7 +197,9 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
                 let site_num = pending_site.remove(&key);
                 let test_values = pending_values.remove(&key).unwrap_or_default();
                 let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
-                let sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok()
+                let raw_sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok();
+                if raw_sbin == Some(65535) { soft_bin_fabricated += 1; }
+                let sbin: Option<u32> = raw_sbin
                     .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
                     .or(hbin);
                 let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
@@ -213,7 +229,8 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
         }
     }
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
+    let warnings = soft_bin_warning(soft_bin_fabricated);
+    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings })
 }
 
 #[cfg(feature = "native")]
@@ -342,6 +359,7 @@ fn parse_atdf_str_filtered(
     let mut current_wafer: Option<WaferData> = None;
     let mut pending_values: HashMap<String, HashMap<String, f64>> = HashMap::new();
     let mut pending_site: HashMap<String, u32> = HashMap::new();
+    let mut soft_bin_fabricated: usize = 0;
 
     for rec in &records {
         let colon = match rec.find(':') {
@@ -460,7 +478,9 @@ fn parse_atdf_str_filtered(
                 let site_num = pending_site.remove(&key);
                 let test_values = pending_values.remove(&key).unwrap_or_default();
                 let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
-                let sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok()
+                let raw_sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok();
+                if raw_sbin == Some(65535) { soft_bin_fabricated += 1; }
+                let sbin: Option<u32> = raw_sbin
                     .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
                     .or(hbin);
                 let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
@@ -490,7 +510,8 @@ fn parse_atdf_str_filtered(
         }
     }
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
+    let warnings = soft_bin_warning(soft_bin_fabricated);
+    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings })
 }
 
 #[cfg(test)]

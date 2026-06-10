@@ -30,4 +30,6 @@ export interface ParsedFile {
   meta: LotMeta;
   wafers: WaferData[];
   testDefs: Record<string, TestDef>;
+  /** Non-fatal parser advisories to surface in the log panel. */
+  warnings?: string[];
 }

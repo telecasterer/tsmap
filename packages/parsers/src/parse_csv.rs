@@ -342,7 +342,7 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
         LotMeta::default()
     };
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
+    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
 }
 
 fn detect_delimiter(bytes: &[u8]) -> u8 {

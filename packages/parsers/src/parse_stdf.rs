@@ -10,26 +10,43 @@ fn nonempty(s: String) -> Option<String> {
 const SENTINEL_U4: u32 = 4_294_967_295;
 const SENTINEL_I2: i16 = -32768;
 
+// ── Warnings ───────────────────────────────────────────────────────────────────
+
+/// Build the soft-bin advisory shown to the host when a PRR's soft bin was the
+/// sentinel 65535 ("no soft bin") and we mirrored the hard bin instead. Returns
+/// an empty vec when no fabrication happened (field omitted from serialisation).
+fn soft_bin_warning(fabricated: usize) -> Vec<String> {
+    if fabricated == 0 {
+        vec![]
+    } else {
+        vec![format!(
+            "{fabricated} die(s) had no soft bin (sentinel 65535) — mirrored the hard bin"
+        )]
+    }
+}
+
 // ── Raw byte helpers ──────────────────────────────────────────────────────────
 
+// All readers are bounds-checked and return None on a short slice, so a
+// truncated record can never panic (in WASM a panic aborts the whole module).
 #[inline(always)]
-fn read_u4_le(b: &[u8], pos: usize) -> u32 {
-    u32::from_le_bytes(b[pos..pos + 4].try_into().unwrap())
+fn read_u4_le(b: &[u8], pos: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(b.get(pos..pos + 4)?.try_into().ok()?))
 }
 
 #[inline(always)]
-fn read_u2_le(b: &[u8], pos: usize) -> u16 {
-    u16::from_le_bytes(b[pos..pos + 2].try_into().unwrap())
+fn read_u2_le(b: &[u8], pos: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(b.get(pos..pos + 2)?.try_into().ok()?))
 }
 
 #[inline(always)]
-fn read_i2_le(b: &[u8], pos: usize) -> i16 {
-    i16::from_le_bytes(b[pos..pos + 2].try_into().unwrap())
+fn read_i2_le(b: &[u8], pos: usize) -> Option<i16> {
+    Some(i16::from_le_bytes(b.get(pos..pos + 2)?.try_into().ok()?))
 }
 
 #[inline(always)]
-fn read_f32_le(b: &[u8], pos: usize) -> f32 {
-    f32::from_le_bytes(b[pos..pos + 4].try_into().unwrap())
+fn read_f32_le(b: &[u8], pos: usize) -> Option<f32> {
+    Some(f32::from_le_bytes(b.get(pos..pos + 4)?.try_into().ok()?))
 }
 
 // Read a Cn (1-byte length + ASCII) and return (string, new_pos).
@@ -67,10 +84,10 @@ fn parse_prr(b: &[u8]) -> Option<PrrFields> {
     let head     = b[0];
     let site     = b[1];
     // b[2] = part_flg, b[3..5] = num_test
-    let hard_bin = read_u2_le(b, 5);
-    let soft_bin = if b.len() >= 8 { read_u2_le(b, 7) } else { hard_bin };
-    let x        = if b.len() >= 10 { read_i2_le(b, 9) } else { SENTINEL_I2 };
-    let y        = if b.len() >= 12 { read_i2_le(b, 11) } else { SENTINEL_I2 };
+    let hard_bin = read_u2_le(b, 5)?;
+    let soft_bin = read_u2_le(b, 7).unwrap_or(hard_bin);
+    let x        = read_i2_le(b, 9).unwrap_or(SENTINEL_I2);
+    let y        = read_i2_le(b, 11).unwrap_or(SENTINEL_I2);
     // test_t is 4 bytes at 13..17, then part_id as Cn at 17
     let part_id  = if b.len() > 17 {
         let (s, _) = read_cn_str(b, 17);
@@ -98,11 +115,11 @@ struct PtrFast {
 fn parse_ptr_fast(b: &[u8]) -> Option<PtrFast> {
     if b.len() < 12 { return None; }
     Some(PtrFast {
-        test_num: read_u4_le(b, 0),
+        test_num: read_u4_le(b, 0)?,
         head:     b[4],
         site:     b[5],
         failed:   b[6] & 0x80 != 0,
-        result:   read_f32_le(b, 8),
+        result:   read_f32_le(b, 8)?,
     })
 }
 
@@ -123,14 +140,14 @@ fn ptr_defs_from_raw(b: &[u8]) -> (String, Option<f64>, Option<f64>, Option<Stri
         return (test_txt, None, None, None);
     }
     let pos = pos + 3; // skip res_scal, llm_scal, hlm_scal (1 byte each)
-    let lo = if opt_flag & 0x40 == 0 && pos + 4 <= b.len() {
-        Some(read_f32_le(b, pos) as f64)
+    let lo = if opt_flag & 0x40 == 0 {
+        read_f32_le(b, pos).map(|v| v as f64)
     } else {
         None
     };
     let pos = pos + 4;
-    let hi = if opt_flag & 0x80 == 0 && pos + 4 <= b.len() {
-        Some(read_f32_le(b, pos) as f64)
+    let hi = if opt_flag & 0x80 == 0 {
+        read_f32_le(b, pos).map(|v| v as f64)
     } else {
         None
     };
@@ -160,7 +177,7 @@ fn ptr_limits_explicitly_absent(b: &[u8]) -> bool {
 #[inline(always)]
 fn parse_ftr_fast(b: &[u8]) -> Option<(u32, u8, u8, bool)> {
     if b.len() < 7 { return None; }
-    let test_num = read_u4_le(b, 0);
+    let test_num = read_u4_le(b, 0)?;
     let head = b[4];
     let site = b[5];
     let failed = b[6] & 0x80 != 0;
@@ -253,6 +270,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
     // test_nums whose limits are fully resolved (both lo+hi found, or opt_flag confirms absent)
     let mut limits_resolved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut wafers: Vec<WaferData> = Vec::new();
+    let mut soft_bin_fabricated: usize = 0;
     let mut current_wafer: Option<WaferData> = None;
 
     // Shared test index and per-site accumulators.
@@ -369,6 +387,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                 } else {
                     HashMap::new()
                 };
+                if prr.soft_bin == 65535 { soft_bin_fabricated += 1; }
                 let die = DieResult {
                     x: prr.x as i32,
                     y: prr.y as i32,
@@ -457,7 +476,8 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
         }
     }
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites })
+    let warnings = soft_bin_warning(soft_bin_fabricated);
+    Ok(ParsedStdf { meta, wafers, test_defs, sites, warnings })
 }
 
 #[cfg(feature = "native")]
@@ -487,8 +507,7 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, S
         let b = &raw.raw_data;
         match (raw.header.typ, raw.header.sub) {
             (15, 10) => {
-                if b.len() < 4 { continue; }
-                let test_num = read_u4_le(b, 0);
+                let Some(test_num) = read_u4_le(b, 0) else { continue; };
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
                     let (test_txt, lo, hi, units) = ptr_defs_from_raw(b);
@@ -517,8 +536,7 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, S
                 }
             }
             (15, 20) => {
-                if b.len() < 4 { continue; }
-                let test_num = read_u4_le(b, 0);
+                let Some(test_num) = read_u4_le(b, 0) else { continue; };
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
                     let test_txt = ftr_test_txt_from_struct(b, &raw.byte_order);
@@ -560,6 +578,7 @@ pub fn parse_stdf_from_bytes_filtered(
     let mut test_num_to_key: HashMap<u32, String> = HashMap::new();
     let mut limits_resolved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut wafers: Vec<WaferData> = Vec::new();
+    let mut soft_bin_fabricated: usize = 0;
     let mut current_wafer: Option<WaferData> = None;
     let mut test_index = TestIndex::new();
     let mut site_accums: HashMap<(u8, u8), SiteAccum> = HashMap::new();
@@ -664,6 +683,7 @@ pub fn parse_stdf_from_bytes_filtered(
                 } else {
                     HashMap::new()
                 };
+                if prr.soft_bin == 65535 { soft_bin_fabricated += 1; }
                 let die = DieResult {
                     x: prr.x as i32,
                     y: prr.y as i32,
@@ -745,7 +765,8 @@ pub fn parse_stdf_from_bytes_filtered(
         if !wafer.results.is_empty() { wafers.push(wafer); }
     }
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites })
+    let warnings = soft_bin_warning(soft_bin_fabricated);
+    Ok(ParsedStdf { meta, wafers, test_defs, sites, warnings })
 }
 
 // ── Phased timing (bench feature only) ───────────────────────────────────────
@@ -779,6 +800,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
     let mut test_num_to_key: HashMap<u32, String> = HashMap::new();
     let mut limits_resolved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut wafers: Vec<WaferData> = Vec::new();
+    let mut soft_bin_fabricated: usize = 0;
     let mut current_wafer: Option<WaferData> = None;
     let mut test_index = TestIndex::new();
     let mut site_accums: HashMap<(u8, u8), SiteAccum> = HashMap::new();
@@ -871,6 +893,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                 };
                 p2_hashmap_ns += t_hmap.elapsed().as_nanos();
                 die_count += 1;
+                if prr.soft_bin == 65535 { soft_bin_fabricated += 1; }
                 let die = DieResult {
                     x: prr.x as i32, y: prr.y as i32,
                     hbin: Some(prr.hard_bin as u32),
@@ -943,7 +966,8 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
         test_count: test_index.len(),
     };
 
-    Ok((ParsedStdf { meta, wafers, test_defs, sites }, timing))
+    let warnings = soft_bin_warning(soft_bin_fabricated);
+    Ok((ParsedStdf { meta, wafers, test_defs, sites, warnings }, timing))
 }
 
 #[cfg(test)]
@@ -1078,5 +1102,50 @@ mod tests {
         let result = parse_stdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(result.wafers.len(), 1);
         assert!(!result.wafers[0].results.is_empty());
+    }
+
+    // ── Panic-safety on truncated / malformed input ──────────────────────────
+    // A corrupt or partial file must return Err, never panic. In WASM a panic
+    // aborts the whole module, so these guard against a dead page.
+
+    #[test]
+    fn truncated_at_every_length_never_panics() {
+        let full = std::fs::read(SINGLE_WAFER).unwrap();
+        // Step through prefixes of the real file; every cut point exercises a
+        // partially-read header or record body.
+        let mut len = 0;
+        while len <= full.len() {
+            // Returns Ok or Err — both fine; the assertion is "did not panic".
+            let _ = parse_stdf_from_bytes(&full[..len]);
+            len += if len < 512 { 1 } else { 257 }; // dense early, sparse later
+        }
+    }
+
+    #[test]
+    fn empty_and_tiny_inputs_return_err() {
+        assert!(parse_stdf_from_bytes(&[]).is_err());
+        assert!(parse_stdf_from_bytes(&[0]).is_err());
+        assert!(parse_stdf_from_bytes(&[0, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn truncated_record_bodies_never_panic() {
+        let full = std::fs::read(MULTI_WAFER).unwrap();
+        // Lop off the trailing bytes of an otherwise-valid file so the final
+        // record's body is shorter than its declared length.
+        for cut in [1usize, 2, 3, 5, 7, 9, 11, 13] {
+            if cut >= full.len() { continue; }
+            let _ = parse_stdf_from_bytes(&full[..full.len() - cut]);
+        }
+    }
+
+    #[test]
+    fn test_names_scan_truncated_never_panics() {
+        let full = std::fs::read(SINGLE_WAFER).unwrap();
+        let mut len = 0;
+        while len <= full.len() {
+            let _ = parse_stdf_test_names(&full[..len]);
+            len += if len < 256 { 1 } else { 251 };
+        }
     }
 }

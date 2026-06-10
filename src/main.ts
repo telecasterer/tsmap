@@ -92,6 +92,11 @@ function log(level: LogLevel, msg: string) {
   logToggle.textContent = errors > 0 ? `Log (${errors} error${errors > 1 ? 's' : ''})` : 'Log';
 }
 
+/** Surface any non-fatal parser advisories (e.g. fabricated soft bins) in the log. */
+function logWarnings(parsed: ParsedFile) {
+  for (const w of parsed.warnings ?? []) log('warn', `${parsed.fileName}: ${w}`);
+}
+
 logToggle.addEventListener('click', () => logPanel.classList.toggle('open'));
 
 log('info', `tsmap v${__APP_VERSION__} (${__BUILD_DATE__})`);
@@ -687,6 +692,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
         : rustToLocal(await platform.parseCsv(file, mapping!), file.name);
       preParsed.set(file.name, parsed);
       log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
+      logWarnings(parsed);
       // Merge testDefs from this file into firstPassTestDefs for the selector.
       if (Object.keys(parsed.testDefs).length > 0) {
         firstPassTestDefs = { ...(firstPassTestDefs ?? {}), ...parsed.testDefs };
@@ -769,6 +775,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
       applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayNameOverrides);
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
+      logWarnings(parsed);
     } catch (e) {
       log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
     }
@@ -994,6 +1001,7 @@ filterTestsBtn.addEventListener('click', async () => {
       applyTestSelection(parsed, testSelection, currentTestNames, filterOverrideNames);
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Re-parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''} (${testSelection.length} tests)`);
+      logWarnings(parsed);
     } catch (e) {
       log('error', `Failed to re-parse ${file.name}: ${(e as Error).message}`);
     }

@@ -13,7 +13,7 @@ pub fn write_temp_html(html: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // opener:allow-open-path is gated by the fs scope, which doesn't cover /tmp.
-    // Shell out to the platform opener instead (same pattern as zenity for file dialogs).
+    // Shell out to the platform opener instead.
     #[cfg(target_os = "linux")]
     {
         let mut cmd = std::process::Command::new("xdg-open");

@@ -25,6 +25,11 @@ export default defineConfig(async () => ({
   // Treat .wasm files as static assets so the web platform can import them
   assetsInclude: ['**/*.wasm'],
 
+  // The parser worker (parserWorker.ts) dynamically imports the WASM module,
+  // which forces code-splitting — unsupported by the default iife worker format.
+  // ES modules also let `new URL(..., import.meta.url)` resolve the .wasm asset.
+  worker: { format: 'es' },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

@@ -4,7 +4,8 @@ The browser version of tsmap is available at
 **[telecasterer.github.io/tsmap/app/](https://telecasterer.github.io/tsmap/app/)**.
 
 It uses a WebAssembly build of the same Rust parser as the desktop app. Files are parsed
-entirely in your browser — nothing is sent to a server.
+entirely in your browser — nothing is sent to a server. Parsing runs in a background Web
+Worker, so the interface stays responsive even while a large file loads.
 
 ## Opening files
 
@@ -30,7 +31,7 @@ All four formats are supported in the browser:
 
 | Feature | Browser | Desktop |
 |---------|---------|---------|
-| File parsing | WASM (same logic) | Native Rust |
+| File parsing | WASM in a Web Worker (same logic) | Native Rust (off-thread) |
 | File picker | Browser dialog | Native OS dialog |
 | Last used directory | — | Remembered between sessions |
 | Drag and drop | Yes | Yes |

@@ -533,6 +533,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3912,8 +3922,9 @@ dependencies = [
 
 [[package]]
 name = "testdata-parser"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
+ "console_error_panic_hook",
  "csv",
  "flate2",
  "indexmap 2.14.0",
@@ -4277,7 +4288,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsmap"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "libc",
  "serde",

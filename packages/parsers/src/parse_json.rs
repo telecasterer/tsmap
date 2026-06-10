@@ -211,7 +211,7 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
         part_type: None, job_name: None, tester_type: None, node_name: None, sublot_id: None,
     }).unwrap_or_default();
 
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![] })
+    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
 }
 
 fn flatten_to_rows(val: &Value) -> Option<Vec<HashMap<String, String>>> {

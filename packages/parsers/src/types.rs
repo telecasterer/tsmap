@@ -75,4 +75,8 @@ pub struct ParsedStdf {
     pub wafers: Vec<WaferData>,
     pub test_defs: HashMap<String, TestDef>,
     pub sites: Vec<SiteInfo>,
+    /// Non-fatal advisories surfaced to the host (e.g. fabricated soft bins).
+    /// Empty array is omitted from the serialised output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }

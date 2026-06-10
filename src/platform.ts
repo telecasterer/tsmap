@@ -9,6 +9,8 @@ export interface RustParsedFile {
   wafers: WaferData[];
   testDefs: Record<string, TestDef>;
   sites?: unknown[];
+  /** Non-fatal advisories from the parser (e.g. fabricated soft bins). */
+  warnings?: string[];
 }
 
 export interface HeadersResult {
@@ -186,21 +188,69 @@ function makeTauriPlatform(): Platform {
   };
 }
 
-// ── WASM platform ─────────────────────────────────────────────────────────────
+// ── WASM platform (parsing runs in a worker) ──────────────────────────────────
+// All WASM parsing runs in parserWorker.ts so large files don't block the UI
+// thread. The worker owns its own WASM instance; this side just correlates
+// request/response messages by id.
 
-type WasmModule = typeof import('@paulrobins/testdata-parser');
-let wasmModule: WasmModule | null = null;
+type ParserOp =
+  | 'parseStdf' | 'parseAtdf' | 'parseCsv' | 'parseJson'
+  | 'stdfTestNames' | 'atdfTestNames' | 'parseStdfFiltered' | 'parseAtdfFiltered';
 
-async function loadWasm(): Promise<WasmModule> {
-  if (wasmModule) return wasmModule;
-  // Import the WASM binary URL via Vite's ?url suffix so Vite resolves and
-  // copies the asset correctly. Without this, the package's own import.meta.url
-  // resolution points to node_modules and the dev server returns 404 HTML.
-  const wasmUrl = new URL('@paulrobins/testdata-parser/testdata_parser_bg.wasm', import.meta.url);
-  const mod = await import('@paulrobins/testdata-parser');
-  await (mod.default as (url: URL) => Promise<unknown>)(wasmUrl);
-  wasmModule = mod;
-  return mod;
+interface PendingCall {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+}
+
+let parserWorker: Worker | null = null;
+let nextCallId = 0;
+const pendingCalls = new Map<number, PendingCall>();
+
+function getWorker(): Worker {
+  if (parserWorker) return parserWorker;
+  const w = new Worker(new URL('./parserWorker.ts', import.meta.url), { type: 'module' });
+  w.onmessage = (e: MessageEvent) => {
+    const { id, ok, result, error } = e.data as
+      { id: number; ok: boolean; result?: unknown; error?: string };
+    const call = pendingCalls.get(id);
+    if (!call) return;
+    pendingCalls.delete(id);
+    if (ok) call.resolve(result);
+    else call.reject(new Error(error ?? 'parser error'));
+  };
+  // A panic inside WASM becomes a trap that fires here (not onmessage), so a
+  // hung request never silently waits forever — reject every pending call and
+  // drop the worker so the next call spins up a fresh one.
+  const failAll = (msg: string) => {
+    for (const [, call] of pendingCalls) call.reject(new Error(msg));
+    pendingCalls.clear();
+    parserWorker = null;
+  };
+  w.onerror = (e) => failAll(`parser worker crashed: ${e.message || 'unknown error'}`);
+  w.onmessageerror = () => failAll('parser worker message could not be deserialised');
+  parserWorker = w;
+  return w;
+}
+
+/**
+ * Call the parser worker. Copies `bytes` once and transfers the copy so the
+ * caller's original buffer stays intact (the "Filter tests…" re-parse flow
+ * re-reads the same file from memory). The copy cost is negligible vs parse time.
+ */
+function callWorker(
+  op: ParserOp,
+  bytes: Uint8Array,
+  extra?: { mapping?: CsvMapping; selected?: number[] },
+): Promise<unknown> {
+  const id = nextCallId++;
+  const copy = bytes.slice();
+  return new Promise((resolve, reject) => {
+    pendingCalls.set(id, { resolve, reject });
+    getWorker().postMessage(
+      { id, op, bytes: copy, mapping: extra?.mapping, selected: extra?.selected },
+      [copy.buffer],
+    );
+  });
 }
 
 /** Decompress a .gz file using the browser's native DecompressionStream. */
@@ -296,23 +346,19 @@ function makeWebPlatform(): Platform {
     },
 
     async parseStdf(file) {
-      const wasm = await loadWasm();
-      return wasm.parse_stdf(file.bytes) as RustParsedFile;
+      return await callWorker('parseStdf', file.bytes) as RustParsedFile;
     },
 
     async parseAtdf(file) {
-      const wasm = await loadWasm();
-      return wasm.parse_atdf(file.bytes) as RustParsedFile;
+      return await callWorker('parseAtdf', file.bytes) as RustParsedFile;
     },
 
     async parseCsv(file, mapping) {
-      const wasm = await loadWasm();
-      return wasm.parse_csv(file.bytes, mapping) as RustParsedFile;
+      return await callWorker('parseCsv', file.bytes, { mapping }) as RustParsedFile;
     },
 
     async parseJson(file, mapping) {
-      const wasm = await loadWasm();
-      return wasm.parse_json(file.bytes, mapping) as RustParsedFile;
+      return await callWorker('parseJson', file.bytes, { mapping }) as RustParsedFile;
     },
 
     async csvHeaders(file) {
@@ -342,23 +388,19 @@ function makeWebPlatform(): Platform {
     },
 
     async stdfTestNames(file) {
-      const wasm = await loadWasm();
-      return wasm.stdf_test_names(file.bytes) as StdfTestNames;
+      return await callWorker('stdfTestNames', file.bytes) as StdfTestNames;
     },
 
     async atdfTestNames(file) {
-      const wasm = await loadWasm();
-      return wasm.atdf_test_names(file.bytes) as StdfTestNames;
+      return await callWorker('atdfTestNames', file.bytes) as StdfTestNames;
     },
 
     async parseStdfFiltered(file, selected) {
-      const wasm = await loadWasm();
-      return wasm.parse_stdf_filtered(file.bytes, selected) as RustParsedFile;
+      return await callWorker('parseStdfFiltered', file.bytes, { selected }) as RustParsedFile;
     },
 
     async parseAtdfFiltered(file, selected) {
-      const wasm = await loadWasm();
-      return wasm.parse_atdf_filtered(file.bytes, selected) as RustParsedFile;
+      return await callWorker('parseAtdfFiltered', file.bytes, { selected }) as RustParsedFile;
     },
 
     async saveTextFile(content, defaultName) {

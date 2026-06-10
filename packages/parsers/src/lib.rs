@@ -11,6 +11,16 @@ mod wasm {
     use serde::Serialize;
     use crate::parse_csv::CsvMapping;
 
+    // Route Rust panics to console.error with a stack trace. Without this a
+    // panic in the parser becomes an opaque WASM trap that aborts the module
+    // with no diagnostic — a dead page. The bounds-checked byte readers mean a
+    // truncated file returns Err rather than panicking, but this catches any
+    // residual panic surface.
+    #[wasm_bindgen(start)]
+    pub fn init() {
+        console_error_panic_hook::set_once();
+    }
+
     fn to_js<T: Serialize>(val: &T) -> JsValue {
         val.serialize(&serde_wasm_bindgen::Serializer::json_compatible()).unwrap()
     }

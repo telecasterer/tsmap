@@ -491,7 +491,7 @@ pub fn parse_stdf_sync(path: String) -> Result<ParsedStdf, String> {
 /// Scans the file for PTR/FTR records only, collecting test names and limits.
 /// Does not accumulate die results. Used to populate the test selector overlay
 /// before the full parse. Returns a flat map of test_num string → TestDef.
-pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, String> {
+pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, String> {
     let mut reader = StdfReader::from(
         BufReader::new(Cursor::new(bytes)),
         &CompressType::Uncompressed,
@@ -501,11 +501,13 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, S
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
     let mut test_num_to_key: HashMap<u32, String> = HashMap::new();
     let mut limits_resolved: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut pir_count: u32 = 0;
 
     for raw in reader.get_rawdata_iter() {
         let raw = raw.map_err(|e| e.to_string())?;
         let b = &raw.raw_data;
         match (raw.header.typ, raw.header.sub) {
+            (5, 10) => { pir_count += 1; }
             (15, 10) => {
                 let Some(test_num) = read_u4_le(b, 0) else { continue; };
                 if !test_num_to_key.contains_key(&test_num) {
@@ -554,7 +556,7 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, S
         }
     }
 
-    Ok(test_defs)
+    Ok(crate::types::ScanResult { test_defs, die_count: pir_count })
 }
 
 // ── Filtered parse ────────────────────────────────────────────────────────────

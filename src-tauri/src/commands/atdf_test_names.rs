@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use testdata_parser::parse_atdf::parse_atdf_test_names;
-use testdata_parser::types::TestDef;
+use testdata_parser::types::ScanResult;
 
 #[tauri::command]
-pub async fn atdf_test_names(path: String) -> Result<HashMap<String, TestDef>, String> {
+pub async fn atdf_test_names(path: String) -> Result<ScanResult, String> {
     tokio::task::spawn_blocking(move || {
         let bytes = testdata_parser::read_file::read_bytes(&path)?;
         parse_atdf_test_names(&bytes)

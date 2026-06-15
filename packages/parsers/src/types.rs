@@ -1,6 +1,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanResult {
+    pub test_defs: HashMap<String, TestDef>,
+    pub die_count: u32,
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DieResult {

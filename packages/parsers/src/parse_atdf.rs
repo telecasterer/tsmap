@@ -244,13 +244,13 @@ pub fn parse_atdf_sync(path: String) -> Result<ParsedStdf, String> {
 
 /// Scans the file for PTR/FTR records only, collecting test names and limits.
 /// Does not accumulate die results. Returns a flat map of test_num string → TestDef.
-pub fn parse_atdf_test_names(bytes: &[u8]) -> Result<HashMap<String, TestDef>, String> {
+pub fn parse_atdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, String> {
     let raw = String::from_utf8(bytes.to_vec())
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
     parse_atdf_test_names_str(&raw)
 }
 
-fn parse_atdf_test_names_str(raw: &str) -> Result<HashMap<String, TestDef>, String> {
+fn parse_atdf_test_names_str(raw: &str) -> Result<crate::types::ScanResult, String> {
     let mut records: Vec<String> = Vec::new();
     for line in raw.lines() {
         if line.starts_with(' ') {
@@ -271,6 +271,7 @@ fn parse_atdf_test_names_str(raw: &str) -> Result<HashMap<String, TestDef>, Stri
         .unwrap_or('|');
 
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
+    let mut pir_count: u32 = 0;
 
     for rec in &records {
         let colon = match rec.find(':') {
@@ -281,6 +282,7 @@ fn parse_atdf_test_names_str(raw: &str) -> Result<HashMap<String, TestDef>, Stri
         let raw_fields: Vec<&str> = rec[colon + 1..].split(delim).collect();
 
         match name {
+            "PIR" => { pir_count += 1; }
             "PTR" => {
                 let f = field_map(PTR, &raw_fields);
                 let test_num = get(&f, "TEST_NUM").to_string();
@@ -314,7 +316,7 @@ fn parse_atdf_test_names_str(raw: &str) -> Result<HashMap<String, TestDef>, Stri
         }
     }
 
-    Ok(test_defs)
+    Ok(crate::types::ScanResult { test_defs, die_count: pir_count })
 }
 
 // ── Filtered parse ────────────────────────────────────────────────────────────

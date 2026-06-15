@@ -7,9 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.13.5 |
+| wmap version in use | 0.13.6 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| Last updated | 2026-06-10 (updated to 0.13.5 — issues 12 and 13 resolved) |
+| testdata-parser version | 0.2.3 |
+| Last updated | 2026-06-15 (testdata-parser 0.2.3 — ScanResult struct, issue #15 resolved) |
 
 ## Rust Backend Notes
 
@@ -219,6 +220,18 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 **Workaround in tsmap:** Reverted to computing boxplot quartiles directly from die data in tsmap's own `buildTestBoxplotData` / `buildTrendData` functions (lazy, one test at a time, only on panel interaction). `analyzeWaferMap` is now called without the flag.
 
 **Suggested fix in wmap:** Split the flag into two independent options: (a) `computePerTestStats: true` — only the quartile scan, no region passes, cheap; (b) `enableTestValueAnalysis: true` — full regional Welch t-tests, expensive, opt-in separately. This lets hosts get lightweight quartiles without paying for spatial analysis they don't use.
+
+### ~~15. `stdf_test_names` / `atdf_test_names` WASM functions return wrong shape~~ (fixed in testdata-parser 0.2.3)
+
+**Where:** `packages/parsers/src/lib.rs` WASM exports; published `@paulrobins/testdata-parser`.
+
+**Problem:** The Rust source for `parse_stdf_test_names` returns `ScanResult { test_defs, die_count }` which should serialise as `{ testDefs: {...}, dieCount: N }`. However the published WASM package (≤ 0.2.2) returned just the raw `HashMap<String, TestDef>` — a flat object keyed by test number with no `dieCount` field. This meant in the browser/WASM path, `scanResult.testDefs` was `undefined` and `scanResult.dieCount` was `undefined`.
+
+**Impact:** In the web app, `stdfTestNames` / `atdfTestNames` always threw "Cannot convert undefined or null to object". The scan fell back to unfiltered parse and the test selector overlay never appeared in the browser. The desktop (native Rust) path was unaffected.
+
+**Fix:** Rebuilt and republished `@paulrobins/testdata-parser` 0.2.3 with the correct `ScanResult` struct. A temporary `normaliseScanResult` shim was used in `platform.ts` during the window between the Rust fix and the WASM publish; the shim has been removed in 0.2.3.
+
+---
 
 ### ~~13. No structured warnings channel on `WaferMapResult` / `analyzeWaferMap`~~ (fixed in 0.13.5)
 

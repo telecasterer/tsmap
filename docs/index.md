@@ -37,6 +37,7 @@ without a browser. Builds for Linux, macOS, and Windows are attached to each
 ## Links
 
 - [Web app](app/index.html)
+- [User guide](user-guide.md)
 - [GitHub](https://github.com/telecasterer/tsmap)
 - [Releases](https://github.com/telecasterer/tsmap/releases)
 - [wafermap library](https://telecasterer.github.io/wafermap/)

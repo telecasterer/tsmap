@@ -28,6 +28,11 @@ export interface FileHandle {
 
 export type StdfTestNames = Record<string, TestDef>;
 
+export interface ScanResult {
+  testDefs: StdfTestNames;
+  dieCount: number;
+}
+
 export interface Platform {
   pickFiles(): Promise<FileHandle[]>;
   expandArchives(files: FileHandle[]): Promise<FileHandle[]>;
@@ -39,8 +44,9 @@ export interface Platform {
   jsonHeaders(file: FileHandle): Promise<HeadersResult>;
   savePng(blob: Blob, stem: string): Promise<void>;
   openReport(html: string): void;
-  stdfTestNames(file: FileHandle): Promise<StdfTestNames>;
-  atdfTestNames(file: FileHandle): Promise<StdfTestNames>;
+  confirm(message: string): Promise<boolean>;
+  stdfTestNames(file: FileHandle): Promise<ScanResult>;
+  atdfTestNames(file: FileHandle): Promise<ScanResult>;
   parseStdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
   parseAtdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
   saveTextFile(content: string, defaultName: string): Promise<void>;
@@ -143,14 +149,19 @@ function makeTauriPlatform(): Platform {
       getInvoke().then(invoke => invoke('write_temp_html', { html }));
     },
 
+    async confirm(message) {
+      const { ask } = await getDialog();
+      return ask(message, { kind: 'warning' });
+    },
+
     async stdfTestNames(file) {
       const invoke = await getInvoke();
-      return invoke<StdfTestNames>('stdf_test_names', { path: file.path });
+      return invoke<ScanResult>('stdf_test_names', { path: file.path });
     },
 
     async atdfTestNames(file) {
       const invoke = await getInvoke();
-      return invoke<StdfTestNames>('atdf_test_names', { path: file.path });
+      return invoke<ScanResult>('atdf_test_names', { path: file.path });
     },
 
     async parseStdfFiltered(file, selected) {
@@ -321,6 +332,7 @@ function parseJsonHeaders(bytes: Uint8Array): HeadersResult {
   return { headers, sample, rowCount: rows.length };
 }
 
+
 function makeWebPlatform(): Platform {
   return {
     // Web file picking is handled directly in main.ts via <input id="file-input">
@@ -387,12 +399,16 @@ function makeWebPlatform(): Platform {
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     },
 
+    async confirm(message) {
+      return window.confirm(message);
+    },
+
     async stdfTestNames(file) {
-      return await callWorker('stdfTestNames', file.bytes) as StdfTestNames;
+      return await callWorker('stdfTestNames', file.bytes) as ScanResult;
     },
 
     async atdfTestNames(file) {
-      return await callWorker('atdfTestNames', file.bytes) as StdfTestNames;
+      return await callWorker('atdfTestNames', file.bytes) as ScanResult;
     },
 
     async parseStdfFiltered(file, selected) {

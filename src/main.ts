@@ -6,7 +6,7 @@ import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render'
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
-import type { FileHandle, StdfTestNames } from './platform';
+import type { FileHandle, StdfTestNames, ScanResult } from './platform';
 import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
@@ -735,6 +735,8 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   let firstPassTestDefs: StdfTestNames | null = null;
   // Pre-parsed CSV/JSON results — reused after the selector so we don't parse twice.
   const preParsed = new Map<string, ParsedFile>();
+  // Die count from the binary scan (PIR count × file count approximation).
+  let binaryScanDieCount = 0;
 
   if (binaryFiles.length > 0) {
     const largestBinary = binaryFiles.reduce((a, b) => {
@@ -749,12 +751,13 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     try {
-      const scanResult = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
+      const scanResult: ScanResult = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
         ? await platform.atdfTestNames(largestBinary)
         : await platform.stdfTestNames(largestBinary);
-      currentTestNames = scanResult;
-      firstPassTestDefs = scanResult;
-      log('info', `${largestBinary.name}: ${Object.keys(scanResult).length} tests found`);
+      currentTestNames = scanResult.testDefs;
+      firstPassTestDefs = scanResult.testDefs;
+      binaryScanDieCount = scanResult.dieCount * binaryFiles.length;
+      log('info', `${largestBinary.name}: ${Object.keys(scanResult.testDefs).length} tests found, ${scanResult.dieCount.toLocaleString()} dies`);
     } catch (e) {
       log('warn', `Test name scan failed: ${(e as Error).message} — parsing all tests`);
     }
@@ -793,6 +796,11 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
 
     initialSelection = [];
 
+    // Compute capacity info for the memory advisory in the selector.
+    const csvDieCount = Array.from(preParsed.values())
+      .reduce((s, p) => s + p.wafers.reduce((ws, w) => ws + w.results.length, 0), 0);
+    const totalDieCount = binaryScanDieCount + csvDieCount;
+
     testSelection = await new Promise<number[] | null>(resolve => {
       showTestSelectorOverlay(
         firstPassTestDefs!,
@@ -802,6 +810,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
           fromLargestFile: binaryFiles.length > 1,
           initialSelection,
           nameOverrides,
+          capacity: totalDieCount > 0 ? { dieCount: totalDieCount, totalTests: allTestNums.size } : undefined,
           onSave: async (saveEntries) => {
             const lines = [
               '# tsmap test list',
@@ -812,6 +821,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
           },
           onLoad: async () => (await platform.pickTextFile())?.content ?? null,
           onLog: log,
+          onAsk: (msg) => platform.confirm(msg),
         },
       );
     });
@@ -825,39 +835,46 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   // ── Full parse for STDF/ATDF, prune/backfill pre-parsed CSV/JSON ──────────
   const entries: FileWaferEntry[] = [];
 
-  // Finalise pre-parsed CSV/JSON entries — prune to selection.
-  for (const [, parsed] of preParsed) {
-    applyTestSelection(parsed, testSelection ?? [], null, overlayNameOverrides);
-  }
-
-  for (const file of files) {
-    const fileExt = effectiveExt(file.name);
-
-    // CSV/JSON already parsed above — just collect.
-    if (!isBinaryExt(fileExt)) {
-      const pre = preParsed.get(file.name);
-      if (pre) entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed: pre });
-      continue;
+  try {
+    // Finalise pre-parsed CSV/JSON entries — prune to selection.
+    for (const [, parsed] of preParsed) {
+      applyTestSelection(parsed, testSelection ?? [], null, overlayNameOverrides);
     }
 
-    setBusy(`Parsing ${file.name}…`);
-    try {
-      // If scan failed (firstPassTestDefs null), fall back to unfiltered parse.
-      const raw = firstPassTestDefs === null
-        ? (fileExt === 'atdf' || fileExt === 'atd'
-          ? await platform.parseAtdf(file)
-          : await platform.parseStdf(file))
-        : (fileExt === 'atdf' || fileExt === 'atd'
-          ? await platform.parseAtdfFiltered(file, testSelection ?? [])
-          : await platform.parseStdfFiltered(file, testSelection ?? []));
-      const parsed = rustToLocal(raw, file.name);
-      applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayNameOverrides);
-      entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
-      log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
-      logWarnings(parsed);
-    } catch (e) {
-      log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
+    for (const file of files) {
+      const fileExt = effectiveExt(file.name);
+
+      // CSV/JSON already parsed above — just collect.
+      if (!isBinaryExt(fileExt)) {
+        const pre = preParsed.get(file.name);
+        if (pre) entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed: pre });
+        continue;
+      }
+
+      setBusy(`Parsing ${file.name}…`);
+      try {
+        // If scan failed (firstPassTestDefs null), fall back to unfiltered parse.
+        const raw = firstPassTestDefs === null
+          ? (fileExt === 'atdf' || fileExt === 'atd'
+            ? await platform.parseAtdf(file)
+            : await platform.parseStdf(file))
+          : (fileExt === 'atdf' || fileExt === 'atd'
+            ? await platform.parseAtdfFiltered(file, testSelection ?? [])
+            : await platform.parseStdfFiltered(file, testSelection ?? []));
+        const parsed = rustToLocal(raw, file.name);
+        applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayNameOverrides);
+        entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
+        log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
+        logWarnings(parsed);
+      } catch (e) {
+        log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
+      }
     }
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    log('error', `Parse failed: ${msg}. Try selecting fewer tests.`);
+    setIdle('Out of memory — reduce test selection and try again');
+    return;
   }
 
   if (entries.length === 0) {

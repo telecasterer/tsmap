@@ -309,7 +309,7 @@ export async function showMappingOverlay(
                  title="Comma-separated hard bin numbers counted as pass, e.g. 1 or 1,2">
           <span class="muted">(hard bins, comma-separated)</span>
         </div>
-        <button id="map-render" class="btn-primary">Render maps →</button>
+        <button id="map-render" class="btn-primary">Continue →</button>
       </div>
     </div>`;
 

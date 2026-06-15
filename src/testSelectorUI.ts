@@ -1,12 +1,21 @@
 import type { TestDef } from './types';
 
+export interface CapacityInfo {
+  /** Total dies across all files being loaded. */
+  dieCount: number;
+  /** Total tests found in the scan. */
+  totalTests: number;
+}
+
 export interface TestSelectorOptions {
   fromLargestFile?: boolean;
   initialSelection?: number[];
   nameOverrides?: Map<number, string>;
+  capacity?: CapacityInfo;
   onSave?: (entries: Array<{ num: number; name: string }>) => Promise<void>;
   onLoad?: () => Promise<string | null>;
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
+  onAsk?: (message: string) => Promise<boolean>;
 }
 
 export function parseTestListFile(text: string): Array<{ num: number; name?: string }> {
@@ -447,10 +456,49 @@ export function showTestSelectorOverlay(
     'padding:6px 16px;border-radius:4px;border:none',
     'background:var(--accent,#4a9eff);color:#fff;cursor:pointer;font-size:13px;font-weight:600',
   ].join(';');
-  confirmBtn.addEventListener('click', () => {
+
+  // ── Memory advisory ────────────────────────────────────────────────────────
+  // Thresholds in die×test pairs. Calibrated against known-good behaviour:
+  // ~300k dies × 30 tests = 9M pairs is fine; warn starts above ~50M pairs.
+  const WARN_PAIRS   = 50_000_000;   // ~50M die×test pairs — show amber
+  const DANGER_PAIRS = 200_000_000;  // ~200M die×test pairs — show red + confirm
+
+  const memAdvisory = document.createElement('div');
+  memAdvisory.style.cssText = 'font-size:12px;display:none';
+
+  function dieTestPairs(): number {
+    if (!options.capacity || selected.size === 0) return 0;
+    return options.capacity.dieCount * selected.size;
+  }
+
+  function updateMemAdvisory(): void {
+    if (!options.capacity || selected.size === 0) {
+      memAdvisory.style.display = 'none';
+      return;
+    }
+    const pairs = dieTestPairs();
+    if (pairs < WARN_PAIRS) {
+      memAdvisory.style.display = 'none';
+      return;
+    }
+    memAdvisory.style.display = '';
+    if (pairs >= DANGER_PAIRS) {
+      memAdvisory.style.color = 'var(--error,#f87171)';
+      memAdvisory.textContent = 'Very large selection — risk of running out of memory';
+    } else {
+      memAdvisory.style.color = 'var(--warn,#fbbf24)';
+      memAdvisory.textContent = 'Large selection — may be slow to load';
+    }
+  }
+
+  confirmBtn.addEventListener('click', async () => {
     const sel = Array.from(selected).sort((a, b) => a - b);
+    const ask = options.onAsk ?? ((msg) => Promise.resolve(window.confirm(msg)));
     if (sel.length === 0) {
-      if (!confirm('No tests selected — only bin data will be loaded. Continue?')) return;
+      if (!await ask('No tests selected — only bin data will be loaded. Continue?')) return;
+    }
+    if (dieTestPairs() >= DANGER_PAIRS) {
+      if (!await ask('This is a very large selection and may run out of memory. Consider selecting fewer tests. Continue anyway?')) return;
     }
     cleanup();
     onConfirm(sel, new Map(nameOverrides));
@@ -460,11 +508,12 @@ export function showTestSelectorOverlay(
     const n = selected.size;
     countLabel.textContent = `${n} of ${allNums.length} tests selected`;
     confirmBtn.textContent = n === 0 ? 'Import (bin data only) →' : `Import ${n} test${n !== 1 ? 's' : ''} →`;
+    updateMemAdvisory();
   }
 
   btnRow.append(cancelBtn, confirmBtn);
   footerRow.append(countLabel, btnRow);
-  footer.append(footerNote, footerRow);
+  footer.append(footerNote, memAdvisory, footerRow);
 
   // ── Backdrop click ────────────────────────────────────────────────────────
 

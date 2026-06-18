@@ -209,13 +209,14 @@ export const CAPTURES = [
     },
   },
 
-  // ── §5.1 Single wafer map with summary panel ──────────────────────────────
+  // ── §5.1 Single wafer map — hard bin, summary panel open ─────────────────
+  // Use correlated.stdf (W01..W05 IDs don't trigger rename overlay)
   {
     file: 'wafer-map-single',
     group: 'maps',
-    description: 'Single-wafer map — summary panel open, finding highlighted',
+    description: 'Single-wafer map — hard bin, summary panel open',
     screenshotFn: async (page, outFile, baseUrl) => {
-      await injectFileAndWaitForSelector(page, TD('small.stdf'), '#tsmap-test-selector-overlay', baseUrl);
+      await injectFileAndWaitForSelector(page, TD('correlated.stdf'), '#tsmap-test-selector-overlay', baseUrl);
       await page.waitForTimeout(400);
       await dismissSelectorNone(page);
       // Open the summary panel
@@ -225,21 +226,6 @@ export const CAPTURES = [
         if (btn && !btn.dataset.active) btn.click();
       });
       await page.waitForTimeout(600);
-      // Click an edge-ring finding if available
-      const found = await page.evaluate(() => {
-        const rows = [...document.querySelectorAll('[data-wmap-finding]')];
-        const row = rows.find(r => r.textContent?.toLowerCase().includes('edge') && r.offsetParent !== null);
-        if (row) { row.dataset.wmapFindingTarget = 'pending'; return true; }
-        // Fall back to first visible finding
-        const first = rows.find(r => r.offsetParent !== null);
-        if (first) { first.dataset.wmapFindingTarget = 'pending'; return true; }
-        return false;
-      });
-      if (found) {
-        await page.click('[data-wmap-finding-target="pending"]');
-        await page.evaluate(() => { delete document.querySelector('[data-wmap-finding-target="pending"]')?.dataset.wmapFindingTarget; });
-        await page.waitForTimeout(400);
-      }
       await pinToolbar(page);
       await page.screenshot({ path: outFile, fullPage: false });
     },
@@ -251,27 +237,43 @@ export const CAPTURES = [
     group: 'maps',
     description: 'Map toolbar with Plot mode dropdown open — Hard Bin highlighted',
     setup: [
-      ['loadFile', TD('small.stdf')],
+      ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelectorSelectNone'],
-      ['hoverMap'],
+      ['hoverMapCard', 0],
       ['openWmapDropdown', 'Plot mode', 'Hard Bin'],
     ],
   },
 
-  // ── §5.2 Toolbar: soft bin map ────────────────────────────────────────────
+  // ── §5.2 Soft Bin map ─────────────────────────────────────────────────────
   {
-    file: 'wafer-map-testvalue',
+    file: 'wafer-map-softbin',
     group: 'maps',
-    description: 'Map in Soft Bin mode — correlated.stdf, alternative plot mode',
+    description: 'Map in Soft Bin mode — correlated.stdf gallery',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelectorSelectNone'],
-      ['hoverMap'],
+      ['hoverMapCard', 0],
       ['selectWmapMode', 'Soft Bin'],
-      ['wait', 400],
-      ['hoverMap'],
+      ['wait', 600],
+      ['hoverMapCard', 0],
+    ],
+  },
+
+  // ── §5.2 Test value heatmap ────────────────────────────────────────────────
+  {
+    file: 'wafer-map-testvalue',
+    group: 'maps',
+    description: 'Map in Test Value mode — correlated.stdf gallery, parametric heatmap',
+    setup: [
+      ['loadFile', TD('correlated.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['hoverMapCard', 0],
+      ['selectWmapMode', 'Test Value'],
+      ['wait', 600],
+      ['hoverMapCard', 0],
     ],
   },
 
@@ -289,11 +291,13 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6 Charts overview ────────────────────────────────────────────────────
+  // ── §6 Charts overview — all 6 panels visible ─────────────────────────────
   {
     file: 'charts-overview',
     group: 'charts',
-    description: 'Charts view — correlated.stdf, full two-column grid at top',
+    description: 'Charts view — correlated.stdf, full 6-panel grid',
+    viewport: { width: 1280, height: 1800 },
+    fullPage: true,
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -303,82 +307,87 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.1 Yield by wafer ───────────────────────────────────────────────────
+  // ── §6.1 Yield by wafer — expand modal ───────────────────────────────────
   {
     file: 'chart-yield',
     group: 'charts',
-    description: 'Yield by wafer bar chart — correlated.stdf',
+    description: 'Yield by wafer — expanded modal, correlated.stdf',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelector'],
       ['openCharts'],
-      ['scroll', 0, 0],
+      ['expandChartCard', 0],
     ],
-    screenshotFn: async (page, outFile, _baseUrl) => {
-      const cards = await page.$$('.chart-card, [class*="chart"]');
-      if (cards[0]) { await cards[0].screenshot({ path: outFile }); }
-      else { await page.screenshot({ path: outFile, fullPage: false }); }
-    },
   },
 
-  // ── §6.3 Boxplot panel ────────────────────────────────────────────────────
+  // ── §6.2 Bin pareto — expand modal ───────────────────────────────────────
+  {
+    file: 'chart-pareto',
+    group: 'charts',
+    description: 'Bin pareto — expanded modal, correlated.stdf',
+    setup: [
+      ['loadFile', TD('correlated.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['openCharts'],
+      ['expandChartCard', 1],
+    ],
+  },
+
+  // ── §6.3 Boxplot — expand modal ──────────────────────────────────────────
   {
     file: 'boxplot',
     group: 'charts',
-    description: 'Test value distribution boxplot — correlated.stdf, 5 wafers',
+    description: 'Test value distribution boxplot — expanded modal, correlated.stdf',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelector'],
       ['openCharts'],
-      ['scroll', 0, 600],
-      ['wait', 300],
+      ['expandChartCard', 2],
     ],
   },
 
-  // ── §6.4 Histogram ────────────────────────────────────────────────────────
+  // ── §6.4 Histogram — expand modal ────────────────────────────────────────
   {
     file: 'histogram',
     group: 'charts',
-    description: 'Value histogram — correlated.stdf, spec limit lines visible',
+    description: 'Value histogram — expanded modal, correlated.stdf',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelector'],
       ['openCharts'],
-      ['scroll', 0, 600],
-      ['wait', 300],
+      ['expandChartCard', 3],
     ],
   },
 
-  // ── §6.5 Correlation matrix ───────────────────────────────────────────────
+  // ── §6.5 Correlation matrix — expand modal ───────────────────────────────
   {
     file: 'correlation',
     group: 'charts',
-    description: 'Test correlation matrix — correlated.stdf (30 tests with known r values)',
+    description: 'Test correlation matrix — expanded modal, correlated.stdf',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelector'],
       ['openCharts'],
-      ['scroll', 0, 1200],
-      ['wait', 400],
+      ['expandChartCard', 4],
     ],
   },
 
-  // ── §6.6 Scatter plot ─────────────────────────────────────────────────────
+  // ── §6.6 Scatter — expand modal ──────────────────────────────────────────
   {
     file: 'scatter',
     group: 'charts',
-    description: 'Scatter plot — correlated.stdf, two correlated tests, bin legend',
+    description: 'Scatter plot — expanded modal, correlated.stdf',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
       ['dismissSelector'],
       ['openCharts'],
-      ['scroll', 0, 1800],
-      ['wait', 400],
+      ['expandChartCard', 5],
     ],
   },
 

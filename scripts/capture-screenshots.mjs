@@ -62,6 +62,10 @@
  *   ['clickFindingByText', 'edge']
  *     Click the first finding whose text contains the given string.
  *
+ *   ['expandChartCard', N]
+ *     Click the ⛶ Expand button on the Nth .chart-card (0-based index).
+ *     Leaves the modal open for screenshotting.
+ *
  *   ['expandLogPanel']
  *     Click the log toggle button to open the log panel.
  *
@@ -276,7 +280,8 @@ async function selectWmapDropdownItem(page, btnAriaLabel, itemLabel) {
   const clicked = await page.evaluate((label) => {
     const menus = [...document.body.children].filter(el => el.tagName === 'DIV' && el.style.position === 'fixed');
     for (const menu of menus) {
-      const row = [...menu.querySelectorAll('div')].find(d => d.textContent?.trim() === label);
+      // Use startsWith to handle items with trailing decoration like ' ▶'
+      const row = [...menu.querySelectorAll('div')].find(d => d.textContent?.trim().startsWith(label));
       if (row) { row.click(); return true; }
     }
     return false;
@@ -371,6 +376,20 @@ async function runSetup(page, steps, baseUrl) {
         });
         // Wait for chart panels to render
         await page.waitForTimeout(1200);
+        break;
+      }
+
+      case 'expandChartCard': {
+        // Click the ⛶ Expand button on the Nth .chart-card (0-based)
+        const idx = args[0] ?? 0;
+        await page.evaluate((n) => {
+          const cards = [...document.querySelectorAll('.chart-card')];
+          if (!cards[n]) return;
+          const btn = [...cards[n].querySelectorAll('button')].find(b => b.textContent?.trim() === '⛶');
+          if (btn) btn.click();
+        }, idx);
+        // Wait for modal backdrop to appear
+        await page.waitForTimeout(800);
         break;
       }
 
@@ -522,7 +541,7 @@ async function main() {
         if (!el) throw new Error(`selector not found: ${cap.selector}`);
         await el.screenshot({ path: outFile });
       } else {
-        await page.screenshot({ path: outFile, fullPage: false });
+        await page.screenshot({ path: outFile, fullPage: cap.fullPage ?? false });
       }
 
       await ctx.close();

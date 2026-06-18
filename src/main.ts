@@ -11,6 +11,7 @@ import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
+import { USER_GUIDE_HTML } from './userGuideHtml';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
@@ -230,6 +231,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
@@ -241,6 +243,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
     renderWaferGallery(container, items, {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
@@ -305,6 +308,7 @@ function openStackedBin(waferIndices: number[], datum: ChartDatum) {
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode: 'value' },
@@ -337,6 +341,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
+      showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
@@ -1121,76 +1126,20 @@ filterTestsBtn.addEventListener('click', async () => {
 helpBtn.addEventListener('click', () => {
   const modal = document.createElement('div');
   modal.className = 'tsmap-modal-backdrop';
-  modal.innerHTML = `
-    <div class="help-modal">
-      <h2>tsmap help</h2>
-
-      <h3>Opening files</h3>
-      <p>Click <strong>Open file</strong> to pick one or more files, or drag and drop files
-         anywhere in the window. Once a file is loaded, <strong>Add files</strong> appends
-         additional wafers to the current gallery. <strong>Clear</strong> unloads the
-         current map.</p>
-
-      <h3>Supported formats</h3>
-      <ul>
-        <li><code>.stdf</code> / <code>.std</code> — STDF v4 binary. Handles multi-wafer lots,
-            parametric (PTR) and functional (FTR) tests.</li>
-        <li><code>.atdf</code> / <code>.atd</code> — ATDF ASCII. Same data as STDF in
-            text form; pipe-delimited records.</li>
-        <li><code>.csv</code> / <code>.txt</code> / <code>.dat</code> — Comma-separated.
-            A column mapping step lets you assign roles to each column before rendering.</li>
-        <li><code>.json</code> — JSON array of die objects, or nested wafer objects with a
-            <code>results</code> array. Same mapping step as CSV.</li>
-        <li><code>.gz</code> — Gzip-compressed version of any of the above (e.g.
-            <code>lot.stdf.gz</code>). Decompressed in memory; no temp files.</li>
-        <li><code>.zip</code> — Zip archive containing any supported files. All files are
-            extracted and loaded as a batch; mixed formats within a single zip are supported.</li>
-      </ul>
-
-      <h3>Column mapping (CSV / JSON)</h3>
-      <p>When you open a CSV or JSON file, a mapping overlay appears before the map renders.
-         Assign a role to each column:</p>
-      <ul>
-        <li><strong>X / Y position</strong> — die grid coordinates (required).</li>
-        <li><strong>Hard bin / Soft bin</strong> — bin number per die.</li>
-        <li><strong>Wafer ID / Lot ID</strong> — groups dies into separate wafers.</li>
-        <li><strong>Test value</strong> — numeric parametric result; give it a name in the
-            Test name column.</li>
-        <li><strong>Display info</strong> — metadata shown in tooltips. Check
-            <em>Split gallery</em> to create a separate wafer per unique value of that column.</li>
-        <li><strong>— ignore —</strong> — column is excluded from the render.</li>
-      </ul>
-      <p>Mappings are saved per file and restored automatically next time you open the same
-         column layout.</p>
-
-      <h3>Viewing maps</h3>
-      <p>Scroll to zoom, drag to pan. The toolbar provides zoom controls, plot mode switching
-         (hard bin / soft bin / test value), box selection, and PNG download. The summary
-         panel on the right shows yield, bin counts, test statistics, and spatial findings.
-         Click a finding to highlight the affected dies or wafers in the gallery.</p>
-
-      <h3>Charts</h3>
-      <p>Click <strong>Charts</strong> to switch from the map view to the charts panel.
-         Available charts:</p>
-      <ul>
-        <li><strong>Yield by wafer</strong> — bar chart of pass yield per wafer, sortable
-            by yield or wafer ID.</li>
-        <li><strong>Bin pareto</strong> — failure count by hard or soft bin across the lot.</li>
-        <li><strong>Test value distribution</strong> — box plot showing spread, median, and
-            outliers per wafer for the selected parametric test.</li>
-        <li><strong>Value histogram</strong> — distribution of a test value across the whole
-            lot or a single wafer.</li>
-      </ul>
-      <p>Click a bar or box to jump to the corresponding wafer map. Click a stacked bin bar
-         to open a lot-stacked map showing where that bin lands spatially.</p>
-
-      <div class="help-close-row">
-        <button class="btn-primary" id="help-close">Close</button>
-      </div>
-    </div>`;
+  const inner = document.createElement('div');
+  inner.className = 'help-modal';
+  inner.innerHTML = USER_GUIDE_HTML;
+  const closeRow = document.createElement('div');
+  closeRow.className = 'help-close-row';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn-primary';
+  closeBtn.textContent = 'Close';
+  closeRow.appendChild(closeBtn);
+  inner.appendChild(closeRow);
+  modal.appendChild(inner);
   document.body.appendChild(modal);
   const close = () => modal.remove();
-  modal.querySelector('#help-close')!.addEventListener('click', close);
+  closeBtn.addEventListener('click', close);
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
 });
 

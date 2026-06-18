@@ -31,7 +31,15 @@ before the data is parsed.
 
 ## 2. Opening files
 
-![tsmap empty state](images/empty-state.png)
+<div style="display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;font-size:13px;margin:8px 0 12px;">
+  <span style="background:none;border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-size:12px;padding:3px 10px;">Open file</span>
+  <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Add files</span>
+  <span style="background:none;border:1px solid var(--border-muted);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Clear</span>
+  <span style="width:1px;height:16px;background:var(--border-mid);flex-shrink:0;"></span>
+  <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Charts</span>
+  <span style="margin-left:auto;"></span>
+  <span style="background:none;border:1px solid var(--border-muted);border-radius:50%;color:var(--text-muted);font-size:12px;font-weight:600;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">?</span>
+</div>
 
 ### Open file
 
@@ -62,8 +70,7 @@ After selecting files, what happens depends on the format:
 
 | Format | Next step |
 |--------|-----------|
-| STDF / ATDF — ≤ 200 tests | Parsed directly; maps render |
-| STDF / ATDF — > 200 tests | [Test selector overlay](#4-test-selector-stdf-and-atdf) appears first |
+| STDF / ATDF | [Test selector overlay](#4-test-selector-stdf-and-atdf) always appears first |
 | CSV / JSON | [Column mapping overlay](#3-column-mapping-csv-and-json) appears first |
 | Multiple files | [Wafer rename overlay](#21-wafer-rename-overlay) appears before rendering |
 
@@ -78,7 +85,26 @@ file name or the wafer ID in the data. Edit any label that needs changing, then 
 
 ## 3. Column mapping (CSV and JSON)
 
-![Column mapping overlay](images/column-mapping.png)
+<div style="border:1px solid var(--border-mid);border-radius:5px;overflow:hidden;margin:8px 0 12px;background:var(--bg-overlay);">
+  <div class="mapping-header">
+    <div><span class="mapping-title">Map columns</span> <span class="mapping-file-info">— example.csv</span></div>
+    <button class="btn-secondary" style="pointer-events:none;">Cancel</button>
+  </div>
+  <table class="mapping-table" style="margin:0;">
+    <thead><tr><th>Column</th><th></th><th>Role</th><th>Test name</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">x</td><td class="col-arrow">→</td><td><select class="mapping-table select" style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>X position</option></select></td><td></td></tr>
+      <tr><td class="col-name">y</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Y position</option></select></td><td></td></tr>
+      <tr><td class="col-name">hbin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Hard bin</option></select></td><td></td></tr>
+      <tr><td class="col-name">vt_lin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test value</option></select></td><td><input class="test-name-input" value="Vt_lin" style="pointer-events:none;" readonly></td></tr>
+      <tr><td class="col-name">site</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>— ignore —</option></select></td><td></td></tr>
+    </tbody>
+  </table>
+  <div class="mapping-footer">
+    <div class="pass-bin-group">Pass bin(s): <input value="1" style="pointer-events:none;" readonly></div>
+    <button class="btn-primary" style="pointer-events:none;">Continue →</button>
+  </div>
+</div>
 
 CSV and JSON files don't have a fixed schema, so tsmap shows a column mapping overlay
 before parsing. It lists every column in the file with a dropdown to assign its role.
@@ -130,12 +156,58 @@ overlay re-appears with fresh auto-detection.
 
 ## 4. Test selector (STDF and ATDF)
 
-![Test selector overlay](images/test-selector.png)
+<div style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:8px;overflow:hidden;margin:8px 0 12px;font-size:14px;color:var(--text-light);">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:16px 20px 8px;">
+    <div style="font-size:16px;font-weight:600;">Select tests to import <span style="font-size:13px;font-weight:400;color:var(--text-dim);">(124 found)</span></div>
+    <span style="color:var(--text-dim);font-size:16px;padding:2px 6px;">✕</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 20px 8px;">
+    <span style="flex:1;min-width:160px;padding:5px 8px;border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);color:var(--text-muted);font-size:13px;">Search by name or number…</span>
+    <div style="display:flex;gap:4px;">
+      <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);font-size:12px;background:var(--accent);color:#fff;">All</span>
+      <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);font-size:12px;background:none;color:var(--text-secondary);">Parametric</span>
+      <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);font-size:12px;background:none;color:var(--text-secondary);">Functional</span>
+    </div>
+  </div>
+  <div style="border-top:1px solid var(--border-subtle);font-size:13px;">
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 20px;border-bottom:1px solid var(--bg-row-border);">
+      <input type="checkbox" checked style="flex-shrink:0;">
+      <span style="color:var(--text-dim);min-width:52px;flex-shrink:0;font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;">1000</span>
+      <span style="flex:1;">Vt_lin</span>
+      <span style="color:var(--text-dim);font-size:11px;">mV · 350–650</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 20px;border-bottom:1px solid var(--bg-row-border);">
+      <input type="checkbox" checked style="flex-shrink:0;">
+      <span style="color:var(--text-dim);min-width:52px;flex-shrink:0;font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;">1001</span>
+      <span style="flex:1;">Idsat_vg1</span>
+      <span style="color:var(--text-dim);font-size:11px;">µA</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 20px;border-bottom:1px solid var(--bg-row-border);">
+      <input type="checkbox" style="flex-shrink:0;">
+      <span style="color:var(--text-dim);min-width:52px;flex-shrink:0;font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;">1010</span>
+      <span style="flex:1;color:var(--text-dim);">Ioff_vg1</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 20px;">
+      <input type="checkbox" style="flex-shrink:0;">
+      <span style="color:var(--text-dim);min-width:52px;flex-shrink:0;font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;">1011</span>
+      <span style="flex:1;color:var(--text-dim);">Ioff_vg2</span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 20px;border-top:1px solid var(--border-mid);background:var(--bg-toolbar);">
+    <span style="font-size:13px;color:var(--text-dim);">2 of 124 selected</span>
+    <div style="display:flex;gap:8px;">
+      <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Save list</span>
+      <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Load list</span>
+      <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Cancel</span>
+      <button class="btn-primary" style="pointer-events:none;">Import →</button>
+    </div>
+  </div>
+</div>
 
 STDF and ATDF files from production testers often contain hundreds of parametric and
-functional tests. When a file contains more than 200 tests, tsmap shows a test selector
-overlay before the full parse so you can choose which tests to import. This keeps memory
-usage and load time proportional to what you actually need.
+functional tests. tsmap always shows a test selector overlay before the full parse so
+you can choose which tests to import. This keeps memory usage and load time proportional
+to what you actually need.
 
 ### Controls
 
@@ -153,6 +225,36 @@ usage and load time proportional to what you actually need.
 Each test row shows the test number (in dim monospace), the test name, and — where defined
 in the file — the units and spec limits.
 
+### Test lists (Save / Load)
+
+The **Save list** and **Load list** buttons let you persist a selection and reuse it across
+sessions or files from the same product.
+
+**Saving** writes a plain-text `.csv` file containing every selected test number and its
+current display name. **Loading** reads that file back, restores the selection, and applies
+any name overrides — so renamed tests stay renamed on reload.
+
+The file format is one test per line:
+
+```
+# tsmap test list
+# Saved: 2026-06-15T10:00:00.000Z
+1000,Idsat_vg1
+1001,Idsat_vg2
+1010,Vt_lin
+```
+
+- Lines starting with `#` are comments and are ignored on load.
+- Each data line is `<test number>,<display name>`. The name field is optional — a line
+  with just a number selects that test without overriding its name.
+- Delimiters can be comma, semicolon, or whitespace — the parser accepts all three.
+- Tests in the file that are not present in the current scan are silently skipped
+  (the log panel shows a count of skipped tests).
+
+You can hand-edit a list file to rename tests for display (e.g. `1000,Threshold Voltage`)
+without changing anything in the original data file. Those names appear in the selector,
+on the map tooltip, and in the chart axis labels.
+
 ### Memory advisory
 
 The footer shows how many tests are selected and estimates the memory footprint
@@ -161,6 +263,11 @@ The footer shows how many tests are selected and estimates the memory footprint
 - **Amber** — large selection; the import will be slow.
 - **Red** — very large selection; risk of running out of memory. You'll be asked to
   confirm before the import starts.
+
+<div style="display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;">
+  <div style="font-size:12px;color:#fbbf24;">Large selection — may be slow to load</div>
+  <div style="font-size:12px;color:#f87171;">Very large selection — risk of running out of memory</div>
+</div>
 
 If you select no tests, only bin data is imported (bin map is still fully usable).
 
@@ -178,83 +285,12 @@ selection is applied to all files.
 
 ## 5. The wafer map view
 
-After parsing, tsmap renders one or more wafer maps. A single-wafer file shows one
-full-screen map with the summary panel open by default. A multi-wafer lot shows a gallery.
+After parsing, tsmap renders the wafer map. A single-wafer file shows one full-screen map
+with the summary panel open by default; a multi-wafer lot shows a side-by-side gallery.
 
-### 5.1 Interacting with the map
-
-![Single wafer map with summary panel](images/wafer-map-single.png)
-
-The map is rendered on an interactive canvas. The toolbar appears when you hover over the map.
-
-| Gesture | Action |
-|---------|--------|
-| Scroll wheel | Zoom in/out centred on the cursor |
-| Click and drag | Pan the map |
-| Double-click | Reset zoom and pan to fit |
-
-### 5.2 Toolbar
-
-![Map toolbar with plot mode open](images/wafer-map-toolbar.png)
-
-The toolbar sits at the top of the map canvas and is visible on hover.
-
-**Plot mode** — Select what to colour each die by:
-
-| Mode | What it shows |
-|------|--------------|
-| Hard Bin | Standard pass/fail bin colour map |
-| Soft Bin | Software-categorised bin colours |
-| Test Value | Continuous colour scale for a parametric test value |
-
-When **Test Value** is selected, a test dropdown appears in the toolbar to pick which
-parametric test to display. A **log scale** checkbox also appears for tests with a large
-dynamic range.
-
-**Overlays** — Toggle additional visual elements drawn on top of the die grid:
-
-- **Ring boundaries** — Concentric zone rings
-- **Quadrant lines** — Cross-hair dividing the wafer into quadrants
-- **Die labels** — Bin number printed in each die cell
-- **Reticle grid** — Repeating reticle exposure field grid
-- **XY indicator** — Compass showing the X/Y axis orientation
-
-**Box select** — Click the select tool, then drag a rectangle across the map to highlight
-dies in that region and see a count in the summary panel.
-
-**Expand** (⛶) — Opens the map in a full-screen modal. Press **Esc** to return, or **F**
-to toggle true fullscreen within the modal.
-
-**Download PNG** (⤓) — Saves the current map canvas as a PNG. On the desktop this opens a
-native save dialog; in the browser the file is saved to your downloads folder.
-
-### 5.3 Summary panel
-
-The summary panel sits on the right side of the map and shows:
-
-- **Yield** — Pass die count / total die count with percentage
-- **Bin breakdown** — Count and percentage for each hard and soft bin
-- **Parametric summary** — Mean, median, standard deviation, min, and max for each
-  loaded test (visible in Test Value plot mode)
-- **Spatial findings** — Automatically detected patterns such as failure clusters, edge
-  rings, scratch lines, quadrant effects, and reticle effects
-
-Click any finding row to highlight the affected dies on the map and zoom to fit them.
-
-Toggle the summary panel open or closed with the **Summary panel** button in the toolbar.
-
-### 5.4 Gallery (multi-wafer lot)
-
-![Multi-wafer gallery](images/gallery.png)
-
-Multi-wafer lots render as a side-by-side gallery. Each card shows one wafer map with its
-own toolbar and wafer ID label.
-
-- **Columns** — Dropdown in the gallery toolbar to control how many wafers appear per row
-  (Auto, 1–5 columns).
-- Per-card toolbar — Each card has the same Plot mode, Overlays, Expand, and Download
-  controls as the single-wafer view.
-- The summary panel in gallery mode aggregates findings across all wafers.
+The map is delivered by the wmap rendering engine. For a full walkthrough of toolbar
+controls, plot modes, overlays, zoom and pan, die hover tooltips, findings panel, summary
+panel, and gallery controls, click the **?** help button in the map toolbar.
 
 ---
 
@@ -271,9 +307,11 @@ matrix updates the scatter plot's X and Y test selectors.
 Every panel has a **Download PNG** (⤓) button and an **Expand** (⛶) button in its header.
 The expand modal supports fullscreen (F key) and closes with Esc.
 
-![Charts overview](images/charts-overview.png)
+![Charts overview — all six panels](images/charts-overview.png)
 
 ### 6.1 Yield by wafer
+
+![Yield by wafer](images/chart-yield.png)
 
 Horizontal bar chart showing pass yield per wafer across the lot.
 
@@ -283,6 +321,8 @@ Horizontal bar chart showing pass yield per wafer across the lot.
   to open a filtered view of those wafers.
 
 ### 6.2 Bin pareto
+
+![Bin pareto](images/chart-pareto.png)
 
 Failure count by bin across the entire lot, sorted from most to least frequent.
 
@@ -347,20 +387,17 @@ Die-level scatter plot for two parametric tests.
 
 ---
 
-## 7. Saving and exporting
+## 7. Exporting charts
 
-### PNG export
+Every chart panel has a **⤓** download button that saves the current view as a PNG at the
+displayed resolution. To get a clean full-resolution render, use the expand (⛶) button
+first to open the panel in the fullscreen modal, then click ⤓.
 
-Every map canvas and chart panel has a **⤓** download button that saves the current view
-as a PNG at the displayed resolution.
+On the desktop, PNG saves open a native save dialog. In the browser, the file goes to your
+downloads folder.
 
-- **Desktop** — Opens a native save dialog so you can choose a file name and location.
-- **Browser** — The PNG is saved directly to your browser's downloads folder.
-
-### Multiple panels
-
-Chart panels can each be exported independently. To get a clean full-resolution render,
-use the expand (⛶) button first to open the panel in the fullscreen modal, then click ⤓.
+For map PNG export, use the **⤓** button in the map toolbar — see the wmap help (**?**) for
+details.
 
 ---
 
@@ -368,6 +405,15 @@ use the expand (⛶) button first to open the panel in the fullscreen modal, the
 
 A collapsible log panel sits at the bottom of the window. It shows timestamped messages
 from the parser and renderer: file load events, parse warnings, and any errors.
+
+<div style="background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;overflow:hidden;margin:8px 0 12px;">
+  <div style="width:100%;background:none;border:none;border-bottom:1px solid var(--border-subtle);color:var(--text-dim);font-size:12px;text-align:right;padding:3px 12px;">Log (1 error)</div>
+  <div style="padding:4px 12px 6px;">
+    <div style="font-family:ui-monospace,'Cascadia Code','Segoe UI Mono',monospace;font-size:12px;line-height:1.6;color:var(--text-muted);">14:32:01 Loaded lot.stdf — 3 wafers, 10 482 dies</div>
+    <div style="font-family:ui-monospace,'Cascadia Code','Segoe UI Mono',monospace;font-size:12px;line-height:1.6;color:var(--warn-text);">14:32:01 Soft bin 65535 sentinel — fabricated bin 2 for 14 dies</div>
+    <div style="font-family:ui-monospace,'Cascadia Code','Segoe UI Mono',monospace;font-size:12px;line-height:1.6;color:var(--error-text);">14:32:02 Failed to load bad.stdf: unexpected end of record</div>
+  </div>
+</div>
 
 - Click **Log** to expand or collapse the panel.
 - If any errors occurred, the button label changes to **Log (N errors)** and the panel
@@ -377,17 +423,7 @@ from the parser and renderer: file load events, parse warnings, and any errors.
 
 ---
 
-## 9. Keyboard shortcuts
-
-| Key | Context | Action |
-|-----|---------|--------|
-| Scroll wheel | Over a wafer map | Zoom in / out |
-| Esc | Expand modal (non-fullscreen) | Close modal |
-| F | Expand modal | Toggle fullscreen |
-
----
-
-## 10. Desktop vs browser differences
+## 9. Desktop vs browser differences
 
 | Feature | Desktop | Browser |
 |---------|---------|---------|

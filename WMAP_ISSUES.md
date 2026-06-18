@@ -7,10 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.13.6 |
+| wmap version in use | 0.14.0 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
 | testdata-parser version | 0.2.3 |
-| Last updated | 2026-06-15 (testdata-parser 0.2.3 — ScanResult struct, issue #15 resolved) |
+| Last updated | 2026-06-18 (wmap 0.14.0 — merged adjacent findings, narrative rewrite, summary panel fix) |
 
 ## Rust Backend Notes
 

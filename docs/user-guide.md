@@ -150,6 +150,20 @@ result column). Assign the **Test name (long format)** and **Test result (long f
 roles; optionally assign the limit and units columns too. tsmap detects likely long-format
 files automatically and shows a prompt if multiple rows share the same X/Y coordinates.
 
+Examples:
+
+    Wide format — one column per test:
+    x, y, hbin, Vt_lin, Idsat_vg1
+    1, 1, 1,    452,    185
+    2, 1, 2,    438,    179
+
+    Long format — one row per die per test:
+    x, y, hbin, test_name,  result
+    1, 1, 1,    Vt_lin,     452
+    1, 1, 1,    Idsat_vg1,  185
+    2, 1, 2,    Vt_lin,     438
+    2, 1, 2,    Idsat_vg1,  179
+
 ### Pass bins
 
 The **Pass bin(s)** field at the bottom of the overlay specifies which hard bin values are
@@ -219,6 +233,13 @@ functional tests. tsmap always shows a test selector overlay before the full par
 you can choose which tests to import. This keeps memory usage and load time proportional
 to what you actually need.
 
+tsmap uses a two-pass approach: a fast first pass reads only the test record headers
+(PTR/FTR) to enumerate all tests and their numbers, names, units, and spec limits —
+without accumulating any die data. The selector is built from this scan. The full parse
+then runs only for the tests you selected, skipping accumulation for everything else.
+For a 25-wafer lot with 500 tests and 10 000 dies per wafer, selecting 20 tests instead
+of all 500 reduces the in-memory dataset by roughly 25×.
+
 ### Controls
 
 - **Search** — Filter the list by test name or test number. Results update as you type.
@@ -269,9 +290,10 @@ on the map tooltip, and in the chart axis labels.
 The footer shows how many tests are selected and estimates the memory footprint
 (selected tests × total die count):
 
-- **Amber** — large selection; the import will be slow.
-- **Red** — very large selection; risk of running out of memory. You'll be asked to
-  confirm before the import starts.
+- **Amber** — large selection (roughly 50 million die×test pairs); the import will be
+  slow.
+- **Red** — very large selection (roughly 200 million die×test pairs); risk of running
+  out of memory. You'll be asked to confirm before the import starts.
 
 <div class="tsmap-mockup" style="display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;">
   <div style="color:#fbbf24;">Large selection — may be slow to load</div>
@@ -429,6 +451,12 @@ from the parser and renderer: file load events, parse warnings, and any errors.
   expands automatically.
 - Parser warnings (e.g. fabricated soft bin numbers from sentinel values, unrecognised
   records) appear here rather than blocking the load.
+
+**Soft bin 65535** is a sentinel value in the STDF spec meaning "no soft bin assigned to
+this die". When the parser encounters it, it maps those dies to a fabricated soft bin so
+the wafer map can render — the hard bin value is unaffected. The number in the warning
+(e.g. "fabricated bin 2 for 14 dies") is the count of dies where this substitution was
+applied. If soft bin data is not meaningful for your product, this warning can be ignored.
 
 ---
 

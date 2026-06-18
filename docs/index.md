@@ -7,8 +7,9 @@ hide:
 # tsmap
 
 A desktop and browser application for loading and visualising semiconductor wafer map data.
-Open STDF, ATDF, CSV, and JSON files — multi-wafer lots, parametric tests, yield analysis,
-and charts are all supported out of the box.
+Open STDF, ATDF, CSV, and JSON lot files and get interactive yield maps, parametric heat
+maps, bin pareto charts, per-test boxplots and histograms, and a cross-test correlation
+matrix — all without uploading your data anywhere.
 
 ## Try it in the browser
 
@@ -27,7 +28,7 @@ without a browser. Builds for Linux, macOS, and Windows are attached to each
 
 | Format | Notes |
 |--------|-------|
-| STDF (`.stdf`, `.std`) | Binary V4 — multi-wafer lots, PTR and FTR tests; test selector shown for files with >200 tests |
+| STDF (`.stdf`, `.std`) | Binary V4 — multi-wafer lots, PTR and FTR tests; test selector always shown |
 | ATDF (`.atdf`, `.atd`) | ASCII equivalent of STDF |
 | CSV (`.csv`, `.txt`, `.dat`) | Column mapping step; wide and long (pivot) formats |
 | JSON (`.json`) | Flat array or nested `[{ wafer, results: [{die}] }]` |

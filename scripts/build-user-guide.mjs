@@ -53,6 +53,9 @@ html = html.replace(
 );
 
 // ── Scoped CSS ────────────────────────────────────────────────────────────────
+// CSS variables and app classes (.btn-primary etc.) are provided by:
+//   - index.html :root block when rendered inside the app
+//   - docs/tsmap-theme.css (via zensical extra_css) on the docs site
 const css = `
 .tsmap-guide { font-size: 13px; color: var(--text-light); line-height: 1.6; }
 .tsmap-guide h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; color: var(--text-primary); }

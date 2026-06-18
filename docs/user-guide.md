@@ -2,6 +2,16 @@
 title: User Guide
 ---
 
+<!-- RENDERER NOTE: this file is processed by two markdown engines.
+     marked (scripts/build-user-guide.mjs) → in-app ? modal
+     Python-Markdown/pymdownx (zensical)   → docs site
+     Rules to avoid divergence:
+     - Use 4-space-indented blocks for plain code examples, NOT fenced blocks.
+       Fenced blocks require a language tag on the docs site but not in marked.
+     - HTML mockup blocks (<div class="tsmap-mockup">) work in both renderers.
+     - Test both after structural changes: npm run build:guide && npm run build:site
+-->
+
 # tsmap User Guide
 
 tsmap loads semiconductor wafer map data from STDF, ATDF, CSV, and JSON files and renders
@@ -31,7 +41,7 @@ before the data is parsed.
 
 ## 2. Opening files
 
-<div style="display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;font-size:13px;margin:8px 0 12px;">
+<div class="tsmap-mockup" style="display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;font-size:13px;margin:8px 0 12px;">
   <span style="background:none;border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-size:12px;padding:3px 10px;">Open file</span>
   <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Add files</span>
   <span style="background:none;border:1px solid var(--border-muted);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Clear</span>
@@ -85,7 +95,7 @@ file name or the wafer ID in the data. Edit any label that needs changing, then 
 
 ## 3. Column mapping (CSV and JSON)
 
-<div style="border:1px solid var(--border-mid);border-radius:5px;overflow:hidden;margin:8px 0 12px;background:var(--bg-overlay);">
+<div class="tsmap-mockup" style="border:1px solid var(--border-mid);border-radius:5px;overflow:hidden;margin:8px 0 12px;background:var(--bg-overlay);">
   <div class="mapping-header">
     <div><span class="mapping-title">Map columns</span> <span class="mapping-file-info">— example.csv</span></div>
     <button class="btn-secondary" style="pointer-events:none;">Cancel</button>
@@ -156,7 +166,7 @@ overlay re-appears with fresh auto-detection.
 
 ## 4. Test selector (STDF and ATDF)
 
-<div style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:8px;overflow:hidden;margin:8px 0 12px;font-size:14px;color:var(--text-light);">
+<div class="tsmap-mockup" style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:8px;overflow:hidden;margin:8px 0 12px;font-size:14px;color:var(--text-light);">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:16px 20px 8px;">
     <div style="font-size:16px;font-weight:600;">Select tests to import <span style="font-size:13px;font-weight:400;color:var(--text-dim);">(124 found)</span></div>
     <span style="color:var(--text-dim);font-size:16px;padding:2px 6px;">✕</span>
@@ -236,13 +246,12 @@ any name overrides — so renamed tests stay renamed on reload.
 
 The file format is one test per line:
 
-```
-# tsmap test list
-# Saved: 2026-06-15T10:00:00.000Z
-1000,Idsat_vg1
-1001,Idsat_vg2
-1010,Vt_lin
-```
+    # tsmap test list
+    # Saved: 2026-06-15T10:00:00.000Z
+    1000,Idsat_vg1
+    1001,Idsat_vg2
+    1010,Vt_lin
+
 
 - Lines starting with `#` are comments and are ignored on load.
 - Each data line is `<test number>,<display name>`. The name field is optional — a line
@@ -264,9 +273,9 @@ The footer shows how many tests are selected and estimates the memory footprint
 - **Red** — very large selection; risk of running out of memory. You'll be asked to
   confirm before the import starts.
 
-<div style="display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;">
-  <div style="font-size:12px;color:#fbbf24;">Large selection — may be slow to load</div>
-  <div style="font-size:12px;color:#f87171;">Very large selection — risk of running out of memory</div>
+<div class="tsmap-mockup" style="display:flex;flex-direction:column;gap:4px;margin:8px 0 12px;">
+  <div style="color:#fbbf24;">Large selection — may be slow to load</div>
+  <div style="color:#f87171;">Very large selection — risk of running out of memory</div>
 </div>
 
 If you select no tests, only bin data is imported (bin map is still fully usable).
@@ -406,7 +415,7 @@ details.
 A collapsible log panel sits at the bottom of the window. It shows timestamped messages
 from the parser and renderer: file load events, parse warnings, and any errors.
 
-<div style="background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;overflow:hidden;margin:8px 0 12px;">
+<div class="tsmap-mockup" style="background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;overflow:hidden;margin:8px 0 12px;">
   <div style="width:100%;background:none;border:none;border-bottom:1px solid var(--border-subtle);color:var(--text-dim);font-size:12px;text-align:right;padding:3px 12px;">Log (1 error)</div>
   <div style="padding:4px 12px 6px;">
     <div style="font-family:ui-monospace,'Cascadia Code','Segoe UI Mono',monospace;font-size:12px;line-height:1.6;color:var(--text-muted);">14:32:01 Loaded lot.stdf — 3 wafers, 10 482 dies</div>

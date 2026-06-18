@@ -6,9 +6,12 @@ repo_url    = "https://github.com/telecasterer/tsmap"
 
 nav = [
   { "Home"        = "index.md"       },
+  { "User guide"  = "user-guide.md"  },
   { "Web app"     = "web.md"         },
   { "Development" = "development.md" },
 ]
+
+extra_css = ["tsmap-theme.css"]
 
 [project.theme]
 features = [

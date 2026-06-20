@@ -17,3 +17,9 @@ CLAUDE.md
 *.atdf
 *.atd
 /testdata
+
+# …but the curated samples published on the docs site must be committed
+# (the *.stdf / *.atdf globs above match by extension regardless of directory,
+#  so re-include the sample paths explicitly)
+!/docs/samples/*.stdf
+!/docs/samples/*.atdf

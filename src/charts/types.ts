@@ -44,16 +44,6 @@ export interface HistogramBucket {
   count: number;
 }
 
-/** Per-wafer trend point for one test — median ± IQR band, in lot order. */
-export interface TrendDatum {
-  waferIndex: number;
-  label: string;
-  median: number;
-  q1: number;
-  q3: number;
-  count: number;
-}
-
 /** One die's X/Y test values for a scatter plot. */
 export interface ScatterPoint {
   x: number;

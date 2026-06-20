@@ -4,7 +4,7 @@
 
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { BoxplotDatum, TestOption } from './types';
-import { cardShell, cssVar, formatValue, trackObserver, PADDING, VALUE_WIDTH } from './chartShell';
+import { cardShell, cssVar, formatValue, trackObserver, isInModal, PADDING, VALUE_WIDTH } from './chartShell';
 
 const BOX_ROW_HEIGHT = 24;
 const BOX_ROW_GAP = 5;
@@ -20,22 +20,25 @@ export interface BoxplotPanelOptions {
   getTestMeta: (testNumber: number) => { unit?: string; limitLow?: number; limitHigh?: number };
   logScale: boolean;
   axisIncludesLimits: boolean;
+  showTrend: boolean;
   colorScheme: string;
   onStateChange: (testNumber: number) => void;
   onToggleLogScale: () => void;
   onToggleAxisIncludesLimits: () => void;
+  onToggleShowTrend: () => void;
   onOpen: (waferIndex: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
   getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
-  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onOpen } = options;
+  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onToggleShowTrend, onOpen } = options;
   const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let logScale = options.logScale;
   let axisIncludesLimits = options.axisIncludesLimits;
+  let showTrend = options.showTrend;
 
   const select = document.createElement('select');
   select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:240px;';
@@ -87,6 +90,20 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
   });
   limLabel.append(limCheckbox, document.createTextNode('Axis includes limits'));
   controlsRow.appendChild(limLabel);
+
+  const trendLabel = document.createElement('label');
+  trendLabel.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${cssVar('--text-muted')};cursor:pointer;user-select:none;`;
+  const trendCheckbox = document.createElement('input');
+  trendCheckbox.type = 'checkbox';
+  trendCheckbox.checked = showTrend;
+  trendCheckbox.style.cssText = 'margin:0;cursor:pointer;';
+  trendCheckbox.addEventListener('change', () => {
+    showTrend = trendCheckbox.checked;
+    onToggleShowTrend();
+    rebuildBody();
+  });
+  trendLabel.append(trendCheckbox, document.createTextNode('Trend line'));
+  controlsRow.appendChild(trendLabel);
 
   const hint = document.createElement('div');
   hint.textContent = 'Click a wafer\'s box to open it · box = Q1–Q3, line = median, whiskers = min/max';
@@ -140,6 +157,7 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
     const textColor = cssVar('--text-secondary') || '#ccc';
     const hoverBg = cssVar('--bg-hover-row') || '#1d1d1d';
     const medianColor = cssVar('--text-primary') || '#fff';
+    const trendColor = cssVar('--accent') || '#6af';
     const axisColor = cssVar('--border-mid') || '#444';
 
     function plotRect() {
@@ -162,6 +180,9 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
     }
 
     function draw() {
+      // In the modal the body should fill the available height and scroll; in the
+      // grid it stays capped to the visible-rows window.
+      body.style.maxHeight = isInModal(card) ? 'none' : `${visibleAreaHeight}px`;
       const width = card.clientWidth - 24;
       const height = PADDING * 2 + data.length * (BOX_ROW_HEIGHT + BOX_ROW_GAP) + AXIS_HEIGHT;
       canvas.width = Math.max(1, Math.floor(width * dpr));
@@ -238,6 +259,25 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
         ctx.textAlign = 'left';
         ctx.fillText(`med ${formatValue(datum.median)}${unit ? ` ${unit}` : ''}`, plotX + plotMaxWidth + 10, midY);
       });
+
+      // Trend line — connect per-wafer medians down the rows, breaking across
+      // no-data wafers. Drawn over the boxes as a connecting overlay.
+      if (showTrend) {
+        ctx.strokeStyle = trendColor;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        let started = false;
+        data.forEach((datum, i) => {
+          if (datum.count === 0) { started = false; return; }
+          const midY = PADDING + i * (BOX_ROW_HEIGHT + BOX_ROW_GAP) + BOX_ROW_HEIGHT / 2;
+          const x = xFor(datum.median, plotX, plotMaxWidth);
+          if (!started) { ctx.moveTo(x, midY); started = true; } else { ctx.lineTo(x, midY); }
+        });
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 1;
+      }
 
       const axisY = PADDING + data.length * (BOX_ROW_HEIGHT + BOX_ROW_GAP);
 

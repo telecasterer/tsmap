@@ -18,6 +18,9 @@ matrix — all without uploading your data anywhere.
 No install required. Files are parsed locally in your browser using a WebAssembly build of
 the same Rust parser used in the desktop app. Nothing is uploaded.
 
+No wafer files of your own? [Download a sample lot](web.md#try-it-with-sample-data) and open
+it straight away.
+
 ## Download the desktop app
 
 The desktop version adds native file dialogs, drag-and-drop from the OS, and works offline

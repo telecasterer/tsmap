@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildTrendData, buildScatterData, listNumericTests } from './aggregate';
+import { buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildScatterData, listNumericTests } from './aggregate';
 import type { WaferData } from '../types';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -204,33 +204,6 @@ describe('buildTestHistogramData', () => {
     const buckets = buildTestHistogramData(wafers, 1, 4);
     const total = buckets.reduce((n, b) => n + b.count, 0);
     expect(total).toBe(2);
-  });
-});
-
-// ── buildTrendData ────────────────────────────────────────────────────────────
-
-describe('buildTrendData', () => {
-  it('computes median/q1/q3 from die data', () => {
-    const wafers = [
-      wafer('W1', [1, 2, 3, 4, 5].map(v => ({ testValues: { 1: v } }))),
-      wafer('W2', [6, 7, 8, 9, 10].map(v => ({ testValues: { 1: v } }))),
-    ];
-    const result = buildTrendData(wafers, 1);
-    expect(result).toHaveLength(2);
-    expect(result[0].median).toBeCloseTo(3);
-    expect(result[1].median).toBeCloseTo(8);
-  });
-
-  it('returns NaN for wafer with no data for that test', () => {
-    const wafers = [wafer('W1', [])];
-    const [r] = buildTrendData(wafers, 1);
-    expect(r.count).toBe(0);
-    expect(Number.isNaN(r.median)).toBe(true);
-  });
-
-  it('labels each datum with wafer ID', () => {
-    const wafers = [wafer('LOT-W1', [{ testValues: { 1: 1 } }])];
-    expect(buildTrendData(wafers, 1)[0].label).toBe('LOT-W1');
   });
 });
 

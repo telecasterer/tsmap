@@ -48,7 +48,7 @@ before the data is parsed.
   <span style="width:1px;height:16px;background:var(--border-mid);flex-shrink:0;"></span>
   <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Charts</span>
   <span style="margin-left:auto;"></span>
-  <span style="background:none;border:1px solid var(--border-muted);border-radius:50%;color:var(--text-muted);font-size:12px;font-weight:600;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">?</span>
+  <span style="background:none;color:var(--text-muted);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
 </div>
 
 ### Open file
@@ -183,7 +183,7 @@ overlay re-appears with fresh auto-detection.
 <div class="tsmap-mockup" style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:8px;overflow:hidden;margin:8px 0 12px;font-size:14px;color:var(--text-light);">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:16px 20px 8px;">
     <div style="font-size:16px;font-weight:600;">Select tests to import <span style="font-size:13px;font-weight:400;color:var(--text-dim);">(124 found)</span></div>
-    <span style="color:var(--text-dim);font-size:16px;padding:2px 6px;">✕</span>
+    <span style="color:var(--text-dim);padding:2px 6px;display:flex;align-items:center;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 20px 8px;">
     <span style="flex:1;min-width:160px;padding:5px 8px;border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);color:var(--text-muted);font-size:13px;">Search by name or number…</span>
@@ -335,8 +335,9 @@ The charts view is a two-column grid of panels. Each panel is independent: chang
 dropdown in one panel does not affect others, except that clicking a cell in the correlation
 matrix updates the scatter plot's X and Y test selectors.
 
-Every panel has a **Download PNG** (⤓) button and an **Expand** (⛶) button in its header.
-The expand modal supports fullscreen (F key) and closes with Esc.
+Every panel has a **Save PNG** (camera icon) button and an **Expand** (corner-arrows icon)
+button in its header — the same icons wmap uses for these actions. The expand modal supports
+fullscreen (F key) and closes with Esc.
 
 ![Charts overview — all six panels](images/charts-overview.png)
 
@@ -373,6 +374,8 @@ Per-wafer five-number summary for one parametric test: minimum, Q1, median, Q3, 
   resistance, etc.).
 - **Axis includes limits** checkbox — Expand the axis to show the LSL and USL spec limits
   if they are defined in the file.
+- **Trend line** checkbox — Connect the per-wafer medians with a line to reveal drift
+  across wafers in lot order (breaks across wafers with no data for the test).
 - Spec limits appear as dashed vertical lines on the plot.
 - Click a wafer's box to open that wafer's test value map.
 - Hover a row to see the full five-number summary in a tooltip.
@@ -426,9 +429,9 @@ Die-level scatter plot for two parametric tests.
 
 ## 7. Exporting charts
 
-Every chart panel has a **⤓** download button that saves the current view as a PNG at the
-displayed resolution. To get a clean full-resolution render, use the expand (⛶) button
-first to open the panel in the fullscreen modal, then click ⤓.
+Every chart panel has a **camera** button that saves the current view as a PNG at the
+displayed resolution. To get a clean full-resolution render, use the expand (corner-arrows)
+button first to open the panel in the fullscreen modal, then click the camera button.
 
 Each exported PNG includes a header strip above the chart with the panel title, source
 filename, wafer and die counts, the active test name (where applicable), and the time of
@@ -437,7 +440,7 @@ export. The live card UI is unchanged — the header appears only in the saved f
 On the desktop, PNG saves open a native save dialog. In the browser, the file goes to your
 downloads folder.
 
-For map PNG export, use the **⤓** button in the map toolbar — see the wmap help (**?**) for
+For map PNG export, use the **camera** button in the map toolbar — see the wmap help for
 details.
 
 ---

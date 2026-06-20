@@ -63,6 +63,7 @@ let chartColorScheme = 'default';
 let selectedTestNumber: number | null = null;
 let boxplotLogScale = false;
 let boxplotAxisIncludesLimits = false;
+let boxplotShowTrend = false;
 // Histogram has its own test selector and wafer selector
 let histogramTestNumber: number | null = null;
 let histogramWaferIndex: number | null = null;
@@ -74,12 +75,12 @@ let scatterYTest: number | null = null;
 let correlationMatrixLimit = 25;
 
 let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
-let cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
-let cachedBoxplotData: Map<number, ReturnType<typeof buildTestBoxplotData>> = new Map();
-let cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
+const cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
+const cachedBoxplotData: Map<number, ReturnType<typeof buildTestBoxplotData>> = new Map();
+const cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
 // Full N×N matrix cached once per file load; display matrix recomputed when limit changes.
 let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
-let cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
+const cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
 
 // ── Log panel ─────────────────────────────────────────────────────────────────
 
@@ -484,10 +485,12 @@ function renderChartsViewWork(loadedMsg: string) {
     getTestMeta: getBoxplotTestMeta,
     logScale: boxplotLogScale,
     axisIncludesLimits: boxplotAxisIncludesLimits,
+    showTrend: boxplotShowTrend,
     colorScheme: chartColorScheme,
     onStateChange: (n) => { selectedTestNumber = n; },
     onToggleLogScale: () => { boxplotLogScale = !boxplotLogScale; },
     onToggleAxisIncludesLimits: () => { boxplotAxisIncludesLimits = !boxplotAxisIncludesLimits; },
+    onToggleShowTrend: () => { boxplotShowTrend = !boxplotShowTrend; },
     onOpen: (waferIndex) => { if (selectedTestNumber !== null) openTestValueWafer(waferIndex, selectedTestNumber); },
     savePng: onSaveImage,
     getHeaderLines: () => makeHeaderLines('Test value distribution by wafer', testOptions.find(t => t.testNumber === selectedTestNumber)?.label),
@@ -814,10 +817,8 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
 
   if (firstPassTestDefs && Object.keys(firstPassTestDefs).length > 0) {
     const allTestNums = new Set(Object.keys(firstPassTestDefs).map(Number));
-    let initialSelection: number[];
+    const initialSelection: number[] = [];
     let nameOverrides: Map<number, string> | undefined;
-
-    initialSelection = [];
 
     // Compute capacity info for the memory advisory in the selector.
     const csvDieCount = Array.from(preParsed.values())
@@ -1148,6 +1149,10 @@ helpBtn.addEventListener('click', () => {
   modal.className = 'tsmap-modal-backdrop';
   const inner = document.createElement('div');
   inner.className = 'help-modal';
+  inner.setAttribute('role', 'dialog');
+  inner.setAttribute('aria-modal', 'true');
+  inner.setAttribute('aria-label', 'Help');
+  inner.tabIndex = -1;
   inner.innerHTML = USER_GUIDE_HTML;
   const closeRow = document.createElement('div');
   closeRow.className = 'help-close-row';
@@ -1158,7 +1163,13 @@ helpBtn.addEventListener('click', () => {
   inner.appendChild(closeRow);
   modal.appendChild(inner);
   document.body.appendChild(modal);
-  const close = () => modal.remove();
+  inner.focus();
+  const close = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    modal.remove();
+  };
+  const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKeyDown);
   closeBtn.addEventListener('click', close);
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
 });

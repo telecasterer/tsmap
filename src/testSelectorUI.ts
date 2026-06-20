@@ -1,4 +1,5 @@
 import type { TestDef } from './types';
+import { ICONS } from './charts/icons';
 
 export interface CapacityInfo {
   /** Total dies across all files being loaded. */
@@ -67,6 +68,10 @@ export function showTestSelectorOverlay(
   ].join(';');
 
   const panel = document.createElement('div');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-labelledby', 'tsmap-test-selector-title');
+  panel.tabIndex = -1;
   panel.style.cssText = [
     'background:var(--bg-modal)', 'border:1px solid var(--border-mid)',
     'border-radius:8px', 'padding:20px',
@@ -82,14 +87,17 @@ export function showTestSelectorOverlay(
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
 
   const title = document.createElement('div');
+  title.id = 'tsmap-test-selector-title';
   title.style.cssText = 'font-size:16px;font-weight:600';
   title.textContent = `Select tests to import (${entries.length} found)`;
 
   const closeBtn = document.createElement('button');
-  closeBtn.textContent = '✕';
+  closeBtn.innerHTML = ICONS.close;
+  closeBtn.setAttribute('aria-label', 'Close');
   closeBtn.style.cssText = [
     'background:none', 'border:none', 'color:var(--text-dim)',
-    'font-size:16px', 'cursor:pointer', 'padding:2px 6px', 'line-height:1',
+    'cursor:pointer', 'padding:2px 6px', 'line-height:1',
+    'display:flex', 'align-items:center', 'justify-content:center',
   ].join(';');
   closeBtn.addEventListener('click', () => { cleanup(); onCancel(); });
 
@@ -521,11 +529,23 @@ export function showTestSelectorOverlay(
     if (e.target === overlay) { cleanup(); onCancel(); }
   });
 
+  // ── Escape to cancel ──────────────────────────────────────────────────────
+  // Routes through the same cleanup + onCancel path as the backdrop/Cancel
+  // button so the load flow is restored consistently. Ignored while a nested
+  // native confirm (onAsk) is up — window.confirm is modal and consumes keys —
+  // so no extra guard is needed here.
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') { cleanup(); onCancel(); }
+  }
+  document.addEventListener('keydown', onKeyDown);
+
   // ── Assemble ──────────────────────────────────────────────────────────────
 
   panel.append(header, controls, rangeRow, bulkRow, listContainer, footer);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  panel.focus(); // move focus into the dialog so Esc and SR navigation work
 
   renderList();
   updateFooter();
@@ -533,6 +553,7 @@ export function showTestSelectorOverlay(
   // ── Cleanup ───────────────────────────────────────────────────────────────
 
   function cleanup(): void {
+    document.removeEventListener('keydown', onKeyDown);
     overlay.remove();
   }
 }

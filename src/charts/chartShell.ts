@@ -4,6 +4,7 @@
 // files contain only their own drawing logic.
 
 import type { ChartDatum, ChartKind } from './types';
+import { ICONS } from './icons';
 
 // ── ResizeObserver lifecycle ───────────────────────────────────────────────────
 
@@ -43,6 +44,61 @@ export interface RenderChartsOptions {
 
 export const PADDING = 12;
 export const VALUE_WIDTH = 100;
+
+// ── Fill-height canvas (grid vs modal) ──────────────────────────────────────────
+// In the grid the card row is content-sized, so a fill-canvas must use a fixed
+// height — anything percentage/flex-based feeds back into the card and grows
+// unboundedly. In the expand modal the card has a flex-allocated height (bounded
+// by the modal box), so the canvas should fill the space the body gives it.
+//
+// The trick that makes this stable: while in the modal the canvas is taken out
+// of flow (`position:absolute; inset:0`), so its own size can no longer change
+// `body.clientHeight`. That breaks the canvas→body→draw growth loop and lets the
+// body's flex height be the authoritative source. `chartFillHeight` returns the
+// height a fill-canvas should draw at, and `applyCanvasFlow` toggles the
+// canvas's positioning to match. Both key off `card.dataset.inModal`, which
+// openExpandModal sets/clears.
+
+/** True when the card is currently reparented into the expand modal. */
+export function isInModal(card: HTMLElement): boolean {
+  return card.dataset.inModal === '1';
+}
+
+/**
+ * Height (CSS px) a fill-style canvas should use. In the grid this is the fixed
+ * `gridHeight`. In the modal it's the body's flex-allocated height (minus any
+ * non-canvas siblings such as a legend/stats row), with `gridHeight` as a floor.
+ */
+export function chartFillHeight(card: HTMLElement, body: HTMLElement, canvas: HTMLCanvasElement, gridHeight: number): number {
+  if (!isInModal(card)) return gridHeight;
+  // Subtract the height of body siblings that sit above the canvas (legend, stats
+  // label, …). With the canvas absolutely positioned it no longer contributes to
+  // body's own height, so body.clientHeight is the full available space.
+  let siblingHeight = 0;
+  for (const child of Array.from(body.children)) {
+    if (child !== canvas) siblingHeight += (child as HTMLElement).offsetHeight;
+  }
+  return Math.max(gridHeight, body.clientHeight - siblingHeight);
+}
+
+/**
+ * Toggle a fill-canvas between in-flow (grid) and absolutely positioned (modal).
+ * Call once per draw, before computing height with `chartFillHeight`. When the
+ * canvas has body siblings above it (legend/stats), pass `topOffset` so the
+ * absolute canvas starts below them rather than overlapping.
+ */
+export function applyCanvasFlow(card: HTMLElement, canvas: HTMLCanvasElement, topOffset = 0): void {
+  if (isInModal(card)) {
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0';
+    canvas.style.right = '0';
+    canvas.style.top = `${topOffset}px`;
+    canvas.style.bottom = '0';
+  } else {
+    canvas.style.position = '';
+    canvas.style.left = canvas.style.right = canvas.style.top = canvas.style.bottom = '';
+  }
+}
 
 // ── Canvas / formatting utilities ───────────────────────────────────────────────
 
@@ -116,20 +172,32 @@ export function saveCanvasPng(
   }, 'image/png');
 }
 
-export function makeIconBtn(icon: string, title: string): HTMLButtonElement {
+export function makeIconBtn(svg: string, title: string): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.title = title;
-  btn.textContent = icon;
+  btn.setAttribute('aria-label', title); // icon-only button — give SRs a name
+  btn.innerHTML = svg; // wmap-aligned Lucide SVG; inherits color via currentColor
+  // Bordered box matching wmap's gallery-card buttons (themed via tsmap tokens).
   Object.assign(btn.style, {
-    border: 'none', background: 'none', cursor: 'pointer',
-    color: cssVar('--text-muted'), fontSize: '14px', padding: '0 2px', lineHeight: '1',
-    flexShrink: '0',
+    border: `1px solid ${cssVar('--border-mid')}`, borderRadius: '4px',
+    background: cssVar('--bg-input'), cursor: 'pointer',
+    color: cssVar('--text-muted'), padding: '0', lineHeight: '1',
+    flexShrink: '0', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: '24px', height: '24px',
+  });
+  btn.addEventListener('mouseenter', () => {
+    btn.style.borderColor = cssVar('--accent');
+    btn.style.color = cssVar('--accent');
+  });
+  btn.addEventListener('mouseleave', () => {
+    btn.style.borderColor = cssVar('--border-mid');
+    btn.style.color = cssVar('--text-muted');
   });
   return btn;
 }
 
 export function makeExpandBtn(card: HTMLElement, title: string): HTMLElement {
-  const btn = makeIconBtn('⛶', 'Expand (E)');
+  const btn = makeIconBtn(ICONS.expand, 'Expand (E)');
   btn.addEventListener('click', e => { e.stopPropagation(); openExpandModal(card, title); });
   card.addEventListener('keydown', e => {
     if (e.key === 'e' || e.key === 'E') {
@@ -147,13 +215,13 @@ export function cardShell(title: string, savePng?: (blob: Blob, stem: string) =>
   card.style.cssText = `display:flex;flex-direction:column;background:${cssVar('--bg-overlay')};border:1px solid ${cssVar('--border-subtle')};border-radius:6px;padding:12px;min-width:0;`;
 
   const headingRow = document.createElement('div');
-  headingRow.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
+  headingRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
   const heading = document.createElement('div');
   heading.textContent = title;
   heading.style.cssText = `color:${cssVar('--text-primary')};font-size:13px;font-weight:600;flex:1;`;
   headingRow.appendChild(heading);
 
-  const saveBtn = makeIconBtn('⤓', 'Save as PNG');
+  const saveBtn = makeIconBtn(ICONS.download, 'Save as PNG');
   headingRow.appendChild(saveBtn);
   const expandBtn = makeExpandBtn(card, title);
   headingRow.appendChild(expandBtn);
@@ -164,7 +232,8 @@ export function cardShell(title: string, savePng?: (blob: Blob, stem: string) =>
   card.appendChild(controlsRow);
 
   const body = document.createElement('div');
-  body.style.cssText = 'overflow-y:auto;min-height:0;flex:1;';
+  // position:relative anchors a fill-canvas's `inset` when it goes absolute in the modal.
+  body.style.cssText = 'overflow-y:auto;min-height:0;flex:1;position:relative;';
   card.appendChild(body);
 
   function saveCanvas(filename: string) {
@@ -200,7 +269,13 @@ export function openExpandModal(card: HTMLElement, title: string) {
     backdropFilter: 'blur(3px)',
   });
 
+  const titleId = `chart-modal-title-${Math.random().toString(36).slice(2, 9)}`;
+
   const box = document.createElement('div');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', titleId);
+  box.tabIndex = -1; // focus target on open
   Object.assign(box.style, {
     background: cssVar('--bg-overlay'),
     border: `1px solid ${cssVar('--border-subtle')}`,
@@ -216,28 +291,40 @@ export function openExpandModal(card: HTMLElement, title: string) {
 
   const header = document.createElement('div');
   Object.assign(header.style, {
-    display: 'flex', alignItems: 'center', gap: '4px',
+    display: 'flex', alignItems: 'center', gap: '6px',
     padding: '10px 14px', flexShrink: '0',
     borderBottom: `1px solid ${cssVar('--border-subtle')}`,
   });
   const titleEl = document.createElement('span');
+  titleEl.id = titleId;
   titleEl.textContent = title;
   Object.assign(titleEl.style, { flex: '1', fontWeight: '600', fontSize: '13px', color: cssVar('--text-primary') });
 
   const modalBtnStyle: Partial<CSSStyleDeclaration> = {
-    border: 'none', background: 'none', cursor: 'pointer',
-    color: cssVar('--text-muted'), fontSize: '15px', padding: '0 4px', lineHeight: '1',
-    display: 'flex', alignItems: 'center',
+    border: `1px solid ${cssVar('--border-mid')}`, borderRadius: '4px',
+    background: cssVar('--bg-input'), cursor: 'pointer',
+    color: cssVar('--text-muted'), padding: '0', lineHeight: '1',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: '24px', height: '24px', // match the card buttons (makeIconBtn) for one consistent size
   };
+  const hoverIn = (b: HTMLElement) => { b.style.borderColor = cssVar('--accent'); b.style.color = cssVar('--accent'); };
+  const hoverOut = (b: HTMLElement) => { b.style.borderColor = cssVar('--border-mid'); b.style.color = cssVar('--text-muted'); };
+
   const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.innerHTML = '&#x26F6;';
+  fullscreenBtn.innerHTML = ICONS.maximize;
   fullscreenBtn.title = 'Fullscreen (F)';
+  fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
   Object.assign(fullscreenBtn.style, modalBtnStyle);
+  fullscreenBtn.addEventListener('mouseenter', () => hoverIn(fullscreenBtn));
+  fullscreenBtn.addEventListener('mouseleave', () => hoverOut(fullscreenBtn));
 
   const closeBtn = document.createElement('button');
-  closeBtn.textContent = '✕';
+  closeBtn.innerHTML = ICONS.close;
   closeBtn.title = 'Close (Esc)';
-  Object.assign(closeBtn.style, { ...modalBtnStyle, fontSize: '18px' });
+  closeBtn.setAttribute('aria-label', 'Close');
+  Object.assign(closeBtn.style, modalBtnStyle);
+  closeBtn.addEventListener('mouseenter', () => hoverIn(closeBtn));
+  closeBtn.addEventListener('mouseleave', () => hoverOut(closeBtn));
   header.append(titleEl, fullscreenBtn, closeBtn);
 
   const originalParent = card.parentElement;
@@ -256,6 +343,7 @@ export function openExpandModal(card: HTMLElement, title: string) {
   box.append(header, card);
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
+  box.focus(); // move focus into the dialog so Esc/F and SR navigation work
 
   function close() {
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
@@ -272,7 +360,7 @@ export function openExpandModal(card: HTMLElement, title: string) {
 
   const onFsChange = () => {
     const isFs = document.fullscreenElement === box;
-    fullscreenBtn.innerHTML = isFs ? '&#x2922;' : '&#x26F6;';
+    fullscreenBtn.innerHTML = isFs ? ICONS.shrink : ICONS.maximize;
     fullscreenBtn.title = isFs ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
     closeBtn.style.display = isFs ? 'none' : '';
     if (isFs) {

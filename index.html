@@ -208,6 +208,8 @@
         border-top: 1px solid var(--border-strong); flex-shrink: 0; background: var(--bg-toolbar);
         justify-content: flex-end;
       }
+      .mapping-validation { font-size: 12px; color: var(--error-text); }
+      .mapping-validation:empty { display: none; }
       .pass-bin-group { display: flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; color: var(--text-muted); }
       .pass-bin-group input { background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary); padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 80px; color-scheme: light dark; }
       .btn-primary { background: var(--btn-primary-bg); border: none; color: var(--text-white); padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
@@ -257,12 +259,12 @@
 
       /* ── Help button + modal ───────────────────────────────────────── */
       #help-btn {
-        background: none; border: 1px solid var(--border-muted); border-radius: 50%;
-        color: var(--text-muted); font-size: 12px; font-weight: 600;
-        width: 20px; height: 20px; padding: 0; cursor: pointer; flex-shrink: 0;
+        background: none; border: none;
+        color: var(--text-muted);
+        padding: 0; cursor: pointer; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
       }
-      #help-btn:hover { border-color: var(--accent); color: var(--accent); }
+      #help-btn:hover { color: var(--accent); }
       .help-modal {
         background: var(--bg-modal); border: 1px solid var(--border-mid);
         border-radius: 6px; padding: 24px; width: 600px; max-width: 92vw;
@@ -313,7 +315,7 @@
         <span>or drop a file anywhere</span>
         <span id="busy-spinner"></span>
         <span id="file-label"></span>
-        <button id="help-btn" style="margin-left:auto">?</button>
+        <button id="help-btn" style="margin-left:auto" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
       </div>
       <div id="map-container"></div>
       <div id="log-bar">

@@ -1,10 +1,11 @@
 // Chart grid + the generic bar-chart panel (yield, bin pareto). Per-chart
-// panels live in their own modules (boxplot.ts, histogram.ts, …) and share
+// panels live in their own modules (boxplot.ts, histogram.ts, scatter.ts,
+// correlation.ts) and share
 // chrome/helpers from chartShell.ts. This file re-exports them so existing
 // importers (main.ts) keep a single import site.
 
 import {
-  cardShell, cssVar, formatValue, trackObserver,
+  cardShell, cssVar, formatValue, trackObserver, isInModal,
   PADDING, VALUE_WIDTH,
   type ChartPanel, type RenderChartsOptions,
 } from './chartShell';
@@ -15,7 +16,6 @@ export type { ChartPanel, RenderChartsOptions } from './chartShell';
 export { renderBoxplotPanel, type BoxplotPanelOptions } from './boxplot';
 export { renderHistogramPanel, type HistogramPanelOptions } from './histogram';
 export { renderCorrelationPanel, type CorrelationPanelOptions } from './correlation';
-export { renderTrendPanel, type TrendPanelOptions } from './trend';
 export { renderScatterPanel, type ScatterPanelOptions } from './scatter';
 
 // ── Bar chart panel (yield, bin pareto) ─────────────────────────────────────────
@@ -41,7 +41,10 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
 
   const scrollArea = document.createElement('div');
   const visibleAreaHeight = PADDING * 2 + Math.min(data.length, MAX_VISIBLE_ROWS) * (ROW_HEIGHT + ROW_GAP);
-  scrollArea.style.cssText = `overflow-y:auto;min-height:0;max-height:${visibleAreaHeight}px;`;
+  // flex:1 lets the scroll area fill `body` (which is flex:1 in the card). In the
+  // grid the max-height caps it to the visible-rows window; in the modal the cap
+  // is lifted (see draw) so it uses the full available height.
+  scrollArea.style.cssText = `overflow-y:auto;min-height:0;flex:1;max-height:${visibleAreaHeight}px;`;
   body.appendChild(scrollArea);
 
   const canvas = document.createElement('canvas');
@@ -89,6 +92,9 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
   }
 
   function draw() {
+    // In the modal the scroll area fills the available height; in the grid it
+    // stays capped to the visible-rows window.
+    scrollArea.style.maxHeight = isInModal(card) ? 'none' : `${visibleAreaHeight}px`;
     const width = card.clientWidth - 24;
     const height = PADDING * 2 + data.length * (ROW_HEIGHT + ROW_GAP);
     canvas.width = Math.max(1, Math.floor(width * dpr));

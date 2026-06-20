@@ -4,7 +4,7 @@
 
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { ScatterPoint, TestOption } from './types';
-import { cardShell, cssVar, formatValue, drawAxisUnit, trackObserver } from './chartShell';
+import { cardShell, cssVar, formatValue, drawAxisUnit, trackObserver, applyCanvasFlow, chartFillHeight } from './chartShell';
 
 export interface ScatterPanelOptions {
   title: string;
@@ -93,7 +93,8 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
 
   function dims() {
     const w = card.clientWidth - 24;
-    const h = Math.max(200, Math.min(400, w * 0.65));
+    const gridH = Math.max(200, Math.min(400, w * 0.65));
+    const h = chartFillHeight(card, body, canvas, gridH);
     return { w, h, plotW: Math.max(10, w - SCATTER_LEFT - SCATTER_RIGHT), plotH: Math.max(10, h - SCATTER_TOP - SCATTER_BOTTOM) };
   }
 
@@ -129,6 +130,7 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
   }
 
   function draw() {
+    applyCanvasFlow(card, canvas, legend.offsetHeight);
     const xSpan = xHi - xLo, ySpan = yHi - yLo;
     const { w, h, plotW, plotH } = dims();
     canvas.width = Math.max(1, Math.floor(w * dpr));

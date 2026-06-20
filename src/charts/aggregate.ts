@@ -1,6 +1,6 @@
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import type { TestDef, WaferData } from '../types';
-import type { BinType, BoxplotDatum, ChartDatum, CorrelationMatrix, HistogramBucket, ScatterPoint, TestOption, TrendDatum, YieldSortBy } from './types';
+import type { BinType, BoxplotDatum, ChartDatum, CorrelationMatrix, HistogramBucket, ScatterPoint, TestOption, YieldSortBy } from './types';
 
 export function buildYieldData(
   wafers: WaferData[],
@@ -97,13 +97,6 @@ export function buildTestBoxplotData(wafers: WaferData[], testNumber: number): B
       count: values.length,
     };
   });
-}
-
-/** Per-wafer trend data for one test — median + Q1/Q3 band in lot order. */
-export function buildTrendData(wafers: WaferData[], testNumber: number): TrendDatum[] {
-  return buildTestBoxplotData(wafers, testNumber).map(({ waferIndex, label, median, q1, q3, count }) => ({
-    waferIndex, label, median, q1, q3, count,
-  }));
 }
 
 /** All die scatter points for two tests across the whole lot. */

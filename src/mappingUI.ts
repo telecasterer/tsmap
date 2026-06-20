@@ -73,7 +73,7 @@ const NON_TEST_TOKENS = new Set(['index','idx','num','no','number','id','count',
 
 export function tokenize(col: string): string[] {
   return col.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .toLowerCase().split(/[\s_\-.\/]+/).filter(Boolean);
+    .toLowerCase().split(/[\s_\-./]+/).filter(Boolean);
 }
 
 export function detectRole(col: string, sample: Record<string, string>[]): ColRole {
@@ -200,8 +200,8 @@ function showLongFormatModal(): Promise<boolean> {
     const modal = document.createElement('div');
     modal.className = 'tsmap-modal-backdrop';
     modal.innerHTML = `
-      <div class="tsmap-modal">
-        <h3>Long-format CSV detected</h3>
+      <div class="tsmap-modal" role="dialog" aria-modal="true" aria-labelledby="lf-title">
+        <h3 id="lf-title">Long-format CSV detected</h3>
         <p>Multiple rows share the same X/Y coordinates — this looks like long format (one row per test per die). Render will pivot to wide format automatically.</p>
         <div class="tsmap-modal-buttons">
           <button id="lf-cancel" class="btn-secondary">Cancel</button>
@@ -209,8 +209,21 @@ function showLongFormatModal(): Promise<boolean> {
         </div>
       </div>`;
     document.body.appendChild(modal);
-    modal.querySelector('#lf-cancel')!.addEventListener('click', () => { modal.remove(); resolve(false); });
-    modal.querySelector('#lf-confirm')!.addEventListener('click', () => { modal.remove(); resolve(true); });
+
+    const finish = (result: boolean) => {
+      document.removeEventListener('keydown', onKeyDown);
+      modal.remove();
+      resolve(result);
+    };
+    // Escape closes only this sub-modal (cancel). stopPropagation keeps it from
+    // also reaching the parent mapping overlay's Escape handler.
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+    }
+    document.addEventListener('keydown', onKeyDown);
+
+    modal.querySelector('#lf-cancel')!.addEventListener('click', () => finish(false));
+    modal.querySelector('#lf-confirm')!.addEventListener('click', () => finish(true));
   });
 }
 
@@ -287,9 +300,9 @@ export async function showMappingOverlay(
   const savedPassBins = saved?.passBins?.join(', ') ?? '1';
 
   overlay.innerHTML = `
-    <div class="mapping-panel">
+    <div class="mapping-panel" role="dialog" aria-modal="true" aria-labelledby="mapping-title" tabindex="-1">
       <div class="mapping-header">
-        <span class="mapping-title">Column mapping</span>
+        <span class="mapping-title" id="mapping-title">Column mapping</span>
         <span class="mapping-file-info">${rowCount.toLocaleString()} rows · ${headers.length} columns</span>
       </div>
       <div class="mapping-scroll">
@@ -309,6 +322,7 @@ export async function showMappingOverlay(
                  title="Comma-separated hard bin numbers counted as pass, e.g. 1 or 1,2">
           <span class="muted">(hard bins, comma-separated)</span>
         </div>
+        <span id="map-validation" class="mapping-validation" role="alert"></span>
         <button id="map-render" class="btn-primary">Continue →</button>
       </div>
     </div>`;
@@ -316,6 +330,7 @@ export async function showMappingOverlay(
   document.body.appendChild(overlay);
   document.body.classList.add('overlay-open');
   document.getElementById('map-container')!.innerHTML = '';
+  overlay.querySelector<HTMLElement>('.mapping-panel')?.focus(); // focus the dialog for Esc/SR
 
   // Wire up role change → show/hide test name input and split checkbox
   for (const tr of overlay.querySelectorAll<HTMLTableRowElement>('tr[data-col]')) {
@@ -334,22 +349,37 @@ export async function showMappingOverlay(
   const passBinInput = overlay.querySelector<HTMLInputElement>('#pass-bin-input')!;
 
   const closeOverlay = () => {
+    document.removeEventListener('keydown', onKeyDown);
     overlay.remove();
     document.body.classList.remove('overlay-open');
   };
+
+  // Escape cancels the mapping overlay — same path as the Cancel button. Bail
+  // while the long-format sub-modal is open (it has its own Escape handler); we
+  // don't want Escape there to also tear down the parent mapping overlay.
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('.tsmap-modal-backdrop')) return;
+    closeOverlay();
+    onCancel();
+  }
+  document.addEventListener('keydown', onKeyDown);
 
   overlay.querySelector('#map-cancel')!.addEventListener('click', () => {
     closeOverlay();
     onCancel();
   });
 
+  const validationEl = overlay.querySelector<HTMLElement>('#map-validation')!;
+
   overlay.querySelector('#map-render')!.addEventListener('click', async () => {
     const mapping = readMapping(overlay, passBinInput);
 
     if (!mapping.x || !mapping.y) {
-      alert('Please assign X and Y position columns before rendering.');
+      validationEl.textContent = 'Assign X and Y position columns before continuing.';
       return;
     }
+    validationEl.textContent = '';
 
     // Long-format confirmation
     const longFmt = detectLongFormat(mapping, sample);

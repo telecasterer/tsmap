@@ -17,6 +17,22 @@ For STDF and ATDF files with more than 200 tests, a test selector overlay appear
 parsing — pick which tests to import, then click **Import**. A **Filter tests…** button in
 the toolbar lets you change your selection at any time after load.
 
+## Try it with sample data
+
+No wafer files to hand? Download one of these synthetic samples and open it in the app:
+
+- [tsmap-sample.stdf](samples/tsmap-sample.stdf) — STDF: 3 wafers, ~500 dies each, 20 tests.
+- [tsmap-sample.atdf](samples/tsmap-sample.atdf) — ATDF: the same dataset in ASCII form.
+- [tsmap-sample.csv](samples/tsmap-sample.csv) — CSV: the same dataset; opening it shows the
+  column-mapping overlay.
+- [tsmap-sample.json](samples/tsmap-sample.json) — JSON: the same dataset as per-die
+  `testValues`.
+- [tsmap-correlated.stdf](samples/tsmap-correlated.stdf) — STDF: 5 wafers, ~200 dies each, 30
+  tests with *designed* correlations spanning a full range of Pearson r. Open **Charts** to
+  see the correlation matrix and scatter plots come to life.
+
+All five contain no real device data — they are generated for demonstration.
+
 ## Supported formats
 
 All four formats are supported in the browser:

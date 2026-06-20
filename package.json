@@ -15,6 +15,7 @@
     "build:site": "npm run build:web && ${ZENSICAL:-zensical} build --clean && cp -r dist site/app",
     "check": "tsc --noEmit",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:rust": "cargo test --manifest-path packages/parsers/Cargo.toml",
@@ -38,9 +39,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "eslint": "^9.39.4",
     "marked": "^18.0.5",
     "playwright": "^1.60.0",
     "typescript": "~5.6.2",
+    "typescript-eslint": "^8.61.1",
     "vite": "^6.0.3",
     "vitest": "^4.1.8"
   }

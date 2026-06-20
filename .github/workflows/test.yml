@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Reusable: build.yml and deploy.yml call this so releases/deploys are gated on it.
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci
+
+      - name: Type check (TypeScript)
+        run: npm run check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (JS)
+        run: npm test
+
+      - name: Type check (Rust)
+        run: npm run check:rust
+
+      - name: Parser tests (Rust)
+        run: npm run test:rust

@@ -4,7 +4,7 @@
 
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { HistogramBucket, TestOption } from './types';
-import { cardShell, cssVar, formatValue, trackObserver, PADDING } from './chartShell';
+import { cardShell, cssVar, formatValue, trackObserver, applyCanvasFlow, chartFillHeight, PADDING } from './chartShell';
 
 const HIST_HEIGHT = 230;
 const HIST_AXIS_HEIGHT = 36;
@@ -120,7 +120,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
     const maxCount = Math.max(...buckets.map(b => b.count), 1);
 
     const statsLabel = document.createElement('div');
-    statsLabel.style.cssText = `font-size:10px;color:${cssVar('--text-muted') || '#888'};margin-bottom:2px;`;
+    statsLabel.style.cssText = `font-size:12px;color:${cssVar('--text-muted') || '#888'};margin-bottom:2px;`;
     // Updated when unit is known after getTestMeta call above
     statsLabel.textContent = `max ${maxCount} dies/bucket`;
     body.appendChild(statsLabel);
@@ -139,23 +139,24 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
     const hoverColor = cssVar('--text-primary') || '#fff';
     const axisColor = cssVar('--border-mid') || '#444';
 
-    function plotRect() {
+    function plotRect(height: number) {
       const plotX = PADDING + 36;
       const plotMaxWidth = canvas.clientWidth - plotX - PADDING;
-      const plotMaxHeight = HIST_HEIGHT - HIST_AXIS_HEIGHT - HIST_TOP_MARGIN;
+      const plotMaxHeight = height - HIST_AXIS_HEIGHT - HIST_TOP_MARGIN;
       return { plotX, plotMaxWidth: Math.max(10, plotMaxWidth), plotMaxHeight, plotTop: HIST_TOP_MARGIN };
     }
 
     function barAt(offsetX: number): number {
-      const { plotX, plotMaxWidth } = plotRect();
+      const { plotX, plotMaxWidth } = plotRect(HIST_HEIGHT);
       if (offsetX < plotX || offsetX > plotX + plotMaxWidth) return -1;
       const index = Math.floor(((offsetX - plotX) / plotMaxWidth) * buckets.length);
       return index >= 0 && index < buckets.length ? index : -1;
     }
 
     function draw() {
+      applyCanvasFlow(card, canvas, statsLabel.offsetHeight);
       const width = card.clientWidth - 24;
-      const height = HIST_HEIGHT;
+      const height = chartFillHeight(card, body, canvas, HIST_HEIGHT);
       canvas.width = Math.max(1, Math.floor(width * dpr));
       canvas.height = Math.max(1, Math.floor(height * dpr));
       canvas.style.width = `${width}px`;
@@ -166,7 +167,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
       ctx.clearRect(0, 0, width, height);
       ctx.font = '11px system-ui, sans-serif';
 
-      const { plotX, plotMaxWidth, plotMaxHeight, plotTop } = plotRect();
+      const { plotX, plotMaxWidth, plotMaxHeight, plotTop } = plotRect(height);
       const plotBottom = plotTop + plotMaxHeight;
       const barWidth = plotMaxWidth / buckets.length;
 

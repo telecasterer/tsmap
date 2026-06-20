@@ -6,35 +6,70 @@ import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { CorrelationMatrix, TestOption } from './types';
 import { cardShell, cssVar, trackObserver } from './chartShell';
 
+// Parse a CSS colour string (rgb/rgba/#rrggbb) into [r,g,b] components.
+function parseCssRgb(css: string): [number, number, number] | null {
+  const m = css.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+  if (m) return [+m[1], +m[2], +m[3]];
+  const hex = css.trim().replace('#', '');
+  if (hex.length === 6) {
+    return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)];
+  }
+  return null;
+}
+
+// Interpolate a colour string toward a background RGB by factor t (0=bg, 1=colour).
+function blendTowardBg(colour: string, bg: [number,number,number], t: number): string {
+  const fg = parseCssRgb(colour);
+  if (!fg) return colour;
+  const R = Math.round(bg[0] + (fg[0] - bg[0]) * t);
+  const G = Math.round(bg[1] + (fg[1] - bg[1]) * t);
+  const B = Math.round(bg[2] + (fg[2] - bg[2]) * t);
+  return `rgb(${R},${G},${B})`;
+}
+
 export interface CorrelationPanelOptions {
   title: string;
   matrix: CorrelationMatrix;
   colorScheme: string;
-  /** Total tests before capping — when set and > matrix.tests.length, shows a "top N of M" note. */
-  totalTests?: number;
+  /** Summary counts from filterCorrelationMatrix — drives the summary line. */
+  summary?: { strongPairs: number; moderatePairs: number; hiddenWeakPairs: number; strongestPair: { xLabel: string; yLabel: string; r: number } | null };
   /** Called when user clicks a non-diagonal cell — use to link scatter X/Y selectors. */
   onSelectPair?: (xTestNumber: number, yTestNumber: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLElement {
-  const { title, matrix, colorScheme, totalTests, onSelectPair, savePng } = options;
-  const { card, body } = cardShell(title, savePng);
+  const { title, matrix, colorScheme, summary, onSelectPair, savePng, getHeaderLines } = options;
+  const { card, body } = cardShell(title, savePng, getHeaderLines);
 
   // Enable horizontal scroll so matrix never clips
   body.style.overflowX = 'auto';
 
   const hintRow = document.createElement('div');
-  hintRow.style.cssText = 'display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap;';
+  hintRow.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-bottom:6px;';
   const hint = document.createElement('span');
   hint.textContent = 'Pearson r · –1 = anti-correlated, +1 = correlated · click cell to view that pair in scatter';
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;`;
   hintRow.appendChild(hint);
-  if (totalTests !== undefined && totalTests > matrix.tests.length) {
-    const capNote = document.createElement('span');
-    capNote.textContent = `Showing top ${matrix.tests.length} of ${totalTests} tests by mean |r|`;
-    capNote.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;font-style:italic;`;
-    hintRow.appendChild(capNote);
+  if (summary) {
+    const { strongPairs, moderatePairs, hiddenWeakPairs, strongestPair } = summary;
+    const summaryLine = document.createElement('span');
+    summaryLine.style.cssText = `color:${cssVar('--text-primary')};font-size:12px;font-weight:500;`;
+    if (strongPairs === 0 && moderatePairs === 0) {
+      summaryLine.textContent = strongestPair
+        ? `No significant correlations found — strongest pair: ${strongestPair.xLabel} ↔ ${strongestPair.yLabel} (r = ${strongestPair.r.toFixed(2)})`
+        : 'No significant correlations found';
+    } else {
+      const parts: string[] = [];
+      if (strongPairs > 0) parts.push(`${strongPairs} strong (|r| ≥ 0.7)`);
+      if (moderatePairs > 0) parts.push(`${moderatePairs} moderate (0.4–0.7)`);
+      const total = strongPairs + moderatePairs;
+      let text = parts.join(', ') + ` pair${total !== 1 ? 's' : ''} found`;
+      if (hiddenWeakPairs > 0) text += ` · ${hiddenWeakPairs} weak pair${hiddenWeakPairs !== 1 ? 's' : ''} not shown`;
+      summaryLine.textContent = text;
+    }
+    hintRow.appendChild(summaryLine);
   }
   card.insertBefore(hintRow, body);
 
@@ -55,6 +90,8 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
   const { forValue } = getColorScheme(colorScheme);
   const textColor = cssVar('--text-secondary') || '#ccc';
   const bgColor = cssVar('--bg-overlay') || '#1a1a1a';
+  // Parse background for colour blending — fall back to dark theme default
+  const bgRgb: [number,number,number] = parseCssRgb(bgColor) ?? [26, 26, 26];
   const borderColor = cssVar('--border-mid') || '#444';
   const accentColor = cssVar('--text-primary') || '#fff';
 
@@ -76,6 +113,15 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
   function cellSize(availW: number): number {
     const plotW = Math.max(0, availW - LABEL_W);
     return Math.max(MIN_CELL, Math.min(PREF_CELL, Math.floor(plotW / n)));
+  }
+
+  // Pre-group cells by yIndex so the draw loop can look up a row's cells in O(1)
+  // instead of scanning the full N² cells array for each of N rows (O(N³) total).
+  const cellsByRow = new Map<number, typeof matrix.cells>();
+  for (const cell of matrix.cells) {
+    let row = cellsByRow.get(cell.yIndex);
+    if (!row) { row = []; cellsByRow.set(cell.yIndex, row); }
+    row.push(cell);
   }
 
   function draw() {
@@ -123,7 +169,7 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
       ctx.fillStyle = yi === selectedYi ? accentColor : textColor;
       ctx.fillText(lbl.length > maxLabelChars ? `${lbl.slice(0, maxLabelChars - 1)}…` : lbl, LABEL_W - 4, midY);
 
-      matrix.cells.filter(c => c.yIndex === yi).forEach(cell => {
+      (cellsByRow.get(yi) ?? []).forEach(cell => {
         const xi = cell.xIndex;
         const cx = LABEL_W + xi * cs;
         const isSelected = xi === selectedXi && yi === selectedYi;
@@ -138,21 +184,20 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
           return;
         }
 
-        const norm = (r + 1) / 2;
         if (isDiag) {
           ctx.fillStyle = cssVar('--bg-hover-row') || '#222';
-          ctx.globalAlpha = 1;
         } else {
-          ctx.fillStyle = forValue(norm);
-          ctx.globalAlpha = Math.abs(r) * 0.8 + 0.2;
+          // Colour encodes correlation strength only — |r| mapped to [0,1].
+          // Sign (positive/negative) is shown in the tooltip and r-value text.
+          // This way strong positive and strong negative look equally significant.
+          ctx.fillStyle = blendTowardBg(forValue(Math.abs(r)), bgRgb, Math.abs(r));
         }
         ctx.fillRect(cx + 1, cy + 1, cs - 2, cs - 2);
-        ctx.globalAlpha = 1;
 
         // r value text when cells wide enough
         if (cs >= 28 && !isDiag) {
           ctx.font = `${Math.min(10, cs * 0.35)}px system-ui, sans-serif`;
-          ctx.fillStyle = Math.abs(r) > 0.55 ? bgColor : textColor;
+          ctx.fillStyle = Math.abs(r) > 0.6 ? bgColor : textColor;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(r.toFixed(2), cx + cs / 2, cy + cs / 2);
@@ -208,7 +253,7 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
     if (isDiag) {
       tooltip.innerHTML = `<strong>${xLabel}</strong>`;
     } else if (cell?.r !== null && cell?.r !== undefined) {
-      tooltip.innerHTML = `<strong>${shortLabel(matrix.tests[yi])}</strong> vs <strong>${shortLabel(matrix.tests[xi])}</strong><br>r = ${cell.r.toFixed(4)}${onSelectPair ? '<br><em>click to view in scatter</em>' : ''}`;
+      tooltip.innerHTML = `<strong>${shortLabel(matrix.tests[yi])}</strong> (#${matrix.tests[yi].testNumber}) vs <strong>${shortLabel(matrix.tests[xi])}</strong> (#${matrix.tests[xi].testNumber})<br>r = ${cell.r.toFixed(4)}${onSelectPair ? '<br><em>click to view in scatter</em>' : ''}`;
     } else {
       tooltip.innerHTML = `${yLabel} vs ${xLabel}<br><em>insufficient data</em>`;
     }

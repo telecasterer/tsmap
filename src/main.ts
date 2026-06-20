@@ -17,7 +17,7 @@ import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
-import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, topCorrelatedTests, buildScatterData, listNumericTests } from './charts/aggregate';
+import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, listNumericTests } from './charts/aggregate';
 import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 
@@ -373,6 +373,15 @@ function renderChartsViewWork(loadedMsg: string) {
   cachedLotStats ??= buildLotStatsSummary(currentWafers);
   const { lotStatsSummary } = cachedLotStats;
 
+  function makeHeaderLines(panelTitle: string, testName?: string): { title: string; subtitle: string } {
+    const now = new Date();
+    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const parts: string[] = [loadedMsg];
+    if (testName) parts.push(testName);
+    parts.push(ts);
+    return { title: panelTitle, subtitle: parts.join(' · ') };
+  }
+
   const testOptions = listNumericTests(currentTestDefs);
   const firstTest = testOptions[0]?.testNumber ?? null;
 
@@ -481,6 +490,7 @@ function renderChartsViewWork(loadedMsg: string) {
     onToggleAxisIncludesLimits: () => { boxplotAxisIncludesLimits = !boxplotAxisIncludesLimits; },
     onOpen: (waferIndex) => { if (selectedTestNumber !== null) openTestValueWafer(waferIndex, selectedTestNumber); },
     savePng: onSaveImage,
+    getHeaderLines: () => makeHeaderLines('Test value distribution by wafer', testOptions.find(t => t.testNumber === selectedTestNumber)?.label),
   });
 
   const histogramCard = renderHistogramPanel({
@@ -496,6 +506,7 @@ function renderChartsViewWork(loadedMsg: string) {
     onStateChange: (n, waferIndex) => { histogramTestNumber = n; histogramWaferIndex = waferIndex; },
     onToggleAxisIncludesLimits: () => { histogramAxisIncludesLimits = !histogramAxisIncludesLimits; },
     savePng: onSaveImage,
+    getHeaderLines: () => makeHeaderLines('Value histogram', testOptions.find(t => t.testNumber === histogramTestNumber)?.label),
   });
 
   let correlationCard: HTMLElement;
@@ -507,18 +518,9 @@ function renderChartsViewWork(loadedMsg: string) {
     scatterCard = makeHeavyChartPlaceholder('Test correlation', msg);
   } else {
     cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
-    const displayMatrix = topCorrelatedTests(cachedCorrelationMatrix, correlationMatrixLimit);
-    // Build a trimmed matrix for display — reuse cached cells, just filter to the display tests.
-    const displayTestNums = new Set(displayMatrix.map(t => t.testNumber));
-    const displayTestIndices = new Map(cachedCorrelationMatrix.tests.map((t, i) => [t.testNumber, i]));
-    const displayIndexMap = new Map(displayMatrix.map((t, newI) => [displayTestIndices.get(t.testNumber)!, newI]));
-    const trimmedMatrix = {
-      tests: displayMatrix,
-      cells: cachedCorrelationMatrix.cells
-        .filter(c => displayTestNums.has(cachedCorrelationMatrix!.tests[c.xIndex].testNumber) &&
-                     displayTestNums.has(cachedCorrelationMatrix!.tests[c.yIndex].testNumber))
-        .map(c => ({ xIndex: displayIndexMap.get(c.xIndex)!, yIndex: displayIndexMap.get(c.yIndex)!, r: c.r })),
-    };
+    const { matrix: trimmedMatrix, ...correlationSummary } = filterCorrelationMatrix(cachedCorrelationMatrix, {
+      minTests: 6, maxTests: correlationMatrixLimit,
+    });
 
     const scatterResult = renderScatterPanel({
       title: 'Test correlation',
@@ -530,6 +532,12 @@ function renderChartsViewWork(loadedMsg: string) {
       colorScheme: chartColorScheme,
       onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
       savePng: onSaveImage,
+      getHeaderLines: () => {
+        const xLabel = testOptions.find(t => t.testNumber === scatterXTest)?.label;
+        const yLabel = testOptions.find(t => t.testNumber === scatterYTest)?.label;
+        const testName = xLabel && yLabel ? `${xLabel} vs ${yLabel}` : (xLabel ?? yLabel);
+        return makeHeaderLines('Test correlation', testName);
+      },
     });
     scatterCard = scatterResult.card;
 
@@ -537,9 +545,10 @@ function renderChartsViewWork(loadedMsg: string) {
       title: 'Test correlation matrix',
       matrix: trimmedMatrix,
       colorScheme: chartColorScheme,
-      totalTests: testOptions.length,
+      summary: correlationSummary,
       onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; scatterResult.setXY(x, y); },
       savePng: onSaveImage,
+      getHeaderLines: () => makeHeaderLines('Test correlation matrix'),
     });
   }
 
@@ -568,6 +577,7 @@ function renderChartsViewWork(loadedMsg: string) {
   });
   matrixLimitLabel.appendChild(matrixLimitInput);
 
+  const scrollTop = container.scrollTop;
   renderChartGrid(container, [...panels, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
       if (waferIndices.length === 0) return;
@@ -579,7 +589,9 @@ function renderChartsViewWork(loadedMsg: string) {
       openSingleWafer(waferIndices);
     },
     savePng: onSaveImage,
+    getHeaderLines: (panelTitle) => makeHeaderLines(panelTitle),
   }, [colorSchemeLabel, colorSchemeSelect, matrixLimitLabel]);
+  container.scrollTop = scrollTop;
 
   setIdle(loadedMsg);
 }
@@ -591,6 +603,12 @@ function showEmptyState() {
   currentBinaryFiles = [];
   currentBinaryExt = '';
   currentTestNames = null;
+  cachedLotStats = null;
+  cachedBinData.clear();
+  cachedBoxplotData.clear();
+  cachedHistogramData.clear();
+  cachedCorrelationMatrix = null;
+  cachedScatterData.clear();
   addBtn.disabled = true;
   resetBtn.style.display = 'none';
   chartsBtn.style.display = 'none';
@@ -601,18 +619,18 @@ function showEmptyState() {
   container.classList.remove('gallery', 'charts');
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-                position:absolute;inset:0;gap:16px;color:#555;user-select:none;">
+                position:absolute;inset:0;gap:16px;color:var(--text-faint);user-select:none;">
       <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="32" cy="32" r="28" stroke="#3a3a3a" stroke-width="2"/>
-        <circle cx="32" cy="32" r="18" stroke="#3a3a3a" stroke-width="1.5" stroke-dasharray="3 3"/>
-        <circle cx="32" cy="32" r="8"  stroke="#3a3a3a" stroke-width="1.5"/>
-        <line x1="32" y1="4"  x2="32" y2="10" stroke="#3a3a3a" stroke-width="2" stroke-linecap="round"/>
-        <line x1="32" y1="54" x2="32" y2="60" stroke="#3a3a3a" stroke-width="2" stroke-linecap="round"/>
-        <line x1="4"  y1="32" x2="10" y2="32" stroke="#3a3a3a" stroke-width="2" stroke-linecap="round"/>
-        <line x1="54" y1="32" x2="60" y2="32" stroke="#3a3a3a" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="32" cy="32" r="28" stroke="var(--border-mid)" stroke-width="2"/>
+        <circle cx="32" cy="32" r="18" stroke="var(--border-mid)" stroke-width="1.5" stroke-dasharray="3 3"/>
+        <circle cx="32" cy="32" r="8"  stroke="var(--border-mid)" stroke-width="1.5"/>
+        <line x1="32" y1="4"  x2="32" y2="10" stroke="var(--border-mid)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="32" y1="54" x2="32" y2="60" stroke="var(--border-mid)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="4"  y1="32" x2="10" y2="32" stroke="var(--border-mid)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="54" y1="32" x2="60" y2="32" stroke="var(--border-mid)" stroke-width="2" stroke-linecap="round"/>
       </svg>
-      <div style="font-size:15px;color:#666;">Open a file to get started</div>
-      <div style="font-size:12px;color:#444;">Supports STDF, ATDF, CSV and JSON</div>
+      <div style="font-size:15px;color:var(--text-dim);">Open a file to get started</div>
+      <div style="font-size:12px;color:var(--text-veryfaint);">Supports STDF, ATDF, CSV and JSON</div>
     </div>`;
 }
 
@@ -745,8 +763,8 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
 
   if (binaryFiles.length > 0) {
     const largestBinary = binaryFiles.reduce((a, b) => {
-      const aSize = a.bytes.length || (a.path ? Infinity : 0);
-      const bSize = b.bytes.length || (b.path ? Infinity : 0);
+      const aSize = a.size ?? a.bytes.length;
+      const bSize = b.size ?? b.bytes.length;
       return aSize >= bSize ? a : b;
     });
     currentBinaryFiles = binaryFiles;
@@ -1092,7 +1110,9 @@ filterTestsBtn.addEventListener('click', async () => {
   // New selection adds tests not in the current load — must re-parse.
   const entries: FileWaferEntry[] = [];
   for (const file of currentBinaryFiles) {
-    const fileExt = currentBinaryExt;
+    const parts = file.name.split('.');
+    const ext = parts.pop()?.toLowerCase() ?? '';
+    const fileExt = ext === 'gz' ? (parts.pop()?.toLowerCase() ?? ext) : ext;
     setBusy(`Parsing ${file.name}…`);
     try {
       const raw = fileExt === 'atdf' || fileExt === 'atd'

@@ -238,7 +238,9 @@ impl SiteAccum {
         self.values.iter_mut().for_each(|v| *v = f32::NAN);
     }
     fn to_test_values(&self, index: &TestIndex, test_defs_keys: &[String]) -> HashMap<String, f64> {
-        let mut out = HashMap::new();
+        // Count non-NaN entries first so we can pre-size the HashMap and avoid rehashing.
+        let cap = self.values.iter().take(index.order.len()).filter(|v| !v.is_nan()).count();
+        let mut out = HashMap::with_capacity(cap);
         for (i, _) in index.order.iter().enumerate() {
             let v = if i < self.values.len() { self.values[i] } else { f32::NAN };
             if !v.is_nan() {
@@ -609,10 +611,13 @@ pub fn parse_stdf_from_bytes_filtered(
                         hi_limit: hi,
                         units,
                     });
-                    let idx = test_index.get_or_insert(ptr.test_num);
-                    while index_keys.len() <= idx { index_keys.push(String::new()); }
-                    index_keys[idx] = key_str.clone();
-                    test_num_to_key.insert(ptr.test_num, key_str);
+                    test_num_to_key.insert(ptr.test_num, key_str.clone());
+                    // Only add to the accumulation index if this test is selected
+                    if selected.contains(&ptr.test_num) {
+                        let idx = test_index.get_or_insert(ptr.test_num);
+                        while index_keys.len() <= idx { index_keys.push(String::new()); }
+                        index_keys[idx] = key_str;
+                    }
                 } else if !limits_resolved.contains(&ptr.test_num) {
                     let (_, lo, hi, units) = ptr_defs_from_raw(b);
                     if lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b) {
@@ -651,10 +656,13 @@ pub fn parse_stdf_from_bytes_filtered(
                         hi_limit: None,
                         units: None,
                     });
-                    let idx = test_index.get_or_insert(test_num);
-                    while index_keys.len() <= idx { index_keys.push(String::new()); }
-                    index_keys[idx] = key_str.clone();
-                    test_num_to_key.insert(test_num, key_str);
+                    test_num_to_key.insert(test_num, key_str.clone());
+                    // Only add to the accumulation index if this test is selected
+                    if selected.contains(&test_num) {
+                        let idx = test_index.get_or_insert(test_num);
+                        while index_keys.len() <= idx { index_keys.push(String::new()); }
+                        index_keys[idx] = key_str;
+                    }
                 }
 
                 // Skip accumulation for unselected tests
@@ -1149,5 +1157,46 @@ mod tests {
             let _ = parse_stdf_test_names(&full[..len]);
             len += if len < 256 { 1 } else { 251 };
         }
+    }
+
+    // Run with: cargo test --manifest-path packages/parsers/Cargo.toml --features bench -- --nocapture bench_parse_large
+    #[cfg(feature = "bench")]
+    #[test]
+    fn bench_parse_large() {
+        let path = "/tmp/large.stdf";
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => {
+                eprintln!("SKIP: {path} not found — run scripts/generate_stdf_large.py first");
+                return;
+            }
+        };
+        let file_mb = bytes.len() as f64 / 1_048_576.0;
+
+        // Warm run (populates OS page cache)
+        let _ = parse_stdf_from_bytes_timed(&bytes).unwrap();
+
+        // Measured run
+        let (result, timing) = parse_stdf_from_bytes_timed(&bytes).unwrap();
+        let total_ms = timing.p1_iter_ms + timing.p2_hashmap_ms;
+
+        println!(
+            "\n=== bench_parse_large ({file_mb:.0} MB) ===\n\
+             wafers:         {wafers}\n\
+             dies:           {dies}\n\
+             tests:          {tests}\n\
+             p1 iter:        {p1} ms\n\
+             p2 hashmap:     {p2} ms  ({p2_pct:.0}% of total)\n\
+             total:          {total} ms\n\
+             throughput:     {tp:.0} MB/s",
+            wafers   = result.wafers.len(),
+            dies     = timing.die_count,
+            tests    = timing.test_count,
+            p1       = timing.p1_iter_ms,
+            p2       = timing.p2_hashmap_ms,
+            p2_pct   = timing.p2_hashmap_ms as f64 / total_ms.max(1) as f64 * 100.0,
+            total    = total_ms,
+            tp       = file_mb / (total_ms as f64 / 1000.0),
+        );
     }
 }

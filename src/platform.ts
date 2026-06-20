@@ -24,6 +24,8 @@ export interface FileHandle {
   bytes: Uint8Array;
   /** Native path — set by tauriPlatform, undefined in webPlatform. */
   path?: string;
+  /** File size in bytes — set by tauriPlatform (where bytes is empty); equals bytes.length in webPlatform. */
+  size?: number;
 }
 
 export type StdfTestNames = Record<string, TestDef>;
@@ -79,21 +81,29 @@ function makeTauriPlatform(): Platform {
       });
       const paths = Array.isArray(result) ? result : result ? [result] : [];
       if (paths.length > 0) invoke('set_last_dir', { path: paths[0] }).catch(() => {});
-      return paths.map(path => ({
+      const { stat } = await getFs();
+      return Promise.all(paths.map(async path => ({
         name: path.split(/[\\/]/).pop() ?? path,
         bytes: new Uint8Array(0),
         path,
-      }));
+        size: await stat(path).then(s => s.size).catch(() => 0),
+      })));
     },
 
     async expandArchives(files) {
       const invoke = await getInvoke();
+      const { stat } = await getFs();
       const expanded: FileHandle[] = [];
       for (const f of files) {
         if (f.path && f.name.toLowerCase().endsWith('.zip')) {
           const extracted = await invoke<string[]>('extract_archive', { path: f.path });
           for (const p of extracted) {
-            expanded.push({ name: p.split(/[\\/]/).pop() ?? p, bytes: new Uint8Array(0), path: p });
+            expanded.push({
+              name: p.split(/[\\/]/).pop() ?? p,
+              bytes: new Uint8Array(0),
+              path: p,
+              size: await stat(p).then(s => s.size).catch(() => 0),
+            });
           }
         } else {
           expanded.push(f);
@@ -345,13 +355,12 @@ function makeWebPlatform(): Platform {
         const lower = f.name.toLowerCase();
         if (lower.endsWith('.zip')) {
           const inner = await extractZip(f.bytes);
-          expanded.push(...inner);
+          expanded.push(...inner.map(h => ({ ...h, size: h.bytes.length })));
         } else if (lower.endsWith('.gz')) {
           const decompressed = await decompressGzip(f.bytes);
-          // Strip .gz to get the inner filename
-          expanded.push({ name: f.name.slice(0, -3), bytes: decompressed });
+          expanded.push({ name: f.name.slice(0, -3), bytes: decompressed, size: decompressed.length });
         } else {
-          expanded.push(f);
+          expanded.push({ ...f, size: f.size ?? f.bytes.length });
         }
       }
       return expanded;

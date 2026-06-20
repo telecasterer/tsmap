@@ -26,11 +26,12 @@ export interface BoxplotPanelOptions {
   onToggleAxisIncludesLimits: () => void;
   onOpen: (waferIndex: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
   const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onOpen } = options;
-  const { card, controlsRow, body } = cardShell(title, options.savePng);
+  const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let logScale = options.logScale;

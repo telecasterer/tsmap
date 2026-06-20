@@ -23,13 +23,14 @@ export interface HistogramPanelOptions {
   onStateChange: (testNumber: number, waferIndex: number | null) => void;
   onToggleAxisIncludesLimits: () => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 const HISTOGRAM_LOT_VALUE = 'lot';
 
 export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElement {
   const { title, testOptions, colorScheme, getData, getTestMeta, waferLabels, onStateChange, onToggleAxisIncludesLimits } = options;
-  const { card, controlsRow, body } = cardShell(title, options.savePng);
+  const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let activeWafer = options.selectedWafer;

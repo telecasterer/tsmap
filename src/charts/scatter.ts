@@ -16,16 +16,17 @@ export interface ScatterPanelOptions {
   colorScheme: string;
   onStateChange: (xTest: number, yTest: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 const SCATTER_LEFT = 52;
 const SCATTER_RIGHT = 16;
 const SCATTER_TOP = 16;
-const SCATTER_BOTTOM = 36;
+const SCATTER_BOTTOM = 44;
 
 export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLElement; setXY: (x: number, y: number) => void } {
   const { title, testOptions, colorScheme, getPoints, getTestMeta, onStateChange } = options;
-  const { card, controlsRow, body } = cardShell(title, options.savePng);
+  const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeX = options.xTestNumber ?? testOptions[0]?.testNumber ?? null;
   let activeY = options.yTestNumber ?? testOptions[1]?.testNumber ?? activeX;
@@ -170,14 +171,14 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
 
     const xUnit = testOptions.find(t => t.testNumber === activeX)?.unit;
     const yUnit = testOptions.find(t => t.testNumber === activeY)?.unit;
-    if (xUnit) drawAxisUnit(ctx, xUnit, SCATTER_LEFT + plotW + 4, SCATTER_TOP + plotH + 10);
+    if (xUnit) drawAxisUnit(ctx, xUnit, SCATTER_LEFT + plotW / 2, SCATTER_TOP + plotH + 24);
     if (yUnit) {
       ctx.save();
       ctx.font = '10px system-ui, sans-serif';
       ctx.fillStyle = cssVar('--text-muted') || '#888';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.translate(10, SCATTER_TOP + plotH / 2);
+      ctx.translate(6, SCATTER_TOP + plotH / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.fillText(`(${yUnit})`, 0, 0);
       ctx.restore();

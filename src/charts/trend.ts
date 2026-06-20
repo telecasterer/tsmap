@@ -16,6 +16,7 @@ export interface TrendPanelOptions {
   onStateChange: (testNumber: number) => void;
   onOpen: (waferIndex: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: () => { title: string; subtitle: string };
 }
 
 const TREND_LEFT = 120;
@@ -25,7 +26,7 @@ const TREND_BOTTOM = 36;
 
 export function renderTrendPanel(options: TrendPanelOptions): HTMLElement {
   const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onOpen } = options;
-  const { card, controlsRow, body } = cardShell(title, options.savePng);
+  const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
 

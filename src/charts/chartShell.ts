@@ -34,6 +34,7 @@ export interface RenderChartsOptions {
   onOpen: (waferIndices: number[], datum: ChartDatum) => void;
   onOpenSelection: (waferIndices: number[], data: ChartDatum[]) => void;
   savePng?: (blob: Blob, stem: string) => void;
+  getHeaderLines?: (title: string) => { title: string; subtitle: string };
 }
 
 // ── Shared layout constants ─────────────────────────────────────────────────────
@@ -70,8 +71,35 @@ export function saveCanvasPng(
   canvas: HTMLCanvasElement,
   filename: string,
   savePng?: (blob: Blob, stem: string) => void,
+  headerLines?: { title: string; subtitle: string },
 ) {
-  canvas.toBlob(blob => {
+  const dpr = window.devicePixelRatio || 1;
+  const HEADER_H = headerLines ? 40 : 0;
+
+  // Composite onto a white background so the exported PNG is opaque.
+  // If headerLines provided, prepend a header strip above the chart content.
+  const flat = document.createElement('canvas');
+  flat.width = canvas.width;
+  flat.height = canvas.height + HEADER_H * dpr;
+  const ctx = flat.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, flat.width, flat.height);
+
+  if (headerLines) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillStyle = '#222222';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(headerLines.title, 12, 16);
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillStyle = '#555555';
+    ctx.fillText(headerLines.subtitle, 12, 30);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  ctx.drawImage(canvas, 0, HEADER_H * dpr);
+  flat.toBlob(blob => {
     if (!blob) return;
     if (savePng) {
       savePng(blob, filename);
@@ -113,7 +141,7 @@ export function makeExpandBtn(card: HTMLElement, title: string): HTMLElement {
   return btn;
 }
 
-export function cardShell(title: string, savePng?: (blob: Blob, stem: string) => void): { card: HTMLElement; heading: HTMLElement; controlsRow: HTMLElement; body: HTMLElement; saveCanvas: (filename: string) => void } {
+export function cardShell(title: string, savePng?: (blob: Blob, stem: string) => void, getHeaderLines?: () => { title: string; subtitle: string }): { card: HTMLElement; heading: HTMLElement; controlsRow: HTMLElement; body: HTMLElement; saveCanvas: (filename: string) => void } {
   const card = document.createElement('div');
   card.className = 'chart-card';
   card.style.cssText = `display:flex;flex-direction:column;background:${cssVar('--bg-overlay')};border:1px solid ${cssVar('--border-subtle')};border-radius:6px;padding:12px;min-width:0;`;
@@ -141,7 +169,7 @@ export function cardShell(title: string, savePng?: (blob: Blob, stem: string) =>
 
   function saveCanvas(filename: string) {
     const canvas = card.querySelector<HTMLCanvasElement>('canvas');
-    if (canvas) saveCanvasPng(canvas, filename, savePng);
+    if (canvas) saveCanvasPng(canvas, filename, savePng, getHeaderLines?.());
   }
 
   saveBtn.addEventListener('click', e => { e.stopPropagation(); saveCanvas(`${title}.png`); });

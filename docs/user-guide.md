@@ -392,15 +392,21 @@ Distribution of test values bucketed across the measurement range.
 
 ![Correlation matrix](images/correlation.png)
 
-Pearson correlation coefficient (r) for every pair of parametric tests. Cells are
-colour-coded: blue for positive correlation, red for negative; opacity scales with |r|.
+Pearson correlation coefficient (r) for every pair of parametric tests. Cell colour
+encodes correlation **strength** (|r|) using the active chart colour scheme — stronger
+correlations appear as a more saturated colour regardless of sign. Positive and negative
+correlations of equal strength look equally prominent; sign is shown in the tooltip.
 
-- The matrix shows the top N tests ranked by mean |r| across all pairs.
-- Hover a cell to see the full test names and the r value to four decimal places.
+A summary line above the matrix counts strong (|r| ≥ 0.7) and moderate (0.4–0.7) pairs
+among the displayed tests, and notes any weak pairs that were hidden.
+
+- Tests are ranked by mean |r| across all pairs so the most strongly correlated tests
+  cluster toward the top-left of the matrix.
+- The matrix shows between 6 and 20 tests — enough significant pairs to fill that range.
+- Hover a cell to see the full test names, test numbers, and the r value to four decimal
+  places.
 - Click any off-diagonal cell to instantly update the scatter plot's X and Y tests.
   The grid does not rebuild — scroll position is preserved.
-- If the full test count exceeds the matrix size, a label shows how many tests are
-  displayed vs. total.
 
 ### 6.6 Test correlation scatter
 
@@ -423,6 +429,10 @@ Die-level scatter plot for two parametric tests.
 Every chart panel has a **⤓** download button that saves the current view as a PNG at the
 displayed resolution. To get a clean full-resolution render, use the expand (⛶) button
 first to open the panel in the fullscreen modal, then click ⤓.
+
+Each exported PNG includes a header strip above the chart with the panel title, source
+filename, wafer and die counts, the active test name (where applicable), and the time of
+export. The live card UI is unchanged — the header appears only in the saved file.
 
 On the desktop, PNG saves open a native save dialog. In the browser, the file goes to your
 downloads folder.

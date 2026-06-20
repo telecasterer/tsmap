@@ -101,23 +101,9 @@ export function buildTestBoxplotData(wafers: WaferData[], testNumber: number): B
 
 /** Per-wafer trend data for one test — median + Q1/Q3 band in lot order. */
 export function buildTrendData(wafers: WaferData[], testNumber: number): TrendDatum[] {
-  return wafers.map((wafer, waferIndex) => {
-    const values = wafer.results
-      .map(d => d.testValues?.[testNumber])
-      .filter((v): v is number => v !== undefined && Number.isFinite(v))
-      .sort((a, b) => a - b);
-    if (values.length === 0) {
-      return { waferIndex, label: wafer.waferId, median: NaN, q1: NaN, q3: NaN, count: 0 };
-    }
-    return {
-      waferIndex,
-      label: wafer.waferId,
-      median: quantile(values, 0.5),
-      q1: quantile(values, 0.25),
-      q3: quantile(values, 0.75),
-      count: values.length,
-    };
-  });
+  return buildTestBoxplotData(wafers, testNumber).map(({ waferIndex, label, median, q1, q3, count }) => ({
+    waferIndex, label, median, q1, q3, count,
+  }));
 }
 
 /** All die scatter points for two tests across the whole lot. */
@@ -213,31 +199,105 @@ export function buildCorrelationMatrix(wafers: WaferData[], testOptions: TestOpt
   return { tests: testOptions, cells };
 }
 
+export interface CorrelationSummary {
+  /** Filtered matrix — tests trimmed to [minTests, maxTests] by significance. */
+  matrix: CorrelationMatrix;
+  /** Upper-triangle pairs with |r| ≥ 0.7 (across the full input matrix). */
+  strongPairs: number;
+  /** Upper-triangle pairs with 0.4 ≤ |r| < 0.7 (across the full input matrix). */
+  moderatePairs: number;
+  /** Upper-triangle pairs with |r| < threshold that were excluded from display. */
+  hiddenWeakPairs: number;
+  /** Strongest pair by |r|, or null if no non-null off-diagonal cells exist. */
+  strongestPair: { xLabel: string; yLabel: string; r: number } | null;
+}
+
 /**
- * From a fully-computed correlation matrix, return the top `limit` tests ranked
- * by mean |r| across all their non-diagonal, non-null pairings — i.e. the tests
- * most correlated with *something*. Result is in original test-number order so
- * the matrix axes stay sorted. When the matrix has ≤ limit tests, returns all.
+ * Filter a correlation matrix to tests involved in significant pairs, clamped to
+ * [minTests, maxTests]. Pairs are ranked by |r|; the threshold gates which pairs
+ * count as "significant" for display selection, but all pair counts are computed
+ * over the full input matrix for the summary line. Original test-number order is
+ * preserved so matrix axes stay sorted.
  */
-export function topCorrelatedTests(matrix: CorrelationMatrix, limit: number): TestOption[] {
-  const n = matrix.tests.length;
-  if (n <= limit) return matrix.tests;
+export function filterCorrelationMatrix(
+  matrix: CorrelationMatrix,
+  { threshold = 0.3, minTests = 6, maxTests = 20 }: { threshold?: number; minTests?: number; maxTests?: number } = {},
+): CorrelationSummary {
+  // Collect upper-triangle pairs with their |r|
+  type Pair = { xi: number; yi: number; absR: number };
+  const allPairs: Pair[] = [];
+  let strongPairs = 0, moderatePairs = 0;
+  let strongestPair: CorrelationSummary['strongestPair'] = null;
 
-  const sumAbsR = new Float64Array(n);
-  const count = new Int32Array(n);
   for (const cell of matrix.cells) {
-    if (cell.xIndex === cell.yIndex || cell.r === null) continue;
-    sumAbsR[cell.xIndex] += Math.abs(cell.r);
-    count[cell.xIndex]++;
+    if (cell.xIndex >= cell.yIndex || cell.r === null) continue;
+    const absR = Math.abs(cell.r);
+    allPairs.push({ xi: cell.xIndex, yi: cell.yIndex, absR });
+    if (strongestPair === null || absR > Math.abs(strongestPair.r)) {
+      strongestPair = { xLabel: matrix.tests[cell.xIndex].label, yLabel: matrix.tests[cell.yIndex].label, r: cell.r };
+    }
   }
-  const meanAbsR = Array.from({ length: n }, (_, i) => count[i] > 0 ? sumAbsR[i] / count[i] : 0);
 
-  const indices = Array.from({ length: n }, (_, i) => i)
-    .sort((a, b) => meanAbsR[b] - meanAbsR[a])
-    .slice(0, limit)
-    .sort((a, b) => a - b); // restore test-number order
+  // Sort pairs by |r| descending to pick the most significant for display
+  allPairs.sort((a, b) => b.absR - a.absR);
 
-  return indices.map(i => matrix.tests[i]);
+  // Grow the display test set by adding tests from pairs, most significant first,
+  // until we reach maxTests or exhaust significant pairs (|r| ≥ threshold).
+  // Then pad with the next-best pairs until minTests is reached.
+  const displayTestIndices = new Set<number>();
+
+  for (const { xi, yi, absR } of allPairs) {
+    const belowThreshold = absR < threshold;
+    if (displayTestIndices.size >= maxTests) continue;
+    if (belowThreshold && displayTestIndices.size >= minTests) continue;
+    displayTestIndices.add(xi);
+    if (displayTestIndices.size < maxTests) displayTestIndices.add(yi);
+  }
+
+  // Sort display tests by mean |r| descending so the most correlated tests cluster top-left
+  const sortedIndices = (() => {
+    const indices = Array.from(displayTestIndices);
+    const sumR = new Map<number, number>();
+    const cnt  = new Map<number, number>();
+    for (const { xi, yi, absR } of allPairs) {
+      if (!displayTestIndices.has(xi) || !displayTestIndices.has(yi)) continue;
+      sumR.set(xi, (sumR.get(xi) ?? 0) + absR);
+      sumR.set(yi, (sumR.get(yi) ?? 0) + absR);
+      cnt.set(xi,  (cnt.get(xi)  ?? 0) + 1);
+      cnt.set(yi,  (cnt.get(yi)  ?? 0) + 1);
+    }
+    const meanR = (i: number) => (cnt.get(i) ?? 0) > 0 ? sumR.get(i)! / cnt.get(i)! : 0;
+    return indices.sort((a, b) => meanR(b) - meanR(a));
+  })();
+  const displayTests = sortedIndices.map(i => matrix.tests[i]);
+
+  // Remap cells to new indices
+  const newIndexOf = new Map(sortedIndices.map((origI, newI) => [origI, newI]));
+  const displayTestNums = new Set(displayTests.map(t => t.testNumber));
+  const trimmedCells = matrix.cells
+    .filter(c => displayTestNums.has(matrix.tests[c.xIndex].testNumber) &&
+                 displayTestNums.has(matrix.tests[c.yIndex].testNumber))
+    .map(c => ({ xIndex: newIndexOf.get(c.xIndex)!, yIndex: newIndexOf.get(c.yIndex)!, r: c.r }));
+
+  // Count pair strengths across displayed tests only, so the summary is coherent with what's shown
+  let hiddenWeakPairs = 0;
+  for (const { xi, yi, absR } of allPairs) {
+    const inDisplay = displayTestIndices.has(xi) && displayTestIndices.has(yi);
+    if (inDisplay) {
+      if (absR >= 0.7) strongPairs++;
+      else if (absR >= 0.4) moderatePairs++;
+    } else if (absR < threshold) {
+      hiddenWeakPairs++;
+    }
+  }
+
+  return {
+    matrix: { tests: displayTests, cells: trimmedCells },
+    strongPairs,
+    moderatePairs,
+    hiddenWeakPairs,
+    strongestPair,
+  };
 }
 
 /** Histogram of one test's values across the whole lot, divided into `bucketCount` equal-width buckets.
@@ -255,8 +315,11 @@ export function buildTestHistogramData(
   }
   if (values.length === 0) return [];
 
-  const dataMin = Math.min(...values);
-  const dataMax = Math.max(...values);
+  let dataMin = values[0], dataMax = values[0];
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] < dataMin) dataMin = values[i];
+    if (values[i] > dataMax) dataMax = values[i];
+  }
   const min = limitLow  !== undefined ? Math.min(dataMin, limitLow)  : dataMin;
   const max = limitHigh !== undefined ? Math.max(dataMax, limitHigh) : dataMax;
   const span = max - min || 1;

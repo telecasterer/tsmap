@@ -57,12 +57,16 @@ fn soft_bin_warning(fabricated: usize) -> Vec<String> {
 }
 
 pub fn parse_atdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
-    let raw = String::from_utf8(bytes.to_vec())
+    let raw = std::str::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    parse_atdf_str(&raw)
+    parse_atdf_str(raw)
 }
 
 fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
+    // Detect delimiter from the FAR record. FAR must be the first non-empty record
+    // per the ATDF spec, so we can read it during the single join pass without
+    // collecting all records first.
+    let mut delim: Option<char> = None;
     let mut records: Vec<String> = Vec::new();
     for line in raw.lines() {
         if line.starts_with(' ') {
@@ -73,14 +77,13 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
         }
         let trimmed = line.trim();
         if !trimmed.is_empty() {
+            if delim.is_none() && trimmed.starts_with("FAR:") {
+                delim = trimmed.chars().nth(5);
+            }
             records.push(trimmed.to_string());
         }
     }
-
-    let delim: char = records.iter()
-        .find(|r| r.starts_with("FAR:"))
-        .and_then(|r| r.chars().nth(5))
-        .unwrap_or('|');
+    let delim = delim.unwrap_or('|');
 
     let mut meta = LotMeta::default();
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
@@ -245,12 +248,13 @@ pub fn parse_atdf_sync(path: String) -> Result<ParsedStdf, String> {
 /// Scans the file for PTR/FTR records only, collecting test names and limits.
 /// Does not accumulate die results. Returns a flat map of test_num string → TestDef.
 pub fn parse_atdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, String> {
-    let raw = String::from_utf8(bytes.to_vec())
+    let raw = std::str::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    parse_atdf_test_names_str(&raw)
+    parse_atdf_test_names_str(raw)
 }
 
 fn parse_atdf_test_names_str(raw: &str) -> Result<crate::types::ScanResult, String> {
+    let mut delim: Option<char> = None;
     let mut records: Vec<String> = Vec::new();
     for line in raw.lines() {
         if line.starts_with(' ') {
@@ -261,14 +265,13 @@ fn parse_atdf_test_names_str(raw: &str) -> Result<crate::types::ScanResult, Stri
         }
         let trimmed = line.trim();
         if !trimmed.is_empty() {
+            if delim.is_none() && trimmed.starts_with("FAR:") {
+                delim = trimmed.chars().nth(5);
+            }
             records.push(trimmed.to_string());
         }
     }
-
-    let delim: char = records.iter()
-        .find(|r| r.starts_with("FAR:"))
-        .and_then(|r| r.chars().nth(5))
-        .unwrap_or('|');
+    let delim = delim.unwrap_or('|');
 
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
     let mut pir_count: u32 = 0;
@@ -327,15 +330,16 @@ pub fn parse_atdf_from_bytes_filtered(
     bytes: &[u8],
     selected: &std::collections::HashSet<u32>,
 ) -> Result<ParsedStdf, String> {
-    let raw = String::from_utf8(bytes.to_vec())
+    let raw = std::str::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    parse_atdf_str_filtered(&raw, selected)
+    parse_atdf_str_filtered(raw, selected)
 }
 
 fn parse_atdf_str_filtered(
     raw: &str,
     selected: &std::collections::HashSet<u32>,
 ) -> Result<ParsedStdf, String> {
+    let mut delim: Option<char> = None;
     let mut records: Vec<String> = Vec::new();
     for line in raw.lines() {
         if line.starts_with(' ') {
@@ -346,14 +350,13 @@ fn parse_atdf_str_filtered(
         }
         let trimmed = line.trim();
         if !trimmed.is_empty() {
+            if delim.is_none() && trimmed.starts_with("FAR:") {
+                delim = trimmed.chars().nth(5);
+            }
             records.push(trimmed.to_string());
         }
     }
-
-    let delim: char = records.iter()
-        .find(|r| r.starts_with("FAR:"))
-        .and_then(|r| r.chars().nth(5))
-        .unwrap_or('|');
+    let delim = delim.unwrap_or('|');
 
     let mut meta = LotMeta::default();
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
@@ -435,9 +438,9 @@ fn parse_atdf_str_filtered(
                         units: nonempty(get(&f, "UNITS")),
                     }
                 });
-                // Only accumulate if selected
+                // Only accumulate if selected (unparseable test_num is excluded)
                 let test_num_u32: Option<u32> = test_num_str.parse().ok();
-                if test_num_u32.map_or(true, |n| selected.contains(&n)) {
+                if test_num_u32.map_or(false, |n| selected.contains(&n)) {
                     if let Ok(result) = get(&f, "RESULT").parse::<f64>() {
                         if let Some(vals) = pending_values.get_mut(&key) {
                             vals.insert(test_num_str, result);
@@ -457,9 +460,9 @@ fn parse_atdf_str_filtered(
                     hi_limit: None,
                     units: None,
                 });
-                // Only accumulate if selected
+                // Only accumulate if selected (unparseable test_num is excluded)
                 let test_num_u32: Option<u32> = test_num_str.parse().ok();
-                if test_num_u32.map_or(true, |n| selected.contains(&n)) {
+                if test_num_u32.map_or(false, |n| selected.contains(&n)) {
                     let passed = get(&f, "PASS_FAIL").eq_ignore_ascii_case("P");
                     if let Some(vals) = pending_values.get_mut(&key) {
                         vals.insert(test_num_str, if passed { 1.0 } else { 0.0 });

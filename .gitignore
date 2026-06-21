@@ -23,3 +23,8 @@ CLAUDE.md
 #  so re-include the sample paths explicitly)
 !/docs/samples/*.stdf
 !/docs/samples/*.atdf
+
+# Rust parser tests (packages/parsers) read fixtures from /sample_data — these
+# must be committed or `npm run test:rust` fails on a clean CI checkout.
+!/sample_data/*.stdf
+!/sample_data/*.atdf

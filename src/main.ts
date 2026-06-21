@@ -15,6 +15,7 @@ import { USER_GUIDE_HTML } from './userGuideHtml';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
+import { ICONS } from './charts/icons';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, listNumericTests } from './charts/aggregate';
@@ -521,9 +522,6 @@ function renderChartsViewWork(loadedMsg: string) {
     scatterCard = makeHeavyChartPlaceholder('Test correlation', msg);
   } else {
     cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
-    const { matrix: trimmedMatrix, ...correlationSummary } = filterCorrelationMatrix(cachedCorrelationMatrix, {
-      minTests: 6, maxTests: correlationMatrixLimit,
-    });
 
     const scatterResult = renderScatterPanel({
       title: 'Test correlation',
@@ -546,9 +544,13 @@ function renderChartsViewWork(loadedMsg: string) {
 
     correlationCard = renderCorrelationPanel({
       title: 'Test correlation matrix',
-      matrix: trimmedMatrix,
+      filter: (maxTests) => {
+        const { matrix, ...summary } = filterCorrelationMatrix(cachedCorrelationMatrix!, { minTests: 6, maxTests });
+        return { matrix, summary };
+      },
+      initialLimit: correlationMatrixLimit,
+      onLimitChange: (limit) => { correlationMatrixLimit = limit; },
       colorScheme: chartColorScheme,
-      summary: correlationSummary,
       onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; scatterResult.setXY(x, y); },
       savePng: onSaveImage,
       getHeaderLines: () => makeHeaderLines('Test correlation matrix'),
@@ -564,22 +566,6 @@ function renderChartsViewWork(loadedMsg: string) {
     v => { chartColorScheme = v; renderChartsView(); },
   );
 
-  const matrixLimitLabel = document.createElement('label');
-  matrixLimitLabel.textContent = 'Matrix size:';
-  matrixLimitLabel.style.cssText = 'color:var(--text-muted);font-size:12px;display:flex;align-items:center;gap:4px;';
-  const matrixLimitInput = document.createElement('input');
-  matrixLimitInput.type = 'number';
-  matrixLimitInput.min = '5';
-  matrixLimitInput.max = '100';
-  matrixLimitInput.value = String(correlationMatrixLimit);
-  matrixLimitInput.style.cssText = 'width:52px;font-size:12px;padding:2px 4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-mid);border-radius:3px;color-scheme:light dark;';
-  matrixLimitInput.addEventListener('change', () => {
-    const v = Math.max(5, Math.min(100, parseInt(matrixLimitInput.value, 10) || 25));
-    matrixLimitInput.value = String(v);
-    if (v !== correlationMatrixLimit) { correlationMatrixLimit = v; renderChartsView(); }
-  });
-  matrixLimitLabel.appendChild(matrixLimitInput);
-
   const scrollTop = container.scrollTop;
   renderChartGrid(container, [...panels, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
@@ -593,7 +579,7 @@ function renderChartsViewWork(loadedMsg: string) {
     },
     savePng: onSaveImage,
     getHeaderLines: (panelTitle) => makeHeaderLines(panelTitle),
-  }, [colorSchemeLabel, colorSchemeSelect, matrixLimitLabel]);
+  }, [colorSchemeLabel, colorSchemeSelect]);
   container.scrollTop = scrollTop;
 
   setIdle(loadedMsg);
@@ -1153,23 +1139,58 @@ helpBtn.addEventListener('click', () => {
   inner.setAttribute('aria-modal', 'true');
   inner.setAttribute('aria-label', 'Help');
   inner.tabIndex = -1;
-  inner.innerHTML = USER_GUIDE_HTML;
-  const closeRow = document.createElement('div');
-  closeRow.className = 'help-close-row';
+
+  // Top header: title + fullscreen + close, matching the charts expand modal chrome.
+  const header = document.createElement('div');
+  header.className = 'help-header';
+  const titleEl = document.createElement('span');
+  titleEl.className = 'help-title';
+  titleEl.textContent = 'User guide';
+
+  const fullscreenBtn = document.createElement('button');
+  fullscreenBtn.className = 'help-icon-btn';
+  fullscreenBtn.innerHTML = ICONS.maximize;
+  fullscreenBtn.title = 'Fullscreen (F)';
+  fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
+
   const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn-primary';
-  closeBtn.textContent = 'Close';
-  closeRow.appendChild(closeBtn);
-  inner.appendChild(closeRow);
+  closeBtn.className = 'help-icon-btn';
+  closeBtn.innerHTML = ICONS.close;
+  closeBtn.title = 'Close (Esc)';
+  closeBtn.setAttribute('aria-label', 'Close');
+  header.append(titleEl, fullscreenBtn, closeBtn);
+
+  const body = document.createElement('div');
+  body.className = 'help-body';
+  body.innerHTML = USER_GUIDE_HTML;
+
+  inner.append(header, body);
   modal.appendChild(inner);
   document.body.appendChild(modal);
   inner.focus();
+
   const close = () => {
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
     document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('fullscreenchange', onFsChange);
     modal.remove();
   };
-  const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) inner.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  };
+  const onFsChange = () => {
+    const isFs = document.fullscreenElement === inner;
+    fullscreenBtn.innerHTML = isFs ? ICONS.shrink : ICONS.maximize;
+    fullscreenBtn.title = isFs ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !document.fullscreenElement) { close(); return; }
+    if ((e.key === 'f' || e.key === 'F')) toggleFullscreen();
+  };
   document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('fullscreenchange', onFsChange);
+  fullscreenBtn.addEventListener('click', toggleFullscreen);
   closeBtn.addEventListener('click', close);
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
 });

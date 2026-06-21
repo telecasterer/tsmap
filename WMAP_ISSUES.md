@@ -7,10 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.14.1 |
+| wmap version in use | 0.14.2 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
 | testdata-parser version | 0.2.3 |
-| Last updated | 2026-06-20 (wmap 0.14.1 — deferred userGuideHtml chunk, bundled docs site, bundle size regression tests) |
+| Last updated | 2026-06-21 (wmap 0.14.2 — on-canvas map titles, colorBySpec legend, gallery spec controls, log-scale colorbar note) |
 
 ## Rust Backend Notes
 

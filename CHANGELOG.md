@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-06-21
+
+### Added
+
+- **Self-contained "Matrix size" control on the correlation matrix** — the panel now owns a Matrix size selector (5–100 tests) that re-filters the full matrix and redraws in place, without rebuilding the charts grid. The caller persists the chosen limit; the panel reports strong/moderate/hidden pair counts and the strongest pair back through a summary line.
+- **User guide modal gains a top header** — the in-app `?` guide now has a top header bar with **fullscreen** (toggle with the button or `F`) and **close** (`Esc`, backdrop click, or the icon) buttons, matching the chart expand-modal chrome. The old bottom-only "Close" button is gone. The guide content is capped to a readable 760px column so it doesn't stretch edge-to-edge when fullscreen.
+
+### Changed
+
+- **wafermap updated to 0.14.2** — picks up on-canvas map titles for every plot mode, a legend for `colorBySpec` (Spec pass/fail) mode, value-mode spec controls in the gallery toolbar, and a clearer log-scale colorbar note (`linear — log n/a` when log can't apply). Purely additive; no breaking changes.
+
+### Fixed
+
+- **CI type check failed on a clean checkout** — `src/userGuideHtml.ts` is generated (gitignored) by `npm run build:guide`, normally run by the `predev`/`prebuild` hooks. The `Test` job's `npm run check` had no such hook, so `tsc` couldn't resolve the import and both the Test and Deploy workflows failed. Added a `Build user guide` step before the type check in `test.yml`.
+
 ## [0.1.9] — 2026-06-10
 
 ### Added

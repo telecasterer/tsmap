@@ -267,10 +267,29 @@
       #help-btn:hover { color: var(--accent); }
       .help-modal {
         background: var(--bg-modal); border: 1px solid var(--border-mid);
-        border-radius: 6px; padding: 24px; width: 600px; max-width: 92vw;
-        max-height: 82vh; overflow-y: auto; color: var(--text-light);
+        border-radius: 6px; width: 600px; max-width: 92vw;
+        max-height: 82vh; color: var(--text-light);
+        display: flex; flex-direction: column; overflow: hidden;
       }
-      .help-modal .help-close-row { display: flex; justify-content: flex-end; margin-top: 20px; }
+      .help-modal:fullscreen { width: 100%; max-width: 100%; max-height: 100%; border-radius: 0; }
+      .help-header {
+        display: flex; align-items: center; gap: 6px;
+        padding: 10px 14px; flex-shrink: 0;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .help-title { flex: 1; font-weight: 600; font-size: 13px; color: var(--text-primary); }
+      .help-icon-btn {
+        border: 1px solid var(--border-mid); border-radius: 4px;
+        background: var(--bg-input); cursor: pointer; color: var(--text-muted);
+        padding: 0; line-height: 1; display: flex; align-items: center; justify-content: center;
+        width: 24px; height: 24px;
+      }
+      .help-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .help-body { padding: 24px; overflow-y: auto; flex: 1; min-height: 0; }
+      /* Cap the readable content width so the guide (prose + mockups) doesn't
+         stretch edge-to-edge when the modal is fullscreen. No-op in the 600px
+         modal; only bites in fullscreen. */
+      .help-body > * { max-width: 760px; margin-left: auto; margin-right: auto; }
 
       /* ── Log panel ─────────────────────────────────────────────── */
       #log-bar {

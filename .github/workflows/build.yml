@@ -38,20 +38,21 @@ jobs:
           | Your system | Download |
           | --- | --- |
           | **Windows 10 / 11** | `tsmap-VERSION-windows-x64.msi` |
-          | **Mac — Apple Silicon** (M1/M2/M3/M4) | `tsmap-VERSION-macos-apple-silicon.dmg` |
+          | **Mac — Apple Silicon** (any M-series: M1–M5 and newer) | `tsmap-VERSION-macos-apple-silicon.dmg` |
           | **Mac — Intel** | `tsmap-VERSION-macos-intel.dmg` |
-          | **Linux — RHEL 8/9, Rocky, Alma** (engineering/R&D networks) | `tsmap-VERSION-linux-rhel8plus-x86_64.AppImage` |
-          | **Linux — Ubuntu/Debian** (installer) | `tsmap-VERSION-linux-x86_64.deb` |
-          | **Linux — Fedora / modern RHEL** (installer) | `tsmap-VERSION-linux-x86_64.rpm` |
+          | **Linux — Ubuntu / Debian** (installer) | `tsmap-VERSION-linux-x86_64.deb` |
+          | **Linux — Fedora** (installer) | `tsmap-VERSION-linux-x86_64.rpm` |
           | **Linux — other / portable** (no install) | `tsmap-VERSION-linux-x86_64.AppImage` |
+          | **Linux — RHEL / Rocky / Alma 8 or 9** | [browser version](https://telecasterer.github.io/tsmap/app/) — no install |
 
           **Not sure on Mac?**  Apple menu → About This Mac. "Apple M…" = Apple Silicon; "Intel" = Intel.
 
-          **AppImage** needs no installation: download, `chmod +x` it, and run. The
-          `rhel8plus` build is compiled against an older glibc so it runs on RHEL 8 and
-          newer; the plain Linux AppImage targets current distros (Ubuntu 22.04+).
+          **AppImage** needs no installation: download, `chmod +x` it, and run. It targets
+          current distributions (glibc 2.35+ / Ubuntu 22.04 and newer).
 
-          **No install possible?** A browser version is available — no download needed.
+          **On RHEL / Rocky / Alma?** The desktop app's webview needs newer system libraries
+          than those releases ship — run the [browser version](https://telecasterer.github.io/tsmap/app/)
+          instead. It works in any modern browser, with no install.
           EOF
           sed -i "s/VERSION/${GITHUB_REF_NAME#v}/g" notes.md
           gh release create "$GITHUB_REF_NAME" \
@@ -152,63 +153,10 @@ jobs:
             gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           fi
 
-  # Linux build with an old-enough glibc to run on RHEL 8 / Rocky 8 / Alma 8
-  # (glibc 2.28) and above. The ubuntu-22.04 build above links glibc 2.35 and will
-  # NOT start on RHEL 8 — this job is the one to hand to engineers on RHEL 8/9
-  # prod/R&D networks. Runs inside a rockylinux:8 container so the binary links
-  # el8's glibc; the artifact name carries "rhel8plus" so its floor is obvious.
-  build-el8:
-    needs: create-release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    container:
-      image: rockylinux:8
-    steps:
-      - name: Install build toolchain
-        run: |
-          dnf -y install dnf-plugins-core epel-release
-          dnf config-manager --set-enabled powertools
-          dnf -y groupinstall "Development Tools"
-          dnf -y install \
-            webkit2gtk4.1-devel \
-            gtk3-devel \
-            libappindicator-gtk3-devel \
-            librsvg2-devel \
-            openssl-devel \
-            curl wget file \
-            patchelf
-
-      - uses: actions/checkout@v4
-
-      - name: Install Node 22 and GitHub CLI
-        run: |
-          curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-          dnf -y install nodejs
-          # gh is not present in the rockylinux:8 container (unlike hosted runners).
-          dnf -y install 'dnf-command(config-manager)'
-          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
-          dnf -y install gh
-
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - run: npm ci
-
-      - uses: tauri-apps/tauri-action@v0
-        with:
-          args: --target x86_64-unknown-linux-gnu --bundles appimage
-
-      - name: Rename and upload el8 AppImage
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.create-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          src=( target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage )
-          dest="tsmap-${VERSION}-linux-rhel8plus-x86_64.AppImage"
-          cp "${src[0]}" "$dest"
-          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber --repo "$GITHUB_REPOSITORY"
+  # NOTE: a native RHEL 8/9 build is deliberately NOT provided. Investigated and
+  # rejected (2026-06-22): RHEL 8 ships glib 2.56 and RHEL 9 ships glib 2.68, both
+  # below the >= 2.70 that the gtk-rs `gobject-sys` crate requires — the el8 build
+  # fails outright. el9 compiles but the artifact links webkit2gtk-4.1 / libsoup-3.0
+  # (neither packaged on el9, which only has the 4.0 ABI) and demands GLIBC_2.39
+  # (el9 has 2.34), so it cannot launch there. RHEL users are pointed to the web
+  # build instead. Revisit on RHEL 10 (glibc 2.39, webkit-4.1 available).

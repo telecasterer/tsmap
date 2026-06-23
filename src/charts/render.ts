@@ -5,7 +5,7 @@
 // importers (main.ts) keep a single import site.
 
 import {
-  cardShell, cssVar, formatValue, trackObserver, isInModal,
+  cardShell, cssVar, formatValue, trackObserver, isInModal, makeSegmented,
   PADDING, VALUE_WIDTH,
   type ChartPanel, type RenderChartsOptions,
 } from './chartShell';
@@ -17,6 +17,7 @@ export { renderBoxplotPanel, type BoxplotPanelOptions } from './boxplot';
 export { renderHistogramPanel, type HistogramPanelOptions } from './histogram';
 export { renderCorrelationPanel, type CorrelationPanelOptions } from './correlation';
 export { renderScatterPanel, type ScatterPanelOptions } from './scatter';
+export { renderBinClusterPanel, type BinClusterPanelOptions } from './binCluster';
 
 // ── Bar chart panel (yield, bin pareto) ─────────────────────────────────────────
 
@@ -26,9 +27,19 @@ const LABEL_WIDTH = 110;
 const MAX_VISIBLE_ROWS = 12;
 
 function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLElement {
-  const { title, data, controls, barColor, valueLabel } = panel;
+  const { controls, barColor, valueLabel, selfControl } = panel;
+  let title = panel.title;
+  let data = panel.data;
+  // getHeaderLines reads `title` lazily so PNG exports pick up the current value
+  // after a self-control change (e.g. Hard→Soft bins).
   const getHeaderLines = options.getHeaderLines ? () => options.getHeaderLines!(title) : undefined;
-  const { card, controlsRow, body } = cardShell(title, options.savePng, getHeaderLines);
+  const { card, heading, controlsRow, body } = cardShell(title, options.savePng, getHeaderLines);
+
+  if (selfControl) {
+    // onSelfControlChange is defined below (after draw/maxValue/selected); the
+    // segmented control is appended here so it leads the controls row.
+    controlsRow.appendChild(makeSegmented(selfControl.options, selfControl.current, value => onSelfControlChange(value)));
+  }
 
   if (controls?.length) {
     for (const control of controls) controlsRow.appendChild(control);
@@ -67,7 +78,7 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
   const selected = new Set<number>();
   let hovered = -1;
   const dpr = window.devicePixelRatio || 1;
-  const maxValue = Math.max(1, ...data.map(d => d.value));
+  let maxValue = Math.max(1, ...data.map(d => d.value));
 
   const defaultBarColor = cssVar('--accent') || '#6af';
   const selectedColor = cssVar('--btn-primary-bg') || '#1a5aad';
@@ -139,6 +150,21 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
       const valueText = valueLabel ? valueLabel(datum) : `${formatValue(datum.value)} (${datum.percent.toFixed(1)}%)`;
       ctx.fillText(valueText, barX + barMaxWidth + VALUE_WIDTH, y + ROW_HEIGHT / 2);
     });
+  }
+
+  // Self-contained selector handler: recompute data and redraw in place. Never
+  // rebuilds the charts grid — that would orphan a card open in the expand modal.
+  function onSelfControlChange(value: string) {
+    if (!selfControl) return;
+    selfControl.current = value;
+    const next = selfControl.onChange(value);
+    data = next.data;
+    maxValue = Math.max(1, ...data.map(d => d.value));
+    hovered = -1;
+    selected.clear();
+    updateSelectionBar();
+    if (next.title) { title = next.title; heading.textContent = title; }
+    draw();
   }
 
   function rowAt(offsetY: number): number {

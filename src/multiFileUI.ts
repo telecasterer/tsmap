@@ -1,6 +1,7 @@
 // UI for multi-file loading: rename step + append confirmation with mismatch warnings.
 
-import type { ParsedFile, WaferData } from './types';
+import type { ParsedFile, WaferData, WaferSource } from './types';
+import { makeWaferSource } from './lib';
 
 // ── Rename overlay ────────────────────────────────────────────────────────────
 
@@ -16,6 +17,37 @@ export interface RenamedWafer {
   partCount?: number;
   goodCount?: number;
   failCount?: number;
+  /**
+   * Provenance of this wafer, carried through the rename overlay so it survives
+   * into the merge. Wafers from the same source file share one instance by
+   * reference (see `makeWaferSource`/stamping in main.ts).
+   */
+  source?: WaferSource;
+}
+
+export interface RenameRow {
+  defaultId: string;
+  fileLabel: string;
+  wafer: WaferData;
+  source: WaferSource;
+}
+
+/**
+ * Build one row per wafer across all entries, assigning ONE `WaferSource` per
+ * entry shared by reference across that entry's wafers — so downstream grouping
+ * can key on referential identity and a metadata edit is a single write. Pure
+ * (no DOM) so the sharing guarantee is unit-testable.
+ */
+export function buildRenameRows(entries: FileWaferEntry[]): RenameRow[] {
+  const rows: RenameRow[] = [];
+  for (const entry of entries) {
+    const source = makeWaferSource(entry.parsed.meta, entry.fileName);
+    for (const wafer of entry.parsed.wafers) {
+      const defaultId = resolveWaferId(wafer.waferId, entry.fileName);
+      rows.push({ defaultId, fileLabel: entry.fileName, wafer, source });
+    }
+  }
+  return rows;
 }
 
 /**
@@ -31,14 +63,7 @@ export function showRenameOverlay(
   const overlay = document.createElement('div');
   overlay.id = 'tsmap-rename-overlay';
 
-  // Build one row per wafer across all files
-  const rows: { defaultId: string; fileLabel: string; wafer: WaferData }[] = [];
-  for (const entry of entries) {
-    for (const wafer of entry.parsed.wafers) {
-      const defaultId = resolveWaferId(wafer.waferId, entry.fileName);
-      rows.push({ defaultId, fileLabel: entry.fileName, wafer });
-    }
-  }
+  const rows = buildRenameRows(entries);
 
   const tableRows = rows.map((row, i) => `
     <tr>
@@ -87,6 +112,7 @@ export function showRenameOverlay(
       partCount: row.wafer.partCount,
       goodCount: row.wafer.goodCount,
       failCount: row.wafer.failCount,
+      source: row.source,
     }));
     closeOverlay();
     onConfirm(renamed);

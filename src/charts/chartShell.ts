@@ -29,6 +29,19 @@ export interface ChartPanel {
   controls?: HTMLElement[];
   barColor?: (datum: ChartDatum, index: number) => string;
   valueLabel?: (datum: ChartDatum) => string;
+  /**
+   * Optional self-contained segmented control (yield sort, hard/soft bins).
+   * When present the panel renders a radio group and, on change, recomputes its
+   * own data and redraws in place — never rebuilding the charts grid (which
+   * would destroy a card currently reparented into the expand modal). The
+   * `current` value is persisted by the caller via `onChange`.
+   */
+  selfControl?: {
+    current: string;
+    options: Array<[value: string, label: string]>;
+    /** Returns fresh data (and optionally a new title) for the chosen value. */
+    onChange: (value: string) => { data: ChartDatum[]; title?: string };
+  };
 }
 
 export interface RenderChartsOptions {
@@ -170,6 +183,55 @@ export function saveCanvasPng(
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }, 'image/png');
+}
+
+/**
+ * Segmented radio control — a small inline group of mutually-exclusive options.
+ * Use instead of a `<select>` when there are only two or three choices. Each
+ * option is a real `<input type="radio">` (one shared `name`) wrapped in a label,
+ * so keyboard/SR semantics are correct. `onChange` fires with the chosen value.
+ */
+export function makeSegmented(
+  options: Array<[value: string, label: string]>,
+  current: string,
+  onChange: (value: string) => void,
+): HTMLElement {
+  const group = document.createElement('div');
+  group.setAttribute('role', 'radiogroup');
+  group.style.cssText = `display:inline-flex;border:1px solid ${cssVar('--border-mid')};border-radius:4px;overflow:hidden;`;
+  const name = `seg-${Math.random().toString(36).slice(2, 9)}`;
+  const paints: Array<() => void> = [];
+
+  options.forEach(([value, text], i) => {
+    const label = document.createElement('label');
+    label.style.cssText = `display:inline-flex;align-items:center;font-size:12px;padding:3px 10px;cursor:pointer;user-select:none;${i > 0 ? `border-left:1px solid ${cssVar('--border-mid')};` : ''}`;
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = value;
+    radio.checked = value === current;
+    // The radio is visually hidden; the label background communicates selection.
+    radio.style.cssText = 'position:absolute;opacity:0;width:0;height:0;';
+
+    const paint = () => {
+      label.style.background = radio.checked ? cssVar('--accent') : cssVar('--bg-input');
+      label.style.color = radio.checked ? cssVar('--text-white') || '#fff' : cssVar('--text-secondary');
+    };
+    paints.push(paint);
+    paint();
+
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      for (const p of paints) p();
+      onChange(value);
+    });
+
+    label.append(radio, document.createTextNode(text));
+    group.appendChild(label);
+  });
+
+  return group;
 }
 
 export function makeIconBtn(svg: string, title: string): HTMLButtonElement {
@@ -346,9 +408,7 @@ export function openExpandModal(card: HTMLElement, title: string) {
   box.focus(); // move focus into the dialog so Esc/F and SR navigation work
 
   function close() {
-    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
     document.removeEventListener('keydown', onKeyDown);
-    document.removeEventListener('fullscreenchange', onFsChange);
     delete card.dataset.inModal;
     document.body.style.overflow = savedOverflow;
     card.setAttribute('style', savedCardStyle);
@@ -358,34 +418,30 @@ export function openExpandModal(card: HTMLElement, title: string) {
     backdrop.remove();
   }
 
-  const onFsChange = () => {
-    const isFs = document.fullscreenElement === box;
-    fullscreenBtn.innerHTML = isFs ? ICONS.shrink : ICONS.maximize;
-    fullscreenBtn.title = isFs ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
-    closeBtn.style.display = isFs ? 'none' : '';
-    if (isFs) {
+  // "Fullscreen" here is a CSS maximize — the box grows to fill the viewport.
+  // We deliberately avoid the real Fullscreen API: WKWebView (macOS Tauri) has
+  // element fullscreen disabled unless `macOSPrivateApi` is enabled, and that
+  // uses Apple private API. CSS maximize behaves identically on every target.
+  let maximized = false;
+  const applyMaximize = () => {
+    fullscreenBtn.innerHTML = maximized ? ICONS.shrink : ICONS.maximize;
+    fullscreenBtn.title = maximized ? 'Restore (F)' : 'Maximize (F)';
+    if (maximized) {
       box.style.borderRadius = '0'; box.style.resize = 'none';
-      box.style.width = '100%'; box.style.height = '100%';
+      box.style.width = '100vw'; box.style.height = '100vh';
     } else {
       box.style.borderRadius = '10px'; box.style.resize = 'both';
       box.style.width = 'min(92vw, 1100px)'; box.style.height = 'min(88vh, 800px)';
     }
   };
-  document.addEventListener('fullscreenchange', onFsChange);
-
-  fullscreenBtn.addEventListener('click', () => {
-    if (!document.fullscreenElement) box.requestFullscreen().catch(() => {});
-    else document.exitFullscreen();
-  });
+  const toggleFullscreen = () => { maximized = !maximized; applyMaximize(); };
+  fullscreenBtn.addEventListener('click', toggleFullscreen);
 
   function onKeyDown(e: KeyboardEvent) {
     const active = document.activeElement;
     const inInput = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA');
-    if (e.key === 'Escape' && !document.fullscreenElement) { close(); return; }
-    if ((e.key === 'f' || e.key === 'F') && !inInput) {
-      if (!document.fullscreenElement) box.requestFullscreen().catch(() => {});
-      else document.exitFullscreen();
-    }
+    if (e.key === 'Escape') { close(); return; }
+    if ((e.key === 'f' || e.key === 'F') && !inInput) toggleFullscreen();
   }
 
   closeBtn.addEventListener('click', close);

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { resolveWaferId, detectMismatches } from './multiFileUI';
-import type { RenamedWafer } from './multiFileUI';
-import type { WaferData } from './types';
+import { resolveWaferId, detectMismatches, buildRenameRows } from './multiFileUI';
+import type { RenamedWafer, FileWaferEntry } from './multiFileUI';
+import type { ParsedFile, WaferData } from './types';
 
 // ── resolveWaferId ────────────────────────────────────────────────────────────
 
@@ -106,5 +106,46 @@ describe('detectMismatches', () => {
     for (const w of detectMismatches(incoming, existing)) {
       expect(w.level).toBe('warn');
     }
+  });
+});
+
+// ── buildRenameRows (shared-by-reference provenance) ────────────────────────────
+
+describe('buildRenameRows', () => {
+  const entry = (fileName: string, meta: ParsedFile['meta'], waferIds: string[]): FileWaferEntry => ({
+    filePath: `/x/${fileName}`,
+    fileName,
+    parsed: {
+      fileName,
+      meta,
+      wafers: waferIds.map(id => ({ waferId: id, results: [{ x: 0, y: 0, hbin: 1 }] })),
+      testDefs: {},
+    },
+  });
+
+  it('produces one row per wafer across all entries', () => {
+    const rows = buildRenameRows([
+      entry('a.stdf', { lotId: 'A' }, ['W1', 'W2']),
+      entry('b.stdf', { lotId: 'B' }, ['W1']),
+    ]);
+    expect(rows).toHaveLength(3);
+  });
+
+  it('shares ONE source instance by reference across an entry’s wafers', () => {
+    const rows = buildRenameRows([entry('a.stdf', { lotId: 'A' }, ['W1', 'W2', 'W3'])]);
+    expect(rows[0].source).toBe(rows[1].source); // same reference, not just equal
+    expect(rows[1].source).toBe(rows[2].source);
+    expect(rows[0].source.lotId).toBe('A');
+    expect(rows[0].source.sourceFile).toBe('a.stdf');
+  });
+
+  it('uses distinct source instances for distinct entries', () => {
+    const rows = buildRenameRows([
+      entry('a.stdf', { lotId: 'A' }, ['W1']),
+      entry('b.stdf', { lotId: 'B' }, ['W1']),
+    ]);
+    expect(rows[0].source).not.toBe(rows[1].source);
+    expect(rows[0].source.lotId).toBe('A');
+    expect(rows[1].source.lotId).toBe('B');
   });
 });

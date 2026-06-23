@@ -1,9 +1,10 @@
 // Pure, DOM-free utility functions extracted from main.ts for testability.
 
-import type { ParsedFile, TestDef, WaferData } from './types';
+import type { LotMeta, ParsedFile, TestDef, WaferData, WaferSource } from './types';
 import type { RustParsedFile, StdfTestNames } from './platform';
 import type { TestDef as WmapTestDef } from '@paulrobins/wafermap';
 import type { PlotMode } from '@paulrobins/wafermap';
+import type { WaferMetadata } from '@paulrobins/wafermap/renderer';
 
 export function basename(p: string): string {
   return p.split(/[\\/]/).pop() ?? p;
@@ -11,6 +12,46 @@ export function basename(p: string): string {
 
 export function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
   return { fileName, meta: r.meta, wafers: r.wafers, testDefs: r.testDefs, warnings: r.warnings };
+}
+
+/**
+ * Build a `WaferSource` provenance tag from a parsed file's lot metadata and
+ * filename. One instance is created per loaded file and shared by reference
+ * across all wafers it produced (see `stampSource` in main.ts) — do not call
+ * this per-wafer. `program`/`temp`/`date` are not in today's `LotMeta`; they
+ * arrive via `extras` once the parser is enriched (plan Phase 6).
+ */
+export function makeWaferSource(meta: LotMeta, sourceFile: string): WaferSource {
+  return {
+    lotId: meta.lotId,
+    sublotId: meta.sublotId,
+    partType: meta.partType,
+    testerType: meta.testerType,
+    nodeName: meta.nodeName,
+    sourceFile,
+  };
+}
+
+/**
+ * Map a tsmap `WaferSource` to wmap's `WaferMetadata` (passed as
+ * `buildWaferMap({ waferConfig: { metadata } })`). Wafer-level only — tsmap
+ * does not stamp per-die `DieMetadata`. Omitted fields stay undefined so wmap
+ * shows nothing rather than blanks. `extras` flow through wmap's open index
+ * signature.
+ */
+export function toWmapWaferMeta(source: WaferSource | undefined, waferId: string): WaferMetadata | undefined {
+  if (!source) return undefined;
+  const meta: WaferMetadata = { waferId };
+  if (source.lotId !== undefined) meta.lot = source.lotId;
+  if (source.partType !== undefined) meta.product = source.partType;
+  if (source.program !== undefined) meta.testProgram = source.program;
+  if (source.date !== undefined) meta.testDate = source.date;
+  if (source.temp !== undefined) {
+    const t = Number(source.temp);
+    if (Number.isFinite(t)) meta.temperature = t;
+  }
+  if (source.extras) for (const [k, v] of Object.entries(source.extras)) meta[k] = v;
+  return meta;
 }
 
 /** Convert tsmap's `Record<string, TestDef>` to wmap's `TestDef[]`. */

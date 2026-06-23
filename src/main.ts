@@ -7,7 +7,7 @@ import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/w
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
 import type { FileHandle, StdfTestNames, ScanResult } from './platform';
-import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection } from './lib';
+import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
@@ -16,9 +16,10 @@ import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
 import { ICONS } from './charts/icons';
-import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, disconnectAllObservers } from './charts/render';
+import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, renderBinClusterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
-import { buildYieldData, buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, listNumericTests } from './charts/aggregate';
+import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
+import { buildFacetTable, facetValueOf } from './metadata';
 import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 
@@ -60,6 +61,11 @@ let viewMode: ViewMode = 'map';
 let yieldSortBy: YieldSortBy = 'yield';
 let binType: BinType = 'hbin';
 let chartColorScheme = 'default';
+// Faceting: which WaferSource field charts combine by ('' = none). Page-level
+// control populated from buildFacetTable; a change re-renders the charts view.
+// Selecting a field pools each group's dies into one aggregate series per group
+// (combined yield bar, boxplot, histogram overlay, clustered pareto).
+let chartGroupBy = '';
 // Boxplot test selector (independent)
 let selectedTestNumber: number | null = null;
 let boxplotLogScale = false;
@@ -77,8 +83,10 @@ let correlationMatrixLimit = 25;
 
 let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
 const cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
-const cachedBoxplotData: Map<number, ReturnType<typeof buildTestBoxplotData>> = new Map();
+// Keyed by `${testNumber}:${groupBy}` so faceting changes invalidate the entry.
+const cachedBoxplotData: Map<string, ReturnType<typeof buildTestBoxplotData>> = new Map();
 const cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
+const cachedHistogramSeries: Map<string, ReturnType<typeof buildTestHistogramSeries>> = new Map();
 // Full N×N matrix cached once per file load; display matrix recomputed when limit changes.
 let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
 const cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
@@ -163,7 +171,7 @@ function makeHeavyChartPlaceholder(title: string, message: string): HTMLElement 
 function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof buildWaferMap>[]; lotStatsSummary: LotStatsSummary } {
   const testDefs = toWmapTestDefs(currentTestDefs);
   const items = wafers.map(w => {
-    const waferMap = buildWaferMap({ results: w.results, testDefs });
+    const waferMap = buildWaferMap({ results: w.results, testDefs, waferConfig: { metadata: toWmapWaferMeta(w.source, w.waferId) } });
     for (const warning of waferMap.warnings) {
       const conf = warning.confidence !== undefined ? ` (confidence ${(warning.confidence * 100).toFixed(0)}%)` : '';
       log('warn', `Wafer ${w.waferId}: ${warning.message}${conf}`);
@@ -184,6 +192,7 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   cachedBinData.clear();
   cachedBoxplotData.clear();
   cachedHistogramData.clear();
+  cachedHistogramSeries.clear();
   cachedCorrelationMatrix = null;
   cachedScatterData.clear();
   addBtn.disabled = wafers.length === 0;
@@ -228,7 +237,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
   const wmapTestDefs = toWmapTestDefs(currentTestDefs);
   if (wafers.length === 1) {
     container.classList.remove('gallery', 'charts');
-    const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs });
+    const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafers[0].source, wafers[0].waferId) } });
     const statsSummary = analyzeWaferMap(waferMap);
     renderWaferMap(container, waferMap, {
       statsSummary,
@@ -299,12 +308,17 @@ function openStackedBin(waferIndices: number[], datum: ChartDatum) {
     container.innerHTML = '';
     container.classList.remove('gallery', 'charts');
     const stem = currentFileName.replace(/\.[^.]+$/, '');
+    // Stack metadata is meaningful only when every stacked wafer shares one
+    // source (same lot/program). Shared-by-reference makes that an identity check.
+    const stackWafers = waferIndices.map(i => currentWafers[i]);
+    const sharedSource = stackWafers.every(w => w.source === stackWafers[0].source) ? stackWafers[0].source : undefined;
     const waferMap = buildWaferMap({
       lotStack: {
-        results: waferIndices.map(i => currentWafers[i].results),
+        results: stackWafers.map(w => w.results),
         method: 'countBin',
         targetBin: datum.binCode,
       },
+      waferConfig: { metadata: toWmapWaferMeta(sharedSource, `${stackWafers.length} wafers`) },
     });
     const statsSummary = analyzeWaferMap(waferMap);
     renderWaferMap(container, waferMap, {
@@ -336,7 +350,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
     const stem = currentFileName.replace(/\.[^.]+$/, '');
     const wmapTestDefs = toWmapTestDefs(currentTestDefs);
     const waferMap = buildWaferMap(
-      { results: wafer.results, testDefs: wmapTestDefs },
+      { results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, wafer.waferId) } },
       { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
     );
     const statsSummary = analyzeWaferMap(waferMap);
@@ -387,6 +401,47 @@ function renderChartsViewWork(loadedMsg: string) {
   const testOptions = listNumericTests(currentTestDefs);
   const firstTest = testOptions[0]?.testNumber ?? null;
 
+  // ── Faceting ─────────────────────────────────────────────────────────────────
+  // The distinct-values table drives the "Group by" page control. Only splittable
+  // fields (>1 distinct value) are offered. If the persisted choice is no longer
+  // valid (different file loaded), drop it.
+  const facetTable = buildFacetTable(currentWafers);
+  const splittableFacets = facetTable.filter(f => f.splittable);
+  if (chartGroupBy && !splittableFacets.some(f => f.key === chartGroupBy)) chartGroupBy = '';
+
+  // Resolve the active group-by into a (wafer)=>key function, applying a top-K cap:
+  // the K largest groups (by wafer count) keep their value; the rest fold into one
+  // "… N more" bucket so a many-lot load can't explode the chart.
+  const GROUP_TOP_K = 12;
+  const activeFacet = chartGroupBy ? splittableFacets.find(f => f.key === chartGroupBy) : undefined;
+  const topGroupValues = activeFacet ? new Set(activeFacet.values.slice(0, GROUP_TOP_K).map(v => v.value)) : null;
+  const foldedGroupCount = activeFacet ? Math.max(0, activeFacet.values.length - GROUP_TOP_K) : 0;
+  const groupBy = activeFacet
+    ? (wafer: WaferData): string | undefined => {
+        const v = facetValueOf(wafer, activeFacet.key);
+        if (v === undefined || v === '') return undefined;
+        return topGroupValues!.has(v) ? v : `… ${foldedGroupCount} more`;
+      }
+    : undefined;
+  // A selected group field always means "combine by it" (one aggregate per group).
+  const combined = !!groupBy;
+
+  // Partition wafers into ordered groups (first-seen order), honouring the top-K
+  // fold. Used by scatter (colour-by-group) and correlation (restrict-to-group),
+  // where pooling across groups is misleading rather than a clean aggregate.
+  function groupedWafers(): Array<{ key: string; wafers: WaferData[] }> {
+    if (!groupBy) return [];
+    const map = new Map<string, WaferData[]>();
+    const order: string[] = [];
+    for (const w of currentWafers) {
+      const k = groupBy(w);
+      if (k === undefined) continue;
+      if (!map.has(k)) { map.set(k, []); order.push(k); }
+      map.get(k)!.push(w);
+    }
+    return order.map(key => ({ key, wafers: map.get(key)! }));
+  }
+
   // Each chart has its own independent test selection — default to first test.
   if (selectedTestNumber === null || !testOptions.some(t => t.testNumber === selectedTestNumber)) selectedTestNumber = firstTest;
   if (histogramTestNumber === null || !testOptions.some(t => t.testNumber === histogramTestNumber)) histogramTestNumber = firstTest;
@@ -394,18 +449,30 @@ function renderChartsViewWork(loadedMsg: string) {
   if (scatterYTest === null || !testOptions.some(t => t.testNumber === scatterYTest)) scatterYTest = testOptions[1]?.testNumber ?? firstTest;
 
   // ── Yield ──────────────────────────────────────────────────────────────────
-  const yieldData = buildYieldData(currentWafers, lotStatsSummary, yieldSortBy);
+  const makeYieldData = () => combined
+    ? buildYieldDataCombined(currentWafers, lotStatsSummary, yieldSortBy, groupBy!)
+    : buildYieldData(currentWafers, lotStatsSummary, yieldSortBy);
+  const yieldData = makeYieldData();
 
   // ── Bin pareto ─────────────────────────────────────────────────────────────
-  if (!cachedBinData.has(binType)) cachedBinData.set(binType, buildBinParetoData(currentWafers, binType));
-  const binData = cachedBinData.get(binType)!;
+  // Plain (ungrouped / per-wafer) pareto data. Combined mode uses a separate
+  // clustered-bar card instead (built below), so this is the non-combined path.
+  const makeBinData = () => {
+    if (!cachedBinData.has(binType)) cachedBinData.set(binType, buildBinParetoData(currentWafers, binType));
+    return cachedBinData.get(binType)!;
+  };
+  const binData = makeBinData();
 
   // ── Callbacks for self-contained panels ───────────────────────────────────
   function getBoxplotData(testNumber: number) {
-    if (!cachedBoxplotData.has(testNumber)) {
-      cachedBoxplotData.set(testNumber, buildTestBoxplotData(currentWafers, testNumber));
+    const key = `${testNumber}:${chartGroupBy}`;
+    if (!cachedBoxplotData.has(key)) {
+      const data = combined
+        ? buildTestBoxplotDataCombined(currentWafers, testNumber, groupBy!)
+        : buildTestBoxplotData(currentWafers, testNumber);
+      cachedBoxplotData.set(key, data);
     }
-    return cachedBoxplotData.get(testNumber)!;
+    return cachedBoxplotData.get(key)!;
   }
 
   function getBoxplotTestMeta(testNumber: number) {
@@ -426,6 +493,17 @@ function renderChartsViewWork(loadedMsg: string) {
     return cachedHistogramData.get(key)!;
   }
 
+  function getHistogramSeries(testNumber: number, axisIncludesLimits: boolean) {
+    const key = `${testNumber}:${axisIncludesLimits}:${chartGroupBy}`;
+    if (!cachedHistogramSeries.has(key)) {
+      const def = currentTestDefs[String(testNumber)];
+      const limitLow  = axisIncludesLimits ? def?.loLimit  : undefined;
+      const limitHigh = axisIncludesLimits ? def?.hiLimit : undefined;
+      cachedHistogramSeries.set(key, buildTestHistogramSeries(currentWafers, testNumber, groupBy!, 16, limitLow, limitHigh));
+    }
+    return cachedHistogramSeries.get(key)!;
+  }
+
   function getHistogramTestMeta(testNumber: number) {
     const def = currentTestDefs[String(testNumber)];
     const opt = testOptions.find(t => t.testNumber === testNumber);
@@ -433,9 +511,14 @@ function renderChartsViewWork(loadedMsg: string) {
   }
 
   function getScatterPoints(xTest: number, yTest: number) {
-    const key = `${xTest}:${yTest}`;
+    // When a facet is active, tag points with their group (colour-by-group);
+    // otherwise plain points coloured by hard bin. Cache key includes the facet.
+    const key = `${xTest}:${yTest}:${chartGroupBy}`;
     if (!cachedScatterData.has(key)) {
-      cachedScatterData.set(key, buildScatterData(currentWafers, xTest, yTest));
+      const data = combined
+        ? buildScatterDataGrouped(currentWafers, xTest, yTest, groupBy!)
+        : buildScatterData(currentWafers, xTest, yTest);
+      cachedScatterData.set(key, data);
     }
     return cachedScatterData.get(key)!;
   }
@@ -452,31 +535,56 @@ function renderChartsViewWork(loadedMsg: string) {
   const scheme = getColorScheme(chartColorScheme);
   const binColorFn = scheme.forBin;
 
-  const panels: ChartPanel[] = [
-    {
-      kind: 'yield',
-      title: 'Yield by wafer',
-      data: yieldData,
-      controls: [makeSelect(
-        [['yield', 'Sort: yield'], ['waferId', 'Sort: wafer ID']],
-        yieldSortBy,
-        v => { yieldSortBy = v as YieldSortBy; renderChartsView(); },
-      )],
-      barColor: datum => scheme.forValue(Math.max(0, Math.min(100, datum.percent)) / 100),
-      valueLabel: datum => `${datum.percent.toFixed(1)}%`,
+  const yieldPanel: ChartPanel = {
+    kind: 'yield',
+    title: 'Yield by wafer',
+    data: yieldData,
+    selfControl: {
+      current: yieldSortBy,
+      options: [['yield', 'Sort: yield'], ['waferId', 'Sort: wafer ID']],
+      onChange: v => {
+        yieldSortBy = v as YieldSortBy;
+        return { data: makeYieldData() };
+      },
     },
-    {
-      kind: 'binPareto',
-      title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
-      data: binData,
-      controls: [makeSelect(
-        [['hbin', 'Hard bins'], ['sbin', 'Soft bins']],
+    barColor: datum => scheme.forValue(Math.max(0, Math.min(100, datum.percent)) / 100),
+    valueLabel: datum => `${datum.percent.toFixed(1)}%`,
+  };
+
+  // Bin pareto: combined mode uses a dedicated clustered-bar card (sub-bar per
+  // group within each bin); otherwise the generic ungrouped pareto panel.
+  const binParetoPanel: ChartPanel = {
+    kind: 'binPareto',
+    title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
+    data: binData,
+    selfControl: {
+      current: binType,
+      options: [['hbin', 'Hard bins'], ['sbin', 'Soft bins']],
+      onChange: v => {
+        binType = v as BinType;
+        return {
+          data: makeBinData(),
+          title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
+        };
+      },
+    },
+    barColor: datum => datum.binCode === undefined ? scheme.forValue(0) : binColorFn(datum.binCode),
+  };
+
+  const binClusterCard = combined
+    ? renderBinClusterPanel({
+        title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
         binType,
-        v => { binType = v as BinType; renderChartsView(); },
-      )],
-      barColor: datum => datum.binCode === undefined ? scheme.forValue(0) : binColorFn(datum.binCode),
-    },
-  ];
+        getData: (bt) => buildBinClusterData(currentWafers, bt, groupBy!),
+        colorScheme: chartColorScheme,
+        onToggleBinType: (bt) => { binType = bt; },
+        onOpen: (waferIndices) => { if (waferIndices.length > 0) openSingleWafer(waferIndices); },
+        savePng: onSaveImage,
+        getHeaderLines: () => makeHeaderLines(`${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`),
+      })
+    : null;
+
+  const panels: ChartPanel[] = combined ? [yieldPanel] : [yieldPanel, binParetoPanel];
 
   const boxplotCard = renderBoxplotPanel({
     title: 'Test value distribution by wafer',
@@ -502,6 +610,7 @@ function renderChartsViewWork(loadedMsg: string) {
     testOptions,
     selectedTestNumber: histogramTestNumber,
     getData: getHistogramData,
+    getSeriesData: combined ? getHistogramSeries : undefined,
     getTestMeta: getHistogramTestMeta,
     colorScheme: chartColorScheme,
     waferLabels: currentWafers.map(w => w.waferId),
@@ -531,6 +640,7 @@ function renderChartsViewWork(loadedMsg: string) {
       getPoints: getScatterPoints,
       getTestMeta: getBoxplotTestMeta,
       colorScheme: chartColorScheme,
+      groups: combined ? groupedWafers().map(g => g.key) : undefined,
       onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
       savePng: onSaveImage,
       getHeaderLines: () => {
@@ -542,10 +652,25 @@ function renderChartsViewWork(loadedMsg: string) {
     });
     scatterCard = scatterResult.card;
 
+    // Per-group correlation matrices (built lazily, cached) — pooling across
+    // groups would be misleading, so when grouping is active the matrix is
+    // restricted to one group, chosen via the panel's group selector.
+    const corrGroups = combined ? groupedWafers() : [];
+    const corrGroupMatrices = new Map<string, ReturnType<typeof buildCorrelationMatrix>>();
+    const matrixForGroup = (groupKey?: string) => {
+      if (!groupKey) return (cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions));
+      if (!corrGroupMatrices.has(groupKey)) {
+        const g = corrGroups.find(x => x.key === groupKey);
+        corrGroupMatrices.set(groupKey, buildCorrelationMatrix(g ? g.wafers : [], testOptions));
+      }
+      return corrGroupMatrices.get(groupKey)!;
+    };
+
     correlationCard = renderCorrelationPanel({
       title: 'Test correlation matrix',
-      filter: (maxTests) => {
-        const { matrix, ...summary } = filterCorrelationMatrix(cachedCorrelationMatrix!, { minTests: 6, maxTests });
+      groupKeys: corrGroups.map(g => g.key),
+      filter: (maxTests, groupKey) => {
+        const { matrix, ...summary } = filterCorrelationMatrix(matrixForGroup(groupKey), { minTests: 6, maxTests });
         return { matrix, summary };
       },
       initialLimit: correlationMatrixLimit,
@@ -566,8 +691,24 @@ function renderChartsViewWork(loadedMsg: string) {
     v => { chartColorScheme = v; renderChartsView(); },
   );
 
+  // "Group by" page control — populated from the splittable facets. Hidden
+  // entirely when there is nothing to split on (single lot, no metadata).
+  const groupByControls: HTMLElement[] = [];
+  if (splittableFacets.length > 0) {
+    const groupByLabel = document.createElement('span');
+    groupByLabel.textContent = 'Group by:';
+    groupByLabel.style.cssText = 'color:var(--text-muted);font-size:12px;';
+    const groupBySelect = makeSelect(
+      [['', 'None'], ...splittableFacets.map(f => [f.key, `${f.label} (${f.values.length})`] as [string, string])],
+      chartGroupBy,
+      v => { chartGroupBy = v; renderChartsView(); },
+    );
+    groupByControls.push(groupByLabel, groupBySelect);
+  }
+
   const scrollTop = container.scrollTop;
-  renderChartGrid(container, [...panels, boxplotCard, histogramCard, correlationCard, scatterCard], {
+  const binCard = binClusterCard ? [binClusterCard] : [];
+  renderChartGrid(container, [...panels, ...binCard, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
       if (waferIndices.length === 0) return;
       if (datum.binCode !== undefined) openStackedBin(currentWafers.map((_, i) => i), datum);
@@ -579,7 +720,7 @@ function renderChartsViewWork(loadedMsg: string) {
     },
     savePng: onSaveImage,
     getHeaderLines: (panelTitle) => makeHeaderLines(panelTitle),
-  }, [colorSchemeLabel, colorSchemeSelect]);
+  }, [colorSchemeLabel, colorSchemeSelect, ...groupByControls]);
   container.scrollTop = scrollTop;
 
   setIdle(loadedMsg);
@@ -596,6 +737,7 @@ function showEmptyState() {
   cachedBinData.clear();
   cachedBoxplotData.clear();
   cachedHistogramData.clear();
+  cachedHistogramSeries.clear();
   cachedCorrelationMatrix = null;
   cachedScatterData.clear();
   addBtn.disabled = true;
@@ -898,12 +1040,15 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
 
   const getRenamed = (): Promise<RenamedWafer[] | null> => {
     if (!needsRename) {
+      // needsRename is false only for a single entry, so all wafers share its source.
+      const source = makeWaferSource(entries[0].parsed.meta, entries[0].fileName);
       return Promise.resolve(allWafers.map(w => ({
         waferId: w.waferId,
         results: w.results,
         partCount: w.partCount,
         goodCount: w.goodCount,
         failCount: w.failCount,
+        source,
       })));
     }
     return new Promise(resolve => {
@@ -923,9 +1068,12 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
         incoming: renamed,
         existing: currentWafers,
         onConfirm: () => {
+          // Shallow spread preserves each wafer's shared `source` reference — do
+          // NOT deep-clone or serialize a stamped wafer (e.g. through the parser
+          // worker), or reference identity breaks and grouping by source fails.
           const merged = [
             ...currentWafers,
-            ...renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount })),
+            ...renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount, source: r.source })),
           ];
           renderWafers(merged, currentFileName, { ...currentTestDefs, ...Object.assign({}, ...entries.map(e => e.parsed.testDefs)) });
           log('info', `Added ${renamed.length} wafer${renamed.length !== 1 ? 's' : ''} — gallery now has ${merged.length}`);
@@ -936,7 +1084,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     });
   } else {
     renderWafers(
-      renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount })),
+      renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount, source: r.source })),
       entries.length === 1 ? entries[0].fileName : `${entries.length} files`,
       Object.assign({}, ...entries.map(e => e.parsed.testDefs))
     );
@@ -1150,8 +1298,8 @@ helpBtn.addEventListener('click', () => {
   const fullscreenBtn = document.createElement('button');
   fullscreenBtn.className = 'help-icon-btn';
   fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.title = 'Fullscreen (F)';
-  fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
+  fullscreenBtn.title = 'Maximize (F)';
+  fullscreenBtn.setAttribute('aria-label', 'Maximize');
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'help-icon-btn';
@@ -1170,26 +1318,21 @@ helpBtn.addEventListener('click', () => {
   inner.focus();
 
   const close = () => {
-    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
     document.removeEventListener('keydown', onKeyDown);
-    document.removeEventListener('fullscreenchange', onFsChange);
     modal.remove();
   };
+  // CSS maximize — see the charts expand modal for why we avoid the real
+  // Fullscreen API (WKWebView on macOS Tauri disables it without private API).
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) inner.requestFullscreen().catch(() => {});
-    else document.exitFullscreen();
-  };
-  const onFsChange = () => {
-    const isFs = document.fullscreenElement === inner;
-    fullscreenBtn.innerHTML = isFs ? ICONS.shrink : ICONS.maximize;
-    fullscreenBtn.title = isFs ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+    const maxed = inner.classList.toggle('maximized');
+    fullscreenBtn.innerHTML = maxed ? ICONS.shrink : ICONS.maximize;
+    fullscreenBtn.title = maxed ? 'Restore (F)' : 'Maximize (F)';
   };
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && !document.fullscreenElement) { close(); return; }
+    if (e.key === 'Escape') { close(); return; }
     if ((e.key === 'f' || e.key === 'F')) toggleFullscreen();
   };
   document.addEventListener('keydown', onKeyDown);
-  document.addEventListener('fullscreenchange', onFsChange);
   fullscreenBtn.addEventListener('click', toggleFullscreen);
   closeBtn.addEventListener('click', close);
   modal.addEventListener('click', e => { if (e.target === modal) close(); });

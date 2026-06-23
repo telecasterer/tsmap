@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBinParetoData, buildTestBoxplotData, buildTestHistogramData, buildScatterData, listNumericTests } from './aggregate';
+import { buildBinParetoData, buildBinClusterData, buildYieldDataCombined, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildScatterData, buildScatterDataGrouped, buildCorrelationMatrix, filterCorrelationMatrix, listNumericTests } from './aggregate';
 import type { WaferData } from '../types';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -149,6 +149,118 @@ describe('buildTestBoxplotData', () => {
   });
 });
 
+// ── combined (aggregate-per-group) builders ─────────────────────────────────────
+
+describe('buildYieldDataCombined', () => {
+  it('pools wafers per group as a die-count-weighted mean yield', () => {
+    // Lot A: W0 80% over 10 dies, W1 90% over 30 dies → (80*10+90*30)/40 = 87.5
+    // Lot B: W2 50% over 20 dies → 50
+    const wafers = [
+      wafer('W0', Array(10).fill({ hbin: 1 })),
+      wafer('W1', Array(30).fill({ hbin: 1 })),
+      wafer('W2', Array(20).fill({ hbin: 1 })),
+    ];
+    const lotSummary = {
+      lotYieldSeries: [
+        { waferIndex: 0, yieldPercent: 80 },
+        { waferIndex: 1, yieldPercent: 90 },
+        { waferIndex: 2, yieldPercent: 50 },
+      ],
+    } as unknown as Parameters<typeof buildYieldDataCombined>[1];
+    const groupBy = (w: WaferData) => (w.waferId === 'W2' ? 'B' : 'A');
+
+    const data = buildYieldDataCombined(wafers, lotSummary, 'waferId', groupBy);
+    const byLabel = Object.fromEntries(data.map(d => [d.label, d]));
+    expect(byLabel.A.value).toBeCloseTo(87.5, 5);
+    expect(byLabel.B.value).toBe(50);
+    // group A row covers both its wafers (drill-down opens all)
+    expect(byLabel.A.waferIndices).toEqual([0, 1]);
+  });
+});
+
+describe('buildBinClusterData', () => {
+  it('returns pareto-ordered bins each with per-group counts aligned to groups', () => {
+    // HBin 1: A=3 (W0:2,W1:1), B=1 (W2) → total 4. HBin 4: A=1 (W1), B=2 (W2) → total 3.
+    const wafers = [
+      wafer('W0', [{ hbin: 1 }, { hbin: 1 }]),
+      wafer('W1', [{ hbin: 1 }, { hbin: 4 }]),
+      wafer('W2', [{ hbin: 1 }, { hbin: 4 }, { hbin: 4 }]),
+    ];
+    const groupBy = (w: WaferData) => (w.waferId === 'W2' ? 'B' : 'A');
+    const out = buildBinClusterData(wafers, 'hbin', groupBy);
+
+    expect(out.groups).toEqual(['A', 'B']);          // first-seen order = legend
+    expect(out.bins.map(b => b.binCode)).toEqual([1, 4]); // pareto: bin 1 (4) before bin 4 (3)
+
+    const bin1 = out.bins[0];
+    expect(bin1.total).toBe(4);
+    expect(bin1.counts).toEqual([3, 1]);             // [A, B] aligned to groups
+    expect(bin1.waferIndices[0]).toEqual([0, 1]);    // A's wafers with bin 1
+
+    const bin4 = out.bins[1];
+    expect(bin4.counts).toEqual([1, 2]);             // A=1, B=2
+  });
+
+  it('ignores wafers whose group is undefined', () => {
+    const wafers = [wafer('W0', [{ hbin: 1 }]), wafer('W1', [{ hbin: 1 }])];
+    const groupBy = (w: WaferData) => (w.waferId === 'W0' ? 'A' : undefined);
+    const out = buildBinClusterData(wafers, 'hbin', groupBy);
+    expect(out.groups).toEqual(['A']);
+    expect(out.bins[0].counts).toEqual([1]);
+  });
+
+  it('returns empty groups/bins when nothing is grouped', () => {
+    const out = buildBinClusterData([wafer('W0', [{ hbin: 1 }])], 'hbin', () => undefined);
+    expect(out.groups).toEqual([]);
+    expect(out.bins).toEqual([]);
+  });
+});
+
+describe('buildTestHistogramSeries', () => {
+  it('returns one series per non-empty group over shared bucket ranges', () => {
+    const wafers = [
+      wafer('W0', [{ testValues: { 1: 0 } }, { testValues: { 1: 10 } }]),  // group A
+      wafer('W1', [{ testValues: { 1: 5 } }]),                              // group B
+    ];
+    const groupBy = (w: WaferData) => (w.waferId === 'W0' ? 'A' : 'B');
+    const out = buildTestHistogramSeries(wafers, 1, groupBy, 10);
+    // shared range spans both groups' data (0..10)
+    expect(out.ranges[0].rangeLow).toBe(0);
+    expect(out.ranges[out.ranges.length - 1].rangeHigh).toBe(10);
+    expect(out.series.map(s => s.groupKey)).toEqual(['A', 'B']);
+    // every series has one count per bucket
+    for (const s of out.series) expect(s.counts).toHaveLength(out.ranges.length);
+    // group A has 2 dies, group B has 1 — totals preserved
+    expect(out.series[0].counts.reduce((a, b) => a + b, 0)).toBe(2);
+    expect(out.series[1].counts.reduce((a, b) => a + b, 0)).toBe(1);
+  });
+
+  it('omits empty groups and returns empty when no data', () => {
+    const wafers = [wafer('W0', [{ hbin: 1 }])]; // no testValues for test 1
+    const out = buildTestHistogramSeries(wafers, 1, () => 'A', 8);
+    expect(out.series).toEqual([]);
+    expect(out.ranges).toEqual([]);
+  });
+});
+
+describe('buildTestBoxplotDataCombined', () => {
+  it('pools all dies of a group into one five-number summary', () => {
+    const wafers = [
+      wafer('W0', [{ testValues: { 1: 1 } }, { testValues: { 1: 3 } }]),
+      wafer('W1', [{ testValues: { 1: 5 } }]),       // same group as W0
+      wafer('W2', [{ testValues: { 1: 100 } }]),     // other group
+    ];
+    const groupBy = (w: WaferData) => (w.waferId === 'W2' ? 'B' : 'A');
+    const out = buildTestBoxplotDataCombined(wafers, 1, groupBy);
+    const a = out.find(d => d.label === 'A')!;
+    expect(a.count).toBe(3);      // 1, 3, 5 pooled across W0+W1
+    expect(a.min).toBe(1);
+    expect(a.median).toBe(3);
+    expect(a.max).toBe(5);
+    expect(a.waferIndex).toBe(-1); // a group is not a single wafer
+  });
+});
+
 // ── buildTestHistogramData ────────────────────────────────────────────────────
 
 describe('buildTestHistogramData', () => {
@@ -247,5 +359,63 @@ describe('buildScatterData', () => {
   it('returns empty array when no dies have both tests', () => {
     const wafers = [wafer('W1', [{ testValues: { 1: 1 } }])];
     expect(buildScatterData(wafers, 1, 2)).toHaveLength(0);
+  });
+});
+
+describe('buildScatterDataGrouped', () => {
+  it('tags each point with its wafer’s group', () => {
+    const wafers = [
+      wafer('W1', [{ testValues: { 1: 1, 2: 10 } }]),
+      wafer('W2', [{ testValues: { 1: 2, 2: 20 } }]),
+    ];
+    const groupBy = (w: WaferData) => (w.waferId === 'W1' ? 'A' : 'B');
+    const pts = buildScatterDataGrouped(wafers, 1, 2, groupBy);
+    expect(pts).toHaveLength(2);
+    expect(pts.find(p => p.x === 1)!.group).toBe('A');
+    expect(pts.find(p => p.x === 2)!.group).toBe('B');
+  });
+
+  it('skips wafers whose group is undefined', () => {
+    const wafers = [
+      wafer('W1', [{ testValues: { 1: 1, 2: 10 } }]),
+      wafer('W2', [{ testValues: { 1: 2, 2: 20 } }]),
+    ];
+    const groupBy = (w: WaferData) => (w.waferId === 'W1' ? 'A' : undefined);
+    const pts = buildScatterDataGrouped(wafers, 1, 2, groupBy);
+    expect(pts).toHaveLength(1);
+    expect(pts[0].group).toBe('A');
+  });
+});
+
+describe('filterCorrelationMatrix', () => {
+  const testOptions = [
+    { testNumber: 1, label: 'T1' },
+    { testNumber: 2, label: 'T2' },
+    { testNumber: 3, label: 'T3' },
+  ];
+
+  it('still shows tests when a group has no computable correlations (zero variance)', () => {
+    // All dies identical → zero variance → every off-diagonal r is null. This is
+    // the small/low-variance lot case that previously rendered an empty matrix.
+    const wafers = [wafer('W1', Array.from({ length: 5 }, () => ({
+      testValues: { 1: 1, 2: 2, 3: 3 },
+    })))];
+    const matrix = buildCorrelationMatrix(wafers, testOptions);
+    const offDiagNonNull = matrix.cells.filter(c => c.xIndex !== c.yIndex && c.r !== null);
+    expect(offDiagNonNull).toHaveLength(0); // confirms the null-r precondition
+
+    const { matrix: filtered, strongestPair } = filterCorrelationMatrix(matrix, { minTests: 6, maxTests: 20 });
+    expect(filtered.tests.length).toBe(3);   // fallback shows the tests, not an empty grid
+    expect(strongestPair).toBeNull();
+  });
+
+  it('selects correlated tests normally when data has variance', () => {
+    const wafers = [wafer('W1', Array.from({ length: 20 }, (_, i) => ({
+      testValues: { 1: i, 2: i * 2, 3: 100 - i },  // T1~T2 perfectly correlated
+    })))];
+    const matrix = buildCorrelationMatrix(wafers, testOptions);
+    const { strongestPair } = filterCorrelationMatrix(matrix, { minTests: 6, maxTests: 20 });
+    expect(strongestPair).not.toBeNull();
+    expect(Math.abs(strongestPair!.r)).toBeCloseTo(1, 5);
   });
 });

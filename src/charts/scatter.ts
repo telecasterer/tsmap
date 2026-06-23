@@ -14,6 +14,13 @@ export interface ScatterPanelOptions {
   getPoints: (xTest: number, yTest: number) => ScatterPoint[];
   getTestMeta: (testNumber: number) => { unit?: string; limitLow?: number; limitHigh?: number };
   colorScheme: string;
+  /**
+   * When a facet field is active, the group keys (legend order). Non-empty makes
+   * the scatter colour points by group (replacing hard-bin colour) and the
+   * legend filter operates on groups. `getPoints` should then return points
+   * tagged with `group` (via `buildScatterDataGrouped`).
+   */
+  groups?: string[];
   onStateChange: (xTest: number, yTest: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
   getHeaderLines?: () => { title: string; subtitle: string };
@@ -25,8 +32,12 @@ const SCATTER_TOP = 16;
 const SCATTER_BOTTOM = 44;
 
 export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLElement; setXY: (x: number, y: number) => void } {
-  const { title, testOptions, colorScheme, getPoints, getTestMeta, onStateChange } = options;
+  const { title, testOptions, colorScheme, getPoints, getTestMeta, onStateChange, groups } = options;
   const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
+
+  // When a facet is active, colour + legend + filter key on group rather than bin.
+  const byGroup = !!(groups && groups.length > 0);
+  const groupColorIndex = new Map<string, number>((groups ?? []).map((g, i) => [g, i]));
 
   let activeX = options.xTestNumber ?? testOptions[0]?.testNumber ?? null;
   let activeY = options.yTestNumber ?? testOptions[1]?.testNumber ?? activeX;
@@ -65,14 +76,28 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
   controlsRow.appendChild(ySelectWrap);
 
   const hint = document.createElement('div');
-  hint.textContent = 'One point per die across all wafers · coloured by hard bin · click legend to filter';
+  hint.textContent = byGroup
+    ? 'One point per die · coloured by group · click legend to filter'
+    : 'One point per die across all wafers · coloured by hard bin · click legend to filter';
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:4px;`;
   card.insertBefore(hint, body);
 
   // ── Persistent body — built once, redrawn on setXY ──────────────────────────
 
-  const { forBin } = getColorScheme(colorScheme);
-  const activeBins = new Set<number>();
+  const scheme = getColorScheme(colorScheme);
+  const { forBin } = scheme;
+  // Category = the colour/filter key: group name (byGroup) or hard-bin number.
+  const categoryOf = (p: ScatterPoint): string => byGroup ? (p.group ?? '—') : String(p.hbin ?? 1);
+  const colorOfCategory = (cat: string): string => {
+    if (byGroup) {
+      const n = groups!.length;
+      return scheme.forValue(n <= 1 ? 0.5 : (groupColorIndex.get(cat) ?? 0) / (n - 1));
+    }
+    return forBin(Number(cat));
+  };
+  const labelOfCategory = (cat: string): string => byGroup ? cat : `HBin ${cat}`;
+  // Active filter set (empty = show all). Keyed by category string.
+  const activeCats = new Set<string>();
 
   const legend = document.createElement('div');
   legend.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;';
@@ -99,28 +124,28 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
   }
 
   function updateLegend() {
-    for (const btn of legend.querySelectorAll<HTMLElement>('[data-bin]')) {
-      const bin = Number(btn.dataset.bin);
-      const active = activeBins.size === 0 || activeBins.has(bin);
+    for (const btn of legend.querySelectorAll<HTMLElement>('[data-cat]')) {
+      const cat = btn.dataset.cat!;
+      const active = activeCats.size === 0 || activeCats.has(cat);
       btn.style.opacity = active ? '1' : '0.35';
-      btn.style.outline = activeBins.has(bin) ? `2px solid ${cssVar('--text-primary')}` : 'none';
+      btn.style.outline = activeCats.has(cat) ? `2px solid ${cssVar('--text-primary')}` : 'none';
     }
   }
 
-  function rebuildLegend(allBins: number[]) {
+  function rebuildLegend(cats: string[]) {
     legend.innerHTML = '';
-    activeBins.clear();
-    for (const bin of allBins) {
+    activeCats.clear();
+    for (const cat of cats) {
       const swatch = document.createElement('button');
-      swatch.dataset.bin = String(bin);
-      swatch.title = `HBin ${bin} — click to filter`;
-      const color = forBin(bin);
+      swatch.dataset.cat = cat;
+      swatch.title = `${labelOfCategory(cat)} — click to filter`;
+      const color = colorOfCategory(cat);
       swatch.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;border:1px solid ${cssVar('--border-mid')};background:none;cursor:pointer;font-size:11px;color:${cssVar('--text-secondary')};white-space:nowrap;`;
       const dot = document.createElement('span');
       dot.style.cssText = `display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};flex-shrink:0;`;
-      swatch.append(dot, document.createTextNode(`HBin ${bin}`));
+      swatch.append(dot, document.createTextNode(labelOfCategory(cat)));
       swatch.addEventListener('click', () => {
-        if (activeBins.has(bin)) activeBins.delete(bin); else activeBins.add(bin);
+        if (activeCats.has(cat)) activeCats.delete(cat); else activeCats.add(cat);
         updateLegend();
         draw();
       });
@@ -186,7 +211,7 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
       ctx.restore();
     }
 
-    const visible = activeBins.size === 0 ? points : points.filter(p => activeBins.has(p.hbin ?? 1));
+    const visible = activeCats.size === 0 ? points : points.filter(p => activeCats.has(categoryOf(p)));
     const step = visible.length > 5000 ? Math.ceil(visible.length / 5000) : 1;
     ctx.globalAlpha = Math.max(0.15, Math.min(0.7, 200 / (visible.length / step)));
     for (let i = 0; i < visible.length; i += step) {
@@ -195,7 +220,7 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
       const cy = SCATTER_TOP + (1 - (p.y - yLo) / ySpan) * plotH;
       ctx.beginPath();
       ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-      ctx.fillStyle = forBin(p.hbin ?? 1);
+      ctx.fillStyle = colorOfCategory(categoryOf(p));
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -255,8 +280,15 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
       return;
     }
     points = getPoints(activeX, activeY);
-    const allBins = Array.from(new Set(points.map(p => p.hbin ?? 1))).sort((a, b) => a - b);
-    rebuildLegend(allBins);
+    let cats: string[];
+    if (byGroup) {
+      // Preserve the supplied group order; only show groups actually present.
+      const present = new Set(points.map(categoryOf));
+      cats = groups!.filter(g => present.has(g));
+    } else {
+      cats = Array.from(new Set(points.map(p => p.hbin ?? 1))).sort((a, b) => a - b).map(String);
+    }
+    rebuildLegend(cats);
 
     if (points.length > 0) {
       const xs = points.map(p => p.x), ys = points.map(p => p.y);

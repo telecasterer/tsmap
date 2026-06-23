@@ -336,10 +336,46 @@ dropdown in one panel does not affect others, except that clicking a cell in the
 matrix updates the scatter plot's X and Y test selectors.
 
 Every panel has a **Save PNG** (camera icon) button and an **Expand** (corner-arrows icon)
-button in its header — the same icons wmap uses for these actions. The expand modal supports
-fullscreen (F key) and closes with Esc.
+button in its header — the same icons wmap uses for these actions. The expand modal can be
+maximized to fill the window (F key) and closes with Esc.
 
 ![Charts overview — all six panels](images/charts-overview.png)
+
+### Grouping charts by lot or metadata
+
+When more than one distinct value is present for a metadata field — for example you have
+loaded **several lots**, test programs, temperatures, or dates — a **Group by** dropdown
+appears in the charts toolbar (next to the colour-scheme selector). It lists every field
+that actually varies across the loaded wafers, with the number of distinct values.
+
+Selecting a field re-expresses every chart **per group** (one series/aggregate per lot,
+program, temperature, …). Each chart does what makes sense for its kind:
+
+| Chart | Grouped by a field |
+| --- | --- |
+| Yield by wafer | One bar per group — the group's pooled (die-weighted) yield |
+| Bin pareto | Clustered bars — within each bin, one sub-bar per group, with a legend |
+| Boxplot | One box per group, pooling all that group's dies |
+| Histogram | Overlaid colour-coded distributions, one per group, with a clickable legend |
+| Correlation matrix | A **Group** selector picks one group; the matrix is computed for that group alone |
+| Scatter | Points coloured by group (instead of by hard bin), with a click-to-filter legend |
+
+Choose **None** to return to the plain per-wafer/whole-lot view.
+
+Two deliberate choices are worth noting:
+
+- **Correlation is never pooled across groups.** Combining lots into one matrix is
+  misleading — between-lot mean shifts can manufacture or hide correlations that do not
+  exist within any single lot. So the matrix always shows one group at a time. If a group
+  has too little variation to compute meaningful correlations, the matrix still renders but
+  its cells are blank and the summary reads "No significant correlations found".
+- **Only the largest 12 groups** are shown individually; any beyond that are folded into a
+  single "… N more" group, so a load with many lots stays readable.
+
+> Grouping is driven entirely by metadata attached to each wafer at load time (lot ID,
+> sublot, part type, tester, node, and — for CSV/JSON — any columns you mapped as metadata).
+> If no field varies (a single lot with uniform metadata), the **Group by** dropdown is
+> hidden.
 
 ### 6.1 Yield by wafer
 
@@ -351,6 +387,7 @@ Horizontal bar chart showing pass yield per wafer across the lot.
 - Click a bar to open that wafer's map.
 - Shift-click or Ctrl-click multiple bars to select a group, then click **Open selected**
   to open a filtered view of those wafers.
+- **Grouped:** one bar per group showing the group's pooled, die-weighted yield.
 
 ### 6.2 Bin pareto
 
@@ -362,6 +399,9 @@ Failure count by bin across the entire lot, sorted from most to least frequent.
 - Pass bin appears first and is labelled separately; all other bins are sorted by fail
   count descending.
 - Click a bar to highlight dies with that bin.
+- **Grouped:** clustered bars — within each bin, one colour-coded sub-bar per group, with a
+  legend. Hover a sub-bar for its count and share of the bin; click it to open that group's
+  wafers.
 
 ### 6.3 Test value distribution (boxplot)
 
@@ -379,6 +419,7 @@ Per-wafer five-number summary for one parametric test: minimum, Q1, median, Q3, 
 - Spec limits appear as dashed vertical lines on the plot.
 - Click a wafer's box to open that wafer's test value map.
 - Hover a row to see the full five-number summary in a tooltip.
+- **Grouped:** one box per group, pooling all of that group's dies into a single summary.
 
 ### 6.4 Value histogram
 
@@ -390,6 +431,11 @@ Distribution of test values bucketed across the measurement range.
 - **Wafer** dropdown — Show data from all wafers combined, or pick one wafer by ID.
 - **Axis includes limits** checkbox — Expand the axis to include spec limits.
 - Spec limits (LSL/USL) appear as dashed vertical lines if defined.
+- A count (Y) axis with gridlines shows the per-bucket die count.
+- **Grouped:** overlaid colour-coded distributions, one per group, sharing the same buckets
+  and a numbered Y axis. A legend lists the groups; click one to bring it to the front and
+  dim the others (click again to clear). Hover a bucket to see every group's count there.
+  The single-wafer selector is hidden while grouped.
 
 ### 6.5 Test correlation matrix
 
@@ -410,6 +456,9 @@ among the displayed tests, and notes any weak pairs that were hidden.
   places.
 - Click any off-diagonal cell to instantly update the scatter plot's X and Y tests.
   The grid does not rebuild — scroll position is preserved.
+- **Grouped:** a **Group** dropdown appears in the panel; the matrix is computed for the
+  selected group only (never pooled across groups). A group with too little variation shows
+  a populated grid with blank cells and "No significant correlations found".
 
 ### 6.6 Test correlation scatter
 
@@ -424,6 +473,9 @@ Die-level scatter plot for two parametric tests.
 - Spec limit lines appear as dashed lines on the corresponding axis.
 - The correlation matrix's click-cell shortcut updates this panel without rebuilding
   the rest of the charts grid.
+- **Grouped:** points are coloured by group instead of by hard bin, and the legend shows
+  the groups; click a group to isolate its dies. This shows whether the groups separate in
+  the X/Y plane without pooling them into a single (potentially misleading) statistic.
 
 ---
 

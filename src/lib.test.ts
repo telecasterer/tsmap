@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection } from './lib';
-import type { ParsedFile, TestDef } from './types';
+import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta } from './lib';
+import type { LotMeta, ParsedFile, TestDef, WaferSource } from './types';
 
 // ── basename ──────────────────────────────────────────────────────────────────
 
@@ -188,5 +188,65 @@ describe('applyTestSelection', () => {
       testDefs: { '1001': { name: 'A', testType: 'P' } },
     };
     expect(() => applyTestSelection(parsed, [1001], null, new Map())).not.toThrow();
+  });
+});
+
+// ── makeWaferSource ─────────────────────────────────────────────────────────────
+
+describe('makeWaferSource', () => {
+  it('maps LotMeta fields and the filename onto a WaferSource', () => {
+    const meta: LotMeta = { lotId: 'LOT1', sublotId: 'SUB1', partType: 'NMOS', testerType: 'T100', nodeName: 'N1' };
+    const src = makeWaferSource(meta, 'lot1.stdf');
+    expect(src).toEqual({
+      lotId: 'LOT1', sublotId: 'SUB1', partType: 'NMOS', testerType: 'T100', nodeName: 'N1',
+      sourceFile: 'lot1.stdf',
+    });
+  });
+
+  it('leaves absent LotMeta fields undefined', () => {
+    const src = makeWaferSource({}, 'bare.csv');
+    expect(src.sourceFile).toBe('bare.csv');
+    expect(src.lotId).toBeUndefined();
+    expect(src.partType).toBeUndefined();
+  });
+});
+
+// ── toWmapWaferMeta ─────────────────────────────────────────────────────────────
+
+describe('toWmapWaferMeta', () => {
+  it('returns undefined when there is no source', () => {
+    expect(toWmapWaferMeta(undefined, 'W1')).toBeUndefined();
+  });
+
+  it('maps WaferSource fields to wmap WaferMetadata names', () => {
+    const src: WaferSource = {
+      lotId: 'LOT1', partType: 'NMOS', program: 'PGM_X', date: '2026-06-23', temp: '25',
+      sourceFile: 'lot1.stdf',
+    };
+    const m = toWmapWaferMeta(src, 'W7')!;
+    expect(m.waferId).toBe('W7');
+    expect(m.lot).toBe('LOT1');
+    expect(m.product).toBe('NMOS');
+    expect(m.testProgram).toBe('PGM_X');
+    expect(m.testDate).toBe('2026-06-23');
+    expect(m.temperature).toBe(25); // coerced to number
+  });
+
+  it('omits temperature when not numeric', () => {
+    const m = toWmapWaferMeta({ temp: 'hot', sourceFile: 'f' }, 'W1')!;
+    expect(m.temperature).toBeUndefined();
+  });
+
+  it('omits fields absent on the source rather than emitting blanks', () => {
+    const m = toWmapWaferMeta({ sourceFile: 'f' }, 'W1')!;
+    expect(m.waferId).toBe('W1');
+    expect('lot' in m).toBe(false);
+    expect('product' in m).toBe(false);
+  });
+
+  it('passes extras through wmap’s open index signature', () => {
+    const m = toWmapWaferMeta({ sourceFile: 'f', extras: { handler: 'H1', site: '3' } }, 'W1')!;
+    expect(m.handler).toBe('H1');
+    expect(m.site).toBe('3');
   });
 });

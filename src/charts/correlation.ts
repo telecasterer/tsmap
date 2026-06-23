@@ -38,8 +38,18 @@ function blendTowardBg(colour: string, bg: [number,number,number], t: number): s
 
 export interface CorrelationPanelOptions {
   title: string;
-  /** Filter the full matrix to `maxTests`, returning the trimmed matrix + summary counts. */
-  filter: (maxTests: number) => { matrix: CorrelationMatrix; summary: CorrelationSummaryCounts };
+  /**
+   * Filter the full matrix to `maxTests`, returning the trimmed matrix + summary.
+   * `groupKey` (when group restriction is active) selects which group's matrix to
+   * compute — pooling across groups is misleading (Simpson's paradox), so the
+   * matrix is always restricted to a single group when grouping is on.
+   */
+  filter: (maxTests: number, groupKey?: string) => { matrix: CorrelationMatrix; summary: CorrelationSummaryCounts };
+  /**
+   * Group keys to offer in a restrict-to-group selector. When non-empty the panel
+   * shows a group `<select>` and computes the matrix for the chosen group only.
+   */
+  groupKeys?: string[];
   /** Initial "Matrix size" (max tests shown). Owned/persisted by the caller. */
   initialLimit: number;
   /** Called when the user changes the matrix size, so the caller can persist it. */
@@ -55,10 +65,11 @@ const MATRIX_LIMIT_MIN = 5;
 const MATRIX_LIMIT_MAX = 100;
 
 export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLElement {
-  const { title, filter, initialLimit, onLimitChange, colorScheme, onSelectPair, savePng, getHeaderLines } = options;
+  const { title, filter, groupKeys, initialLimit, onLimitChange, colorScheme, onSelectPair, savePng, getHeaderLines } = options;
   const { card, controlsRow, body } = cardShell(title, savePng, getHeaderLines);
 
   let limit = initialLimit;
+  let activeGroup: string | undefined = groupKeys && groupKeys.length > 0 ? groupKeys[0] : undefined;
 
   // Enable horizontal scroll so matrix never clips
   body.style.overflowX = 'auto';
@@ -80,6 +91,25 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
   });
   matrixLimitLabel.appendChild(matrixLimitInput);
   controlsRow.appendChild(matrixLimitLabel);
+
+  // ── Restrict-to-group selector (only when grouping is active) ────────────────
+  if (groupKeys && groupKeys.length > 0) {
+    const groupLabel = document.createElement('label');
+    groupLabel.textContent = 'Group:';
+    groupLabel.style.cssText = `color:${cssVar('--text-muted')};font-size:12px;display:flex;align-items:center;gap:4px;`;
+    const groupSelect = document.createElement('select');
+    groupSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:160px;';
+    for (const g of groupKeys) {
+      const opt = document.createElement('option');
+      opt.value = g;
+      opt.textContent = g;
+      if (g === activeGroup) opt.selected = true;
+      groupSelect.appendChild(opt);
+    }
+    groupSelect.addEventListener('change', () => { activeGroup = groupSelect.value; rebuild(); });
+    groupLabel.appendChild(groupSelect);
+    controlsRow.appendChild(groupLabel);
+  }
 
   // ── Hint + summary line (rebuilt when the limit changes) ─────────────────────
   const hintRow = document.createElement('div');
@@ -318,7 +348,7 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
 
   // Re-filter at the current limit and rebuild the summary + matrix view.
   function rebuild(): void {
-    const { matrix, summary } = filter(limit);
+    const { matrix, summary } = filter(limit, activeGroup);
     renderSummary(summary);
     draw = buildMatrixView(matrix);
     draw();

@@ -7,10 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.14.2 |
+| wmap version in use | 0.15.0 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
 | testdata-parser version | 0.2.3 |
-| Last updated | 2026-06-21 (wmap 0.14.2 — on-canvas map titles, colorBySpec legend, gallery spec controls, log-scale colorbar note) |
+| Last updated | 2026-06-23 (wmap 0.15.0 — **breaking**: `DieMetadata` wafer-level fields removed + `buildHoverText` `waferMeta?` param; tooltip merges wafer metadata; `WaferMetadata`/`DieMetadata` re-exported from `/renderer`; summary-panel clipping fix. tsmap now feeds wafer metadata via `toWmapWaferMeta`) |
 
 ## Rust Backend Notes
 
@@ -248,3 +248,38 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 **Problem:** tsmap renders its own chart-card and overlay chrome (PNG save, expand, fullscreen, close, help) alongside embedded wmap wafer maps, so the user sees both UIs at once. To keep them visually consistent, tsmap's icon buttons should use the *same* icons as wmap. But `icons.ts` is marked "Internal shared module. Do not re-export from index.ts." and is not exported from the package, so tsmap cannot import the SVGs. tsmap currently **copies** the SVG strings verbatim into its own `src/charts/icons.ts` (`download`/camera, gallery-card `expand`, Lucide `x`/`minimize`, `help`). This couples the two repos by copy-paste: if wmap redesigns its icons, tsmap silently drifts.
 
 **Suggested fix in wmap:** Export the icon set (or a curated subset) as a public API — e.g. `export const ICONS` from a stable entry point, or a small `getIcon(name)` helper — so host apps can import the exact same SVGs and stay in sync automatically. Document which icon keys are stable/public. This generalises beyond tsmap to any host wanting to match wmap's look.
+
+### ~~17. Expand-modal fullscreen button uses the real Fullscreen API — dead in macOS WKWebView~~ (fixed — pending wmap release)
+
+**Where:** `packages/canvas-adapter/toolbar.ts` — the modal opened by `openModal`. The fullscreen button click handler (line ~848), the `F`/`Esc` key handler in `onKeyDown` (~902–910), the `onFsChange` handler (~864), and the `document.addEventListener('fullscreenchange', onFsChange)` registration (~939). Also `getMenuParent`-style `document.fullscreenElement` reads at ~170 and ~333.
+
+**Problem:** The modal toggles fullscreen with the **unprefixed** Fullscreen API — `box.requestFullscreen()`, `document.exitFullscreen()`, `document.fullscreenElement`, and the `fullscreenchange` event. macOS Tauri runs on WKWebView (WebKit), which:
+
+1. Only exposes the **`webkit`-prefixed** variants (`webkitRequestFullscreen`, `webkitFullscreenElement`, `webkitfullscreenchange`) — the unprefixed names are `undefined`, so `box.requestFullscreen` throws/no-ops and the button does nothing; and
+2. Has **element fullscreen disabled at the native level** unless the host sets WKWebView's `isElementFullscreenEnabled` / `fullScreenEnabled` preference. In Tauri that requires `app.macOSPrivateApi: true`, which uses Apple **private API** and blocks Mac App Store distribution.
+
+So even a prefixed shim isn't enough on macOS Tauri without opting into private API. The `onFullscreenChange(isFs, box)` callback also never fires there, so consumers that reparent the tooltip into the fullscreen box (`renderWaferMap.ts` ~846, `renderWaferGallery.ts` ~1518) silently break too.
+
+**Discovered in tsmap:** tsmap's own expand/help modals had the identical bug. Fixed there by **dropping the real Fullscreen API entirely** in favour of a CSS maximize — the modal box grows to `100vw/100vh` via a toggled class/inline style. This behaves identically on every target (Linux/Windows/macOS Tauri + all web browsers incl. Safari) with no native config and no private API. See `src/charts/chartShell.ts` (`toggleFullscreen` → `applyMaximize`) and `index.html` `.help-modal.maximized`.
+
+**Suggested fix in wmap:** Replace the Fullscreen API in `openModal` with a CSS maximize toggle (size the box to fill its `position: fixed; inset: 0` backdrop). Keep the existing `onFullscreenChange(isFs, box)` callback firing on the synthetic toggle so tooltip-reparenting consumers keep working. Keep the close button visible while maximized (no OS chrome to escape) and let `Esc` always close. This removes the macOS dependency on `macOSPrivateApi` and the prefixed-API portability problem in one move.
+
+**Fix applied:** `openModal` in `packages/canvas-adapter/toolbar.ts` now maximizes via a CSS toggle (`setMaximized` sizes the box to `100vw`/`100vh`) — the real Fullscreen API (`requestFullscreen`/`exitFullscreen`/`fullscreenchange`) is gone entirely. `onFullscreenChange(isMaximized, box)` still fires on the synthetic toggle, so the tooltip-reparenting consumers in `renderWaferMap.ts`/`renderWaferGallery.ts` are unchanged. `Esc` always closes; the close button stays visible while maximized. The `document.fullscreenElement` reads that routed menus/submenus into the fullscreen element were dropped (`menuRootFor` already walks up to `.wmap-modal-box`; the value-mode cascade submenu now appends into its parent menu's stacking root).
+
+### ~~18. Hover tooltips require per-die duplication of wafer-level metadata~~ (fixed in v0.15.0)
+
+**Where:** wmap `packages/renderer/buildView.ts` `buildHoverText` (read provenance only from `die.metadata`) and `packages/core/metadata.ts` `DieMetadata` (named wafer-level fields `lotId`/`waferId`/`deviceType`/`testProgram`/`temperature`).
+
+**Problem:** Provenance appeared in die hover tooltips only when set per-die on `DieMetadata`. But lot/program/temperature/product are wafer-level facts — a die cannot differ from its wafer on them. tsmap knows them at the wafer level (`WaferSource`), so to get tooltips it would have had to copy identical values onto every `DieResult` (up to ~500k per lot), bloating memory and mutating the wmap-bound `results` array (which threatens tsmap's shared-`WaferSource`-by-reference invariant). The tooltip already had the wafer's `WaferMetadata` (`view.metadata`) in scope but ignored it.
+
+**Suggested fix in wmap:** Tooltip should read wafer-level metadata from `waferConfig.metadata` as the base and let any per-die key override it; drop the redundant wafer-level named fields from `DieMetadata`.
+
+**Fix applied (0.15.0):** `buildHoverText` gained a trailing `waferMeta?` parameter; it now merges `{ ...waferMeta, ...die.metadata }` (wafer base, die override), omitting `waferId`. `renderWaferMap` passes `result.metadata` automatically, so gallery cards benefit too. The wafer-level named fields were removed from `DieMetadata` (open index signature retained for genuinely per-die annotations). tsmap now supplies wafer metadata once via `toWmapWaferMeta(source, waferId)` and gets full tooltips with no per-die cost.
+
+### ~~19. `WaferMetadata`/`DieMetadata` types not re-exported from `/renderer`~~ (fixed in v0.15.0)
+
+**Where:** wmap `packages/renderer/index.ts`.
+
+**Problem:** `WaferMetadata` (used to build `WaferConfig.metadata`) and `DieMetadata` are renderer-input concepts but were re-exported only from `/core`, so a consumer building renderer input had to import the renderer functions from `/renderer` and these types from `/core`.
+
+**Fix applied (0.15.0):** `packages/renderer/index.ts` now `export type { WaferMetadata, DieMetadata } from '../core/metadata.js'`.

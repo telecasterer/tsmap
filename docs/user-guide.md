@@ -107,7 +107,7 @@ file name or the wafer ID in the data. Edit any label that needs changing, then 
       <tr><td class="col-name">y</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Y position</option></select></td><td></td></tr>
       <tr><td class="col-name">hbin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Hard bin</option></select></td><td></td></tr>
       <tr><td class="col-name">vt_lin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test value</option></select></td><td><input class="test-name-input" value="Vt_lin" style="pointer-events:none;" readonly></td></tr>
-      <tr><td class="col-name">site</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>— ignore —</option></select></td><td></td></tr>
+      <tr><td class="col-name">site</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test site</option></select></td><td></td></tr>
     </tbody>
   </table>
   <div class="mapping-footer">
@@ -131,13 +131,14 @@ and pre-filled.
 | **Soft bin** | Soft bin number per die |
 | **Wafer ID** | Identifies which wafer each row belongs to; splits rows into separate wafer maps |
 | **Lot ID** | Lot identifier shown in the summary panel |
+| **Test site** | Parallel-test site number for each die (the STDF `site_num` equivalent). Dies from all sites share one wafer map; the site appears in the die hover tooltip and can be used as a chart grouping/colour dimension. Numeric values only. |
 | **Test value** | Numeric test result (wide format — one column per test); the **Test name** field to the right sets the display name for that test |
 | **Test name (long format)** | Column containing the test name in a long/pivot layout |
 | **Test result (long format)** | Column containing the numeric result in a long/pivot layout |
 | **Low limit (long format)** | LSL in a long-format file |
 | **High limit (long format)** | USL in a long-format file |
 | **Units (long format)** | Units string in a long-format file |
-| **Display info** | Additional per-wafer metadata shown in the gallery label; the **Gallery split** checkbox splits the data into separate wafer maps based on unique values in this column |
+| **Display info** | Additional metadata captured for grouping/comparison (and shown in tooltips). The **Separate wafer per value** checkbox is a structural escape hatch for flat files that pack several wafers into one file with no wafer column — it treats each distinct value of the column as its own wafer map. (Do not use it for parallel-test sites — map those to **Test site** instead.) |
 | **— ignore —** | Column is not imported |
 
 ### Wide vs long format
@@ -372,10 +373,12 @@ Two deliberate choices are worth noting:
 - **Only the largest 12 groups** are shown individually; any beyond that are folded into a
   single "… N more" group, so a load with many lots stays readable.
 
-> Grouping is driven entirely by metadata attached to each wafer at load time (lot ID,
-> sublot, part type, tester, node, and — for CSV/JSON — any columns you mapped as metadata).
-> If no field varies (a single lot with uniform metadata), the **Group by** dropdown is
-> hidden.
+> Grouping is driven by metadata attached to each wafer at load time. STDF and ATDF
+> contribute every field present in their MIR record — lot, sublot, part type, program,
+> test temperature, test date, tester, node, operator, and more; CSV and JSON contribute
+> the lot column plus any columns you mapped as metadata. Only fields that actually *vary*
+> across the loaded wafers appear in the dropdown, so if everything shares one value (a
+> single uniform lot) the **Group by** control is hidden.
 
 ### 6.1 Yield by wafer
 

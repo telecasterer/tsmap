@@ -1,24 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import { resolveWaferId, detectMismatches, buildRenameRows } from './multiFileUI';
 import type { RenamedWafer, FileWaferEntry } from './multiFileUI';
-import type { ParsedFile, WaferData } from './types';
+import type { WaferData } from './types';
 
 // ── resolveWaferId ────────────────────────────────────────────────────────────
 
 describe('resolveWaferId', () => {
-  it('returns non-generic IDs unchanged', () => {
+  it('returns non-generic IDs unchanged (data wins)', () => {
     expect(resolveWaferId('LOT123-W05', 'lot.stdf')).toBe('LOT123-W05');
+    expect(resolveWaferId('LOT123-W05', 'lot.stdf', 'LOT123')).toBe('LOT123-W05');
   });
 
-  it('replaces generic W<n> with filename stem', () => {
+  it('combines a generic wafer ID with the lot ID when available', () => {
+    expect(resolveWaferId('W01', 'EDGE-LOT-01.stdf', 'EDGE-LOT-01')).toBe('EDGE-LOT-01 · W01');
+    expect(resolveWaferId('W02', 'EDGE-LOT-01.stdf', 'EDGE-LOT-01')).toBe('EDGE-LOT-01 · W02');
+  });
+
+  it('falls back to the filename stem only when there is no lot ID', () => {
     expect(resolveWaferId('W1', 'lot_wafer3.stdf')).toBe('lot_wafer3');
+    expect(resolveWaferId('W01', 'wafer01.stdf', '')).toBe('wafer01'); // empty lot id ignored
   });
 
-  it('replaces zero-padded generic IDs', () => {
-    expect(resolveWaferId('W01', 'wafer01.stdf')).toBe('wafer01');
-  });
-
-  it('falls back to contentId when filename has no stem', () => {
+  it('falls back to contentId when neither lot ID nor filename stem is usable', () => {
     expect(resolveWaferId('W1', '.stdf')).toBe('W1');
   });
 });
@@ -112,40 +115,42 @@ describe('detectMismatches', () => {
 // ── buildRenameRows (shared-by-reference provenance) ────────────────────────────
 
 describe('buildRenameRows', () => {
-  const entry = (fileName: string, meta: ParsedFile['meta'], waferIds: string[]): FileWaferEntry => ({
+  const entry = (fileName: string, lotId: string, waferIds: string[]): FileWaferEntry => ({
     filePath: `/x/${fileName}`,
     fileName,
     parsed: {
       fileName,
-      meta,
+      meta: { fields: [{ key: 'lotId', value: lotId }] },
       wafers: waferIds.map(id => ({ waferId: id, results: [{ x: 0, y: 0, hbin: 1 }] })),
       testDefs: {},
     },
   });
+  const lotOf = (src: { fields: { key: string; value: string }[] }) =>
+    src.fields.find(f => f.key === 'lotId')?.value;
 
   it('produces one row per wafer across all entries', () => {
     const rows = buildRenameRows([
-      entry('a.stdf', { lotId: 'A' }, ['W1', 'W2']),
-      entry('b.stdf', { lotId: 'B' }, ['W1']),
+      entry('a.stdf', 'A', ['W1', 'W2']),
+      entry('b.stdf', 'B', ['W1']),
     ]);
     expect(rows).toHaveLength(3);
   });
 
   it('shares ONE source instance by reference across an entry’s wafers', () => {
-    const rows = buildRenameRows([entry('a.stdf', { lotId: 'A' }, ['W1', 'W2', 'W3'])]);
+    const rows = buildRenameRows([entry('a.stdf', 'A', ['W1', 'W2', 'W3'])]);
     expect(rows[0].source).toBe(rows[1].source); // same reference, not just equal
     expect(rows[1].source).toBe(rows[2].source);
-    expect(rows[0].source.lotId).toBe('A');
+    expect(lotOf(rows[0].source)).toBe('A');
     expect(rows[0].source.sourceFile).toBe('a.stdf');
   });
 
   it('uses distinct source instances for distinct entries', () => {
     const rows = buildRenameRows([
-      entry('a.stdf', { lotId: 'A' }, ['W1']),
-      entry('b.stdf', { lotId: 'B' }, ['W1']),
+      entry('a.stdf', 'A', ['W1']),
+      entry('b.stdf', 'B', ['W1']),
     ]);
     expect(rows[0].source).not.toBe(rows[1].source);
-    expect(rows[0].source.lotId).toBe('A');
-    expect(rows[1].source.lotId).toBe('B');
+    expect(lotOf(rows[0].source)).toBe('A');
+    expect(lotOf(rows[1].source)).toBe('B');
   });
 });

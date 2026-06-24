@@ -74,11 +74,15 @@ PTR = (15, 10)
 def stdf_far():
     return stdf_rec(*FAR, u1(2) + u1(4))
 
-def stdf_mir(lot_id, part_typ, job_nam, node_nam, tstr_typ):
-    body = (u4(0) + u4(0) + u1(1) + b'P' + b' ' + b' ' + u2(0xFFFF) + b' ' +
-            cn(lot_id) + cn(part_typ) + cn(node_nam) + cn(tstr_typ) +
-            cn(job_nam) + cn('1.0') + cn('') + cn('') + cn('') + cn('') +
-            cn('') + cn('25C') + cn('') + cn('') + cn('') + cn('') + cn('') +
+def stdf_mir(lot_id, part_typ, meta):
+    # MIR body order: setup_t, start_t, stat_num, mode_cod, rtst_cod, prot_cod,
+    # burn_tim, cmod_cod, lot_id, part_typ, node_nam, tstr_typ, job_nam, job_rev,
+    # sblot_id, oper_nam, exec_typ, exec_ver, test_cod, tst_temp, ...
+    start_t = meta.get('start_t', 0)
+    body = (u4(0) + u4(start_t) + u1(1) + b'P' + b' ' + b' ' + u2(0xFFFF) + b' ' +
+            cn(lot_id) + cn(part_typ) + cn(meta.get('node', 'node-01')) + cn(meta.get('tstr', 'Tester-1')) +
+            cn(meta.get('program', 'test_program')) + cn('1.0') + cn('') + cn(meta.get('oper', '')) + cn('') + cn('') +
+            cn('') + cn(meta.get('temp', '25C')) + cn('') + cn('') + cn('') + cn('') + cn('') +
             cn('') + cn('') + cn('') + cn('') + cn('') + cn('') + cn('') +
             cn('') + cn('') + cn(''))
     return stdf_rec(*MIR, body)
@@ -122,7 +126,7 @@ def build_stdf(lot_id, part_typ, wafer_data: dict) -> bytes:
     """wafer_data: {wafer_id: [row, ...]}"""
     buf = bytearray()
     buf += stdf_far()
-    buf += stdf_mir(lot_id, part_typ, 'test_program', 'node-01', 'Tester-1')
+    buf += stdf_mir(lot_id, part_typ, LOT_META.get(lot_id, {}))
     buf += stdf_sdr()
     part_id = 1
     first_limits = True
@@ -188,6 +192,19 @@ def build_atdf(lot_id, part_typ, wafer_data: dict) -> str:
     return '\n'.join(lines) + '\n'
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────
+
+# Per-lot MIR metadata so the faceting demo has fields that actually VARY across
+# lots: program, temperature, test date (epoch), operator, tester, node. Without
+# this every lot shares one program/temp/date and only lot/part-type can be
+# grouped on. Dates are days apart so "group by date" buckets distinctly.
+DAY = 86_400
+BASE_EPOCH = 1_750_000_000  # ~2025-06-15
+LOT_META = {
+    'EDGE-LOT-01':  dict(program='EDGE_v2',  temp='25C',  start_t=BASE_EPOCH,            oper='alice', tstr='Tester-1', node='node-01'),
+    'HY-LOT-04':    dict(program='HY_v3',    temp='25C',  start_t=BASE_EPOCH + 1 * DAY,  oper='bob',   tstr='Tester-1', node='node-02'),
+    'CLUST-LOT-03': dict(program='CLUST_v1', temp='-40C', start_t=BASE_EPOCH + 5 * DAY,  oper='alice', tstr='Tester-2', node='node-02'),
+    'PARAM-LOT-02': dict(program='PARAM_v5', temp='85C',  start_t=BASE_EPOCH + 5 * DAY,  oper='carol', tstr='Tester-2', node='node-03'),
+}
 
 SCENARIOS = [
     ('edge-ring.csv',  'EDGE-LOT-01', 'CHIP-A'),

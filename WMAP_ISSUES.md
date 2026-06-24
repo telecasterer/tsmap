@@ -9,8 +9,8 @@ At some point these will be converted into an implementation plan for wmap.
 |-------|-------|
 | wmap version in use | 0.15.0 |
 | Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| testdata-parser version | 0.2.3 |
-| Last updated | 2026-06-23 (wmap 0.15.0 — **breaking**: `DieMetadata` wafer-level fields removed + `buildHoverText` `waferMeta?` param; tooltip merges wafer metadata; `WaferMetadata`/`DieMetadata` re-exported from `/renderer`; summary-panel clipping fix. tsmap now feeds wafer metadata via `toWmapWaferMeta`) |
+| testdata-parser version | 0.3.1 |
+| Last updated | 2026-06-24 (testdata-parser 0.3.0 — generic `LotMeta.fields`/`WaferData.fields` (all MIR/WIR/WRR fields); 0.3.1 — CSV/JSON `site` column → per-die `site_num` parity. wmap still 0.15.0.) |
 
 ## Rust Backend Notes
 
@@ -283,3 +283,26 @@ So even a prefixed shim isn't enough on macOS Tauri without opting into private 
 **Problem:** `WaferMetadata` (used to build `WaferConfig.metadata`) and `DieMetadata` are renderer-input concepts but were re-exported only from `/core`, so a consumer building renderer input had to import the renderer functions from `/renderer` and these types from `/core`.
 
 **Fix applied (0.15.0):** `packages/renderer/index.ts` now `export type { WaferMetadata, DieMetadata } from '../core/metadata.js'`.
+
+### 20. tsmap/wmap capability boundary — charts ↔ summary-panel redundancy (architectural, ongoing)
+
+**Context:** tsmap has become a proving-ground for analysis/visualisation ideas. Several now overlap what wmap's summary panel already does, and the strategic question is *where each capability should ultimately live* — tsmap-only, or promoted into wmap so every wmap host benefits. The owner is not against moving more into wmap when that's the best home; the point of this entry is to make the boundary a deliberate, logged decision rather than drift.
+
+**The redundancy (centred on the gallery LOT panel, which is at the same scope as tsmap's charts page):**
+
+| Metric | wmap gallery lot panel (`renderLotSummaryContent`) | tsmap charts page | Overlap |
+|--------|---------------------------------------------------|-------------------|---------|
+| Per-wafer yield | "Per-wafer yield" list | "Yield by wafer" bars | direct duplication |
+| Lot bin breakdown | "Lot bin" (pooled) | "Bin pareto" (pooled) | direct duplication |
+| Per-test value stats | "Lot test value" numbers | Boxplot + Histogram | strong (numbers vs. distribution) |
+| Ring / quadrant / site / findings | yes | — | panel only |
+| Trend, correlation, scatter, **metadata/lot faceting** | — | yes | charts only |
+
+**Clean split:** the **panel** uniquely owns spatial + significance *findings* (always beside the maps); the **charts** uniquely own trends, correlation, scatter, and **group/compare by metadata or lot** (tsmap's faceting work). The middle band (per-wafer yield, bin pareto, per-test summary) is duplicated.
+
+**Capabilities tsmap built that are wmap-promotion candidates** (each: does every wmap host want this? if yes, it likely belongs in wmap):
+- **Faceting / group-compare** by lot/program/temperature/date — combined yield-per-group, boxplot-per-group, overlaid histograms, clustered bin pareto, scatter-coloured-by-group, correlation restricted-to-group. (tsmap `src/charts/`.)
+- **Generic metadata model** — `{key,value}` fields with host-side curation (already partly in wmap via `WaferMetadata`'s open index; the *faceting* on top is tsmap's).
+- **Interactive distribution charts** (boxplot, histogram, correlation matrix, scatter) vs. the panel's numeric summaries.
+
+**Suggested direction (to decide in a working session):** pick per-capability among (a) lean-in + signpost the panel-vs-charts split (cheapest), (b) trim tsmap's duplicated chart panels in favour of the panel, or (c) promote the genuinely-better tsmap capability into wmap. No change made yet — recorded so the boundary is chosen deliberately. See the tsmap plan file "Phase 8" section for the fuller analysis.

@@ -17,40 +17,43 @@ export function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
 /**
  * Build a `WaferSource` provenance tag from a parsed file's lot metadata and
  * filename. One instance is created per loaded file and shared by reference
- * across all wafers it produced (see `stampSource` in main.ts) — do not call
- * this per-wafer. `program`/`temp`/`date` are not in today's `LotMeta`; they
- * arrive via `extras` once the parser is enriched (plan Phase 6).
+ * across all wafers it produced (see stamping in main.ts) — do not call this
+ * per-wafer. The lot `fields` are carried verbatim (generic key/value); the
+ * curation table in metadata.ts owns labels and which fields are surfaced.
  */
 export function makeWaferSource(meta: LotMeta, sourceFile: string): WaferSource {
-  return {
-    lotId: meta.lotId,
-    sublotId: meta.sublotId,
-    partType: meta.partType,
-    testerType: meta.testerType,
-    nodeName: meta.nodeName,
-    sourceFile,
-  };
+  return { sourceFile, fields: meta.fields ?? [] };
 }
+
+// Map raw metadata keys → wmap WaferMetadata named slots, so wmap renders them
+// with its own nice labels. Unknown keys pass through verbatim via the open
+// index signature, so nothing is lost. `temperature` is coerced to a number.
+const WMAP_META_KEY: Record<string, keyof WaferMetadata> = {
+  lotId: 'lot',
+  partType: 'product',
+  jobName: 'testProgram',
+  startT: 'testDate',
+  operName: 'operator',
+};
 
 /**
  * Map a tsmap `WaferSource` to wmap's `WaferMetadata` (passed as
  * `buildWaferMap({ waferConfig: { metadata } })`). Wafer-level only — tsmap
- * does not stamp per-die `DieMetadata`. Omitted fields stay undefined so wmap
- * shows nothing rather than blanks. `extras` flow through wmap's open index
- * signature.
+ * does not stamp per-die `DieMetadata`. Known keys map to wmap's named slots;
+ * everything else flows through wmap's open index signature.
  */
 export function toWmapWaferMeta(source: WaferSource | undefined, waferId: string): WaferMetadata | undefined {
   if (!source) return undefined;
   const meta: WaferMetadata = { waferId };
-  if (source.lotId !== undefined) meta.lot = source.lotId;
-  if (source.partType !== undefined) meta.product = source.partType;
-  if (source.program !== undefined) meta.testProgram = source.program;
-  if (source.date !== undefined) meta.testDate = source.date;
-  if (source.temp !== undefined) {
-    const t = Number(source.temp);
-    if (Number.isFinite(t)) meta.temperature = t;
+  for (const { key, value } of source.fields) {
+    if (key === 'testTemp') {
+      const t = Number(value);
+      if (Number.isFinite(t)) meta.temperature = t; else meta.testTemp = value;
+    } else {
+      const mapped = WMAP_META_KEY[key];
+      meta[mapped ?? key] = value;
+    }
   }
-  if (source.extras) for (const [k, v] of Object.entries(source.extras)) meta[k] = v;
   return meta;
 }
 

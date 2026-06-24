@@ -43,6 +43,37 @@ fn nonempty(s: &str) -> Option<String> {
     if t.is_empty() { None } else { Some(t.to_string()) }
 }
 
+// ── Metadata extraction (generic, all non-empty fields) ────────────────────────
+// Emit every non-empty MIR/WIR/WRR field as a key/value pair, keyed with the
+// SAME camelCase keys the STDF parser uses so faceting is format-agnostic. ATDF
+// timestamps are already human-readable strings, so they pass through verbatim.
+// (ATDF→STDF-key map; left = ATDF field name, right = emitted key.)
+const MIR_KEYS: &[(&str, &str)] = &[
+    ("SETUP_T","setupT"), ("START_T","startT"), ("LOT_ID","lotId"),
+    ("PART_TYP","partType"), ("NODE_NAM","nodeName"), ("TSTR_TYP","testerType"),
+    ("JOB_NAM","jobName"), ("JOB_REV","jobRev"), ("SBLOT_ID","sublotId"),
+    ("OPER_NAM","operName"), ("EXEC_TYP","execType"), ("EXEC_VER","execVer"),
+    ("TEST_COD","testCode"), ("TST_TEMP","testTemp"), ("USER_TXT","userText"),
+    ("AUX_FILE","auxFile"), ("PKG_TYP","packageType"), ("FAMLY_ID","familyId"),
+    ("DATE_COD","dateCode"), ("FACIL_ID","facilityId"), ("FLOOR_ID","floorId"),
+    ("PROC_ID","processId"), ("OPER_FRQ","operFreq"), ("SPEC_NAM","specName"),
+    ("SPEC_VER","specVer"), ("FLOW_ID","flowId"), ("SETUP_ID","setupId"),
+    ("DSGN_REV","designRev"), ("ENG_ID","engId"), ("ROM_COD","romCode"),
+    ("SERL_NUM","serialNum"), ("SUPR_NAM","supervisorName"),
+];
+const WRR_KEYS: &[(&str, &str)] = &[
+    ("FINISH_T","waferFinishT"), ("FABWF_ID","fabWaferId"), ("FRAME_ID","frameId"),
+    ("MASK_ID","maskId"), ("USR_DESC","waferDescUser"), ("EXC_DESC","waferDescExec"),
+];
+
+fn fields_from(m: &HashMap<&str, &str>, keys: &[(&str, &str)]) -> Vec<MetaField> {
+    let mut f = Vec::new();
+    for (atdf, key) in keys {
+        push_field(&mut f, key, nonempty(get(m, atdf)));
+    }
+    f
+}
+
 /// Build the soft-bin advisory shown to the host when SOFT_BIN was the sentinel
 /// 65535 ("no soft bin") and we mirrored the hard bin instead. Returns an empty
 /// vec when no fabrication happened, so the field is omitted from serialisation.
@@ -104,12 +135,7 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
         match name {
             "MIR" => {
                 let f = field_map(MIR, &raw_fields);
-                meta.lot_id      = nonempty(get(&f, "LOT_ID"));
-                meta.part_type   = nonempty(get(&f, "PART_TYP"));
-                meta.job_name    = nonempty(get(&f, "JOB_NAM"));
-                meta.node_name   = nonempty(get(&f, "NODE_NAM"));
-                meta.tester_type = nonempty(get(&f, "TSTR_TYP"));
-                meta.sublot_id   = nonempty(get(&f, "SBLOT_ID"));
+                meta.fields = fields_from(&f, MIR_KEYS);
             }
             "WIR" => {
                 let f = field_map(WIR, &raw_fields);
@@ -117,17 +143,21 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
                     let id = get(&f, "WAFER_ID");
                     if id.is_empty() { format!("W{}", wafers.len() + 1) } else { id.to_string() }
                 };
+                let mut fields = Vec::new();
+                push_field(&mut fields, "waferStartT", nonempty(get(&f, "START_T")));
                 current_wafer = Some(WaferData {
                     wafer_id,
                     results: Vec::new(),
                     part_count: None,
                     good_count: None,
                     fail_count: None,
+                    fields,
                 });
             }
             "WRR" => {
                 let f = field_map(WRR, &raw_fields);
                 if let Some(mut w) = current_wafer.take() {
+                    w.fields.extend(fields_from(&f, WRR_KEYS));
                     let wid = get(&f, "WAFER_ID");
                     if !wid.is_empty() { w.wafer_id = wid.to_string(); }
                     w.part_count = get(&f, "PART_CNT").parse().ok();
@@ -216,6 +246,7 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
                             part_count: None,
                             good_count: None,
                             fail_count: None,
+                            fields: Vec::new(),
                         };
                         w.results.push(die);
                         current_wafer = Some(w);
@@ -377,12 +408,7 @@ fn parse_atdf_str_filtered(
         match name {
             "MIR" => {
                 let f = field_map(MIR, &raw_fields);
-                meta.lot_id      = nonempty(get(&f, "LOT_ID"));
-                meta.part_type   = nonempty(get(&f, "PART_TYP"));
-                meta.job_name    = nonempty(get(&f, "JOB_NAM"));
-                meta.node_name   = nonempty(get(&f, "NODE_NAM"));
-                meta.tester_type = nonempty(get(&f, "TSTR_TYP"));
-                meta.sublot_id   = nonempty(get(&f, "SBLOT_ID"));
+                meta.fields = fields_from(&f, MIR_KEYS);
             }
             "WIR" => {
                 let f = field_map(WIR, &raw_fields);
@@ -390,17 +416,21 @@ fn parse_atdf_str_filtered(
                     let id = get(&f, "WAFER_ID");
                     if id.is_empty() { format!("W{}", wafers.len() + 1) } else { id.to_string() }
                 };
+                let mut fields = Vec::new();
+                push_field(&mut fields, "waferStartT", nonempty(get(&f, "START_T")));
                 current_wafer = Some(WaferData {
                     wafer_id,
                     results: Vec::new(),
                     part_count: None,
                     good_count: None,
                     fail_count: None,
+                    fields,
                 });
             }
             "WRR" => {
                 let f = field_map(WRR, &raw_fields);
                 if let Some(mut w) = current_wafer.take() {
+                    w.fields.extend(fields_from(&f, WRR_KEYS));
                     let wid = get(&f, "WAFER_ID");
                     if !wid.is_empty() { w.wafer_id = wid.to_string(); }
                     w.part_count = get(&f, "PART_CNT").parse().ok();
@@ -499,6 +529,7 @@ fn parse_atdf_str_filtered(
                             part_count: None,
                             good_count: None,
                             fail_count: None,
+                            fields: Vec::new(),
                         };
                         w.results.push(die);
                         current_wafer = Some(w);
@@ -566,12 +597,12 @@ mod tests {
         let text = one_wafer("W1", &(pir(1,1) + &prr(1,1,0,0,1,1)));
         let path = tmp(&text);
         let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
-        assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-01"));
-        assert_eq!(result.meta.part_type.as_deref(), Some("WIDGET"));
-        assert_eq!(result.meta.job_name.as_deref(), Some("JOB1"));
-        assert_eq!(result.meta.node_name.as_deref(), Some("NODE1"));
-        assert_eq!(result.meta.tester_type.as_deref(), Some("TSTR-A"));
-        assert_eq!(result.meta.sublot_id.as_deref(), Some("SUBLOT-1"));
+        assert_eq!(result.meta.get("lotId"), Some("LOT-01"));
+        assert_eq!(result.meta.get("partType"), Some("WIDGET"));
+        assert_eq!(result.meta.get("jobName"), Some("JOB1"));
+        assert_eq!(result.meta.get("nodeName"), Some("NODE1"));
+        assert_eq!(result.meta.get("testerType"), Some("TSTR-A"));
+        assert_eq!(result.meta.get("sublotId"), Some("SUBLOT-1"));
     }
 
     #[test]
@@ -579,8 +610,8 @@ mod tests {
         let text = format!("{}MIR:\n", far());
         let path = tmp(&text);
         let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
-        assert!(result.meta.lot_id.is_none());
-        assert!(result.meta.part_type.is_none());
+        assert!(result.meta.get("lotId").is_none());
+        assert!(result.meta.get("partType").is_none());
     }
 
     #[test]
@@ -798,7 +829,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sample_data/CLUST-LOT-03.atdf");
         let result = parse_atdf_sync(path.to_string()).unwrap();
         assert!(result.wafers.len() > 1, "expected multiple wafers");
-        assert!(result.meta.lot_id.is_some(), "expected lot ID");
+        assert!(result.meta.get("lotId").is_some(), "expected lot ID");
         for w in &result.wafers {
             assert!(!w.results.is_empty(), "wafer {} has no dies", w.wafer_id);
         }
@@ -829,7 +860,7 @@ mod tests {
         let gz_path = gz_of(plain_path);
         let gz      = parse_atdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(gz.wafers.len(), plain.wafers.len());
-        assert_eq!(gz.meta.lot_id, plain.meta.lot_id);
+        assert_eq!(gz.meta.get("lotId"), plain.meta.get("lotId"));
         let plain_dies: usize = plain.wafers.iter().map(|w| w.results.len()).sum();
         let gz_dies:    usize = gz.wafers.iter().map(|w| w.results.len()).sum();
         assert_eq!(gz_dies, plain_dies);

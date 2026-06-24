@@ -105,7 +105,7 @@ describe('autoPlotMode', () => {
 function makeParsed(testDefs: Record<string, TestDef>, testValues: Record<number, number> = {}): ParsedFile {
   return {
     fileName: 'test.stdf',
-    meta: {},
+    meta: { fields: [] },
     wafers: [{
       waferId: 'W1',
       results: [{ x: 0, y: 0, hbin: 1, testValues }],
@@ -183,7 +183,7 @@ describe('applyTestSelection', () => {
   it('handles dies with no testValues gracefully', () => {
     const parsed: ParsedFile = {
       fileName: 'test.stdf',
-      meta: {},
+      meta: { fields: [] },
       wafers: [{ waferId: 'W1', results: [{ x: 0, y: 0, hbin: 1 }] }],
       testDefs: { '1001': { name: 'A', testType: 'P' } },
     };
@@ -194,36 +194,34 @@ describe('applyTestSelection', () => {
 // ── makeWaferSource ─────────────────────────────────────────────────────────────
 
 describe('makeWaferSource', () => {
-  it('maps LotMeta fields and the filename onto a WaferSource', () => {
-    const meta: LotMeta = { lotId: 'LOT1', sublotId: 'SUB1', partType: 'NMOS', testerType: 'T100', nodeName: 'N1' };
+  it('carries the lot fields and filename onto a WaferSource', () => {
+    const meta: LotMeta = { fields: [
+      { key: 'lotId', value: 'LOT1' }, { key: 'partType', value: 'NMOS' },
+    ] };
     const src = makeWaferSource(meta, 'lot1.stdf');
-    expect(src).toEqual({
-      lotId: 'LOT1', sublotId: 'SUB1', partType: 'NMOS', testerType: 'T100', nodeName: 'N1',
-      sourceFile: 'lot1.stdf',
-    });
+    expect(src.sourceFile).toBe('lot1.stdf');
+    expect(src.fields).toEqual(meta.fields);
   });
 
-  it('leaves absent LotMeta fields undefined', () => {
-    const src = makeWaferSource({}, 'bare.csv');
+  it('handles an empty lot meta', () => {
+    const src = makeWaferSource({ fields: [] }, 'bare.csv');
     expect(src.sourceFile).toBe('bare.csv');
-    expect(src.lotId).toBeUndefined();
-    expect(src.partType).toBeUndefined();
+    expect(src.fields).toEqual([]);
   });
 });
 
 // ── toWmapWaferMeta ─────────────────────────────────────────────────────────────
+
+const source = (o: Record<string, string>): WaferSource =>
+  ({ sourceFile: 'f', fields: Object.entries(o).map(([key, value]) => ({ key, value })) });
 
 describe('toWmapWaferMeta', () => {
   it('returns undefined when there is no source', () => {
     expect(toWmapWaferMeta(undefined, 'W1')).toBeUndefined();
   });
 
-  it('maps WaferSource fields to wmap WaferMetadata names', () => {
-    const src: WaferSource = {
-      lotId: 'LOT1', partType: 'NMOS', program: 'PGM_X', date: '2026-06-23', temp: '25',
-      sourceFile: 'lot1.stdf',
-    };
-    const m = toWmapWaferMeta(src, 'W7')!;
+  it('maps known keys to wmap WaferMetadata names', () => {
+    const m = toWmapWaferMeta(source({ lotId: 'LOT1', partType: 'NMOS', jobName: 'PGM_X', startT: '2026-06-23', testTemp: '25' }), 'W7')!;
     expect(m.waferId).toBe('W7');
     expect(m.lot).toBe('LOT1');
     expect(m.product).toBe('NMOS');
@@ -232,21 +230,21 @@ describe('toWmapWaferMeta', () => {
     expect(m.temperature).toBe(25); // coerced to number
   });
 
-  it('omits temperature when not numeric', () => {
-    const m = toWmapWaferMeta({ temp: 'hot', sourceFile: 'f' }, 'W1')!;
+  it('keeps temperature as a string field when not numeric', () => {
+    const m = toWmapWaferMeta(source({ testTemp: 'hot' }), 'W1')!;
     expect(m.temperature).toBeUndefined();
+    expect(m.testTemp).toBe('hot');
   });
 
-  it('omits fields absent on the source rather than emitting blanks', () => {
-    const m = toWmapWaferMeta({ sourceFile: 'f' }, 'W1')!;
+  it('passes unknown keys through wmap’s open index signature', () => {
+    const m = toWmapWaferMeta(source({ frameId: 'FR-9', customThing: 'X' }), 'W1')!;
+    expect(m.frameId).toBe('FR-9');
+    expect(m.customThing).toBe('X');
+  });
+
+  it('emits only waferId when the source has no fields', () => {
+    const m = toWmapWaferMeta(source({}), 'W1')!;
     expect(m.waferId).toBe('W1');
     expect('lot' in m).toBe(false);
-    expect('product' in m).toBe(false);
-  });
-
-  it('passes extras through wmap’s open index signature', () => {
-    const m = toWmapWaferMeta({ sourceFile: 'f', extras: { handler: 'H1', site: '3' } }, 'W1')!;
-    expect(m.handler).toBe('H1');
-    expect(m.site).toBe('3');
   });
 });

@@ -10,6 +10,72 @@ fn nonempty(s: String) -> Option<String> {
 const SENTINEL_U4: u32 = 4_294_967_295;
 const SENTINEL_I2: i16 = -32768;
 
+// ── Metadata extraction (generic, all non-empty fields) ────────────────────────
+// We emit every non-empty MIR/WIR/WRR field as a raw key/value pair. tsmap owns
+// friendly labels and which fields to surface, so adding or relabelling a facet
+// never requires republishing this crate. Keys are camelCase STDF field names.
+
+/// All non-empty lot-level fields from the MIR record.
+fn mir_fields(mir: &rust_stdf::MIR) -> Vec<MetaField> {
+    let mut f = Vec::new();
+    // Timestamps → ISO 8601 (host truncates to date where it groups by date).
+    push_field(&mut f, "setupT", epoch_to_iso(mir.setup_t));
+    push_field(&mut f, "startT", epoch_to_iso(mir.start_t));
+    // Character fields (Cn → String). Single-char code fields (C1) are skipped as
+    // low-value; tsmap can ignore any it doesn't want regardless.
+    push_field(&mut f, "lotId",    nonempty(mir.lot_id.clone()));
+    push_field(&mut f, "partType", nonempty(mir.part_typ.clone()));
+    push_field(&mut f, "nodeName", nonempty(mir.node_nam.clone()));
+    push_field(&mut f, "testerType", nonempty(mir.tstr_typ.clone()));
+    push_field(&mut f, "jobName",  nonempty(mir.job_nam.clone()));
+    push_field(&mut f, "jobRev",   nonempty(mir.job_rev.clone()));
+    push_field(&mut f, "sublotId", nonempty(mir.sblot_id.clone()));
+    push_field(&mut f, "operName", nonempty(mir.oper_nam.clone()));
+    push_field(&mut f, "execType", nonempty(mir.exec_typ.clone()));
+    push_field(&mut f, "execVer",  nonempty(mir.exec_ver.clone()));
+    push_field(&mut f, "testCode", nonempty(mir.test_cod.clone()));
+    push_field(&mut f, "testTemp", nonempty(mir.tst_temp.clone()));
+    push_field(&mut f, "userText", nonempty(mir.user_txt.clone()));
+    push_field(&mut f, "auxFile",  nonempty(mir.aux_file.clone()));
+    push_field(&mut f, "packageType", nonempty(mir.pkg_typ.clone()));
+    push_field(&mut f, "familyId", nonempty(mir.famly_id.clone()));
+    push_field(&mut f, "dateCode", nonempty(mir.date_cod.clone()));
+    push_field(&mut f, "facilityId", nonempty(mir.facil_id.clone()));
+    push_field(&mut f, "floorId",  nonempty(mir.floor_id.clone()));
+    push_field(&mut f, "processId", nonempty(mir.proc_id.clone()));
+    push_field(&mut f, "operFreq", nonempty(mir.oper_frq.clone()));
+    push_field(&mut f, "specName", nonempty(mir.spec_nam.clone()));
+    push_field(&mut f, "specVer",  nonempty(mir.spec_ver.clone()));
+    push_field(&mut f, "flowId",   nonempty(mir.flow_id.clone()));
+    push_field(&mut f, "setupId",  nonempty(mir.setup_id.clone()));
+    push_field(&mut f, "designRev", nonempty(mir.dsgn_rev.clone()));
+    push_field(&mut f, "engId",    nonempty(mir.eng_id.clone()));
+    push_field(&mut f, "romCode",  nonempty(mir.rom_cod.clone()));
+    push_field(&mut f, "serialNum", nonempty(mir.serl_num.clone()));
+    push_field(&mut f, "supervisorName", nonempty(mir.supr_nam.clone()));
+    f
+}
+
+/// All non-empty wafer-level string fields from a WIR record.
+fn wir_fields(wir: &rust_stdf::WIR) -> Vec<MetaField> {
+    let mut f = Vec::new();
+    push_field(&mut f, "waferStartT", epoch_to_iso(wir.start_t));
+    f
+}
+
+/// All non-empty wafer-level string fields from a WRR record (appended to the
+/// wafer's existing fields). Numeric counts are surfaced via partCount etc.
+fn wrr_fields(wrr: &rust_stdf::WRR) -> Vec<MetaField> {
+    let mut f = Vec::new();
+    push_field(&mut f, "waferFinishT", epoch_to_iso(wrr.finish_t));
+    push_field(&mut f, "fabWaferId", nonempty(wrr.fabwf_id.clone()));
+    push_field(&mut f, "frameId", nonempty(wrr.frame_id.clone()));
+    push_field(&mut f, "maskId",  nonempty(wrr.mask_id.clone()));
+    push_field(&mut f, "waferDescUser", nonempty(wrr.usr_desc.clone()));
+    push_field(&mut f, "waferDescExec", nonempty(wrr.exc_desc.clone()));
+    f
+}
+
 // ── Warnings ───────────────────────────────────────────────────────────────────
 
 /// Build the soft-bin advisory shown to the host when a PRR's soft bin was the
@@ -410,6 +476,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                         part_count: None,
                         good_count: None,
                         fail_count: None,
+                        fields: Vec::new(),
                     });
                 }
                 if let Some(ref mut wafer) = current_wafer {
@@ -423,12 +490,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                 rec.read_from_bytes(b, &raw.byte_order);
                 match rec {
                     StdfRecord::MIR(mir) => {
-                        meta.lot_id      = nonempty(mir.lot_id);
-                        meta.part_type   = nonempty(mir.part_typ);
-                        meta.job_name    = nonempty(mir.job_nam);
-                        meta.tester_type = nonempty(mir.tstr_typ);
-                        meta.node_name   = nonempty(mir.node_nam);
-                        meta.sublot_id   = nonempty(mir.sblot_id);
+                        meta.fields = mir_fields(&mir);
                     }
                     StdfRecord::SDR(sdr) => {
                         for &site in &sdr.site_num {
@@ -439,6 +501,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                         }
                     }
                     StdfRecord::WIR(wir) => {
+                        let fields = wir_fields(&wir);
                         current_wafer = Some(WaferData {
                             wafer_id: if wir.wafer_id.is_empty() {
                                 format!("W{}", wafers.len() + 1)
@@ -449,10 +512,12 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                             part_count: None,
                             good_count: None,
                             fail_count: None,
+                            fields,
                         });
                     }
                     StdfRecord::WRR(wrr) => {
                         if let Some(mut wafer) = current_wafer.take() {
+                            wafer.fields.extend(wrr_fields(&wrr));
                             if !wrr.wafer_id.is_empty() {
                                 wafer.wafer_id = wrr.wafer_id;
                             }
@@ -714,6 +779,7 @@ pub fn parse_stdf_from_bytes_filtered(
                         part_count: None,
                         good_count: None,
                         fail_count: None,
+                        fields: Vec::new(),
                     });
                 }
                 if let Some(ref mut wafer) = current_wafer { wafer.results.push(die); }
@@ -724,12 +790,7 @@ pub fn parse_stdf_from_bytes_filtered(
                 rec.read_from_bytes(b, &raw.byte_order);
                 match rec {
                     StdfRecord::MIR(mir) => {
-                        meta.lot_id      = nonempty(mir.lot_id);
-                        meta.part_type   = nonempty(mir.part_typ);
-                        meta.job_name    = nonempty(mir.job_nam);
-                        meta.tester_type = nonempty(mir.tstr_typ);
-                        meta.node_name   = nonempty(mir.node_nam);
-                        meta.sublot_id   = nonempty(mir.sblot_id);
+                        meta.fields = mir_fields(&mir);
                     }
                     StdfRecord::SDR(sdr) => {
                         for &site in &sdr.site_num {
@@ -740,6 +801,7 @@ pub fn parse_stdf_from_bytes_filtered(
                         }
                     }
                     StdfRecord::WIR(wir) => {
+                        let fields = wir_fields(&wir);
                         current_wafer = Some(WaferData {
                             wafer_id: if wir.wafer_id.is_empty() {
                                 format!("W{}", wafers.len() + 1)
@@ -750,6 +812,7 @@ pub fn parse_stdf_from_bytes_filtered(
                             part_count: None,
                             good_count: None,
                             fail_count: None,
+                            fields,
                         });
                     }
                     StdfRecord::WRR(wrr) => {
@@ -925,12 +988,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                 rec.read_from_bytes(b, &raw.byte_order);
                 match rec {
                     StdfRecord::MIR(mir) => {
-                        meta.lot_id      = nonempty(mir.lot_id);
-                        meta.part_type   = nonempty(mir.part_typ);
-                        meta.job_name    = nonempty(mir.job_nam);
-                        meta.tester_type = nonempty(mir.tstr_typ);
-                        meta.node_name   = nonempty(mir.node_nam);
-                        meta.sublot_id   = nonempty(mir.sblot_id);
+                        meta.fields = mir_fields(&mir);
                     }
                     StdfRecord::SDR(sdr) => {
                         for &site in &sdr.site_num {
@@ -982,6 +1040,8 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
 
 #[cfg(test)]
 mod tests {
+
+
     use super::*;
 
     const MULTI_WAFER: &str =
@@ -992,8 +1052,8 @@ mod tests {
     #[test]
     fn multi_wafer_lot_meta() {
         let result = parse_stdf_sync(MULTI_WAFER.to_string()).unwrap();
-        assert!(result.meta.lot_id.is_some(), "expected lot_id");
-        assert!(result.meta.part_type.is_some(), "expected part_type");
+        assert!(result.meta.get("lotId").is_some(), "expected lot_id");
+        assert!(result.meta.get("partType").is_some(), "expected part_type");
     }
 
     #[test]
@@ -1100,7 +1160,7 @@ mod tests {
         let gz_path = gz_of(MULTI_WAFER);
         let gz      = parse_stdf_sync(gz_path.to_str().unwrap().to_string()).unwrap();
         assert_eq!(gz.wafers.len(), plain.wafers.len());
-        assert_eq!(gz.meta.lot_id, plain.meta.lot_id);
+        assert_eq!(gz.meta.get("lotId"), plain.meta.get("lotId"));
         let plain_dies: usize = plain.wafers.iter().map(|w| w.results.len()).sum();
         let gz_dies:    usize = gz.wafers.iter().map(|w| w.results.len()).sum();
         assert_eq!(gz_dies, plain_dies);

@@ -29,6 +29,11 @@ pub struct CsvMapping {
     pub sbin: Option<String>,
     pub wafer: Option<String>,
     pub lot: Option<String>,
+    /// Optional column mapped to the per-die test site (STDF `site_num`). Parsed
+    /// numerically; non-numeric values become no site for that die. `#[serde(default)]`
+    /// so older mapping payloads without the field still deserialize.
+    #[serde(default)]
+    pub site: Option<String>,
     pub tests: Vec<CsvTestCol>,
     pub meta: Vec<String>,
     pub split_by: Vec<String>,
@@ -186,6 +191,7 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
                 if let Some(c) = &mapping.lot   { m.insert(c.clone(), lot.clone()); }
                 if let Some(c) = &mapping.hbin  { m.insert(c.clone(), get(rec, c)); }
                 if let Some(c) = &mapping.sbin  { m.insert(c.clone(), get(rec, c)); }
+                if let Some(c) = &mapping.site  { m.insert(c.clone(), get(rec, c)); }
                 for c in &mapping.meta { m.insert(c.clone(), get(rec, c)); }
                 m
             });
@@ -288,6 +294,11 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
                 mapping.sbin.as_deref().and_then(|c| row.get(c)).and_then(|v| v.parse().ok())
             } else { None };
 
+            // Per-die test site (parity with STDF/ATDF). Numeric only — a
+            // non-numeric site label yields no site for that die.
+            let site_num: Option<u32> = mapping.site.as_deref()
+                .and_then(|c| row.get(c)).and_then(|v| v.trim().parse().ok());
+
             let mut test_values: HashMap<String, f64> = HashMap::new();
 
             if is_long_format {
@@ -307,7 +318,7 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
 
             dies.push(DieResult {
                 x, y, hbin, sbin,
-                site_num: None,
+                site_num,
                 part_id: None,
                 test_values,
             });
@@ -326,21 +337,22 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
             part_count: Some(part_count),
             good_count: Some(good_count),
             fail_count: Some(part_count - good_count),
+            fields: Vec::new(),
         });
     }
 
-    let meta = if let Some(first) = active_rows.first() {
-        LotMeta {
-            lot_id: mapping.lot.as_deref().and_then(|c| first.get(c)).filter(|v| !v.is_empty()).cloned(),
-            part_type: None,
-            job_name: None,
-            tester_type: None,
-            node_name: None,
-            sublot_id: None,
+    // Lot metadata from the mapped `lot` column plus every user-mapped metadata
+    // column, taken from the first active row. Keyed by the column name so tsmap
+    // surfaces them under their own labels (falling back to the raw key).
+    let mut meta = LotMeta::default();
+    if let Some(first) = active_rows.first() {
+        if let Some(lot_col) = mapping.lot.as_deref() {
+            meta.push("lotId", first.get(lot_col).cloned());
         }
-    } else {
-        LotMeta::default()
-    };
+        for col in &mapping.meta {
+            meta.push(col, first.get(col).cloned());
+        }
+    }
 
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
 }
@@ -405,6 +417,7 @@ mod tests {
             sbin: None,
             wafer: None,
             lot: None,
+            site: None,
             tests: vec![],
             meta: vec![],
             split_by: vec![],
@@ -629,7 +642,7 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.lot = Some("lot".to_string());
         let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
-        assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
+        assert_eq!(result.meta.get("lotId"), Some("LOT-99"));
     }
 
     #[test]
@@ -640,6 +653,37 @@ mod tests {
         m.split_by = vec!["site".to_string()];
         let result = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.wafers.len(), 2);
+    }
+
+    #[test]
+    fn site_column_populates_per_die_site_num() {
+        let csv = "x,y,site\n0,0,1\n1,0,2\n2,0,3\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.site = Some("site".to_string());
+        let r = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
+        let sites: Vec<_> = r.wafers[0].results.iter().map(|d| d.site_num).collect();
+        assert_eq!(sites, vec![Some(1), Some(2), Some(3)]);
+    }
+
+    #[test]
+    fn non_numeric_site_yields_none() {
+        let csv = "x,y,site\n0,0,A1\n1,0,2\n";
+        let path = tmp(csv);
+        let mut m = basic_mapping("x", "y");
+        m.site = Some("site".to_string());
+        let r = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
+        let sites: Vec<_> = r.wafers[0].results.iter().map(|d| d.site_num).collect();
+        assert_eq!(sites, vec![None, Some(2)]);
+    }
+
+    #[test]
+    fn no_site_mapping_leaves_site_num_none() {
+        let csv = "x,y,site\n0,0,1\n";
+        let path = tmp(csv);
+        let m = basic_mapping("x", "y"); // site not mapped
+        let r = parse_csv_inner(path.to_str().unwrap().to_string(), m).unwrap();
+        assert_eq!(r.wafers[0].results[0].site_num, None);
     }
 
     fn gz_csv(content: &str) -> std::path::PathBuf {

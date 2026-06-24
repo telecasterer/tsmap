@@ -102,6 +102,7 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
                 if let Some(c) = &mapping.lot   { m.insert(c.clone(), lot.to_string()); }
                 if let Some(c) = &mapping.hbin  { m.insert(c.clone(), row.get(c).cloned().unwrap_or_default()); }
                 if let Some(c) = &mapping.sbin  { m.insert(c.clone(), row.get(c).cloned().unwrap_or_default()); }
+                if let Some(c) = &mapping.site  { m.insert(c.clone(), row.get(c).cloned().unwrap_or_default()); }
                 for c in &mapping.meta { m.insert(c.clone(), row.get(c).cloned().unwrap_or_default()); }
                 m
             });
@@ -171,6 +172,9 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
                 .and_then(|c| row.get(c)).and_then(|v| v.parse().ok());
             let sbin: Option<u32> = mapping.sbin.as_deref()
                 .and_then(|c| row.get(c)).and_then(|v| v.parse().ok());
+            // Per-die site (parity with STDF/ATDF); numeric only.
+            let site_num: Option<u32> = mapping.site.as_deref()
+                .and_then(|c| row.get(c)).and_then(|v| v.trim().parse().ok());
 
             let mut test_values: HashMap<String, f64> = HashMap::new();
             if is_long_format {
@@ -187,7 +191,7 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
                 }
             }
 
-            dies.push(DieResult { x, y, hbin, sbin, site_num: None, part_id: None, test_values });
+            dies.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
         }
 
         let part_count = dies.len() as u32;
@@ -203,13 +207,19 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
             part_count: Some(part_count),
             good_count: Some(good_count),
             fail_count: Some(part_count - good_count),
+            fields: Vec::new(),
         });
     }
 
-    let meta = active_rows.first().map(|row| LotMeta {
-        lot_id: mapping.lot.as_deref().and_then(|c| row.get(c)).filter(|v| !v.is_empty()).cloned(),
-        part_type: None, job_name: None, tester_type: None, node_name: None, sublot_id: None,
-    }).unwrap_or_default();
+    let mut meta = LotMeta::default();
+    if let Some(row) = active_rows.first() {
+        if let Some(lot_col) = mapping.lot.as_deref() {
+            meta.push("lotId", row.get(lot_col).cloned());
+        }
+        for col in &mapping.meta {
+            meta.push(col, row.get(col).cloned());
+        }
+    }
 
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
 }
@@ -333,7 +343,7 @@ mod tests {
     fn basic_mapping(x: &str, y: &str) -> CsvMapping {
         CsvMapping {
             x: x.to_string(), y: y.to_string(),
-            hbin: None, sbin: None, wafer: None, lot: None,
+            hbin: None, sbin: None, wafer: None, lot: None, site: None,
             tests: vec![], meta: vec![], split_by: vec![],
             testname_col: None, testvalue_col: None,
             lo_limit_col: None, hi_limit_col: None, units_col: None,
@@ -500,6 +510,6 @@ mod tests {
         let mut m = basic_mapping("x", "y");
         m.lot = Some("lot".to_string());
         let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
-        assert_eq!(result.meta.lot_id.as_deref(), Some("LOT-99"));
+        assert_eq!(result.meta.get("lotId"), Some("LOT-99"));
     }
 }

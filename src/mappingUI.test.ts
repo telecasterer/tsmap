@@ -64,7 +64,13 @@ describe('detectRole — test vs metadata fallback', () => {
     expect(detectRole('device', [{ device: 'ASIC-42' }])).toBe('metadata');
   });
   it('classifies numeric column with NON_TEST_TOKEN as metadata', () => {
-    expect(detectRole('site_id', numericSample('site_id'))).toBe('metadata');
+    // 'seq' is a NON_TEST_TOKEN with no dedicated role → metadata fallback.
+    // (site/site_id now resolve to the dedicated 'site' role — see below.)
+    expect(detectRole('seq', numericSample('seq'))).toBe('metadata');
+  });
+  it('classifies a site column as the dedicated site role', () => {
+    expect(detectRole('site', numericSample('site'))).toBe('site');
+    expect(detectRole('site_num', numericSample('site_num'))).toBe('site');
   });
   it('classifies empty-sample numeric-looking column as metadata', () => {
     // No sample data — cannot confirm numeric

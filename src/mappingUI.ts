@@ -14,6 +14,7 @@ export interface CsvMapping {
   sbin: string | null;
   wafer: string | null;
   lot: string | null;
+  site: string | null;
   tests: CsvTestCol[];
   meta: string[];
   splitBy: string[];
@@ -33,7 +34,7 @@ export interface HeadersResult {
 
 // ── Column role detection — mirrors showcase detectRole ───────────────────────
 
-type ColRole = 'x' | 'y' | 'hbin' | 'sbin' | 'wafer' | 'lot' | 'testname' | 'testvalue' | 'loLimit' | 'hiLimit' | 'units' | 'test' | 'metadata' | '';
+type ColRole = 'x' | 'y' | 'hbin' | 'sbin' | 'wafer' | 'lot' | 'site' | 'testname' | 'testvalue' | 'loLimit' | 'hiLimit' | 'units' | 'test' | 'metadata' | '';
 
 const EXACT_ROLES: { role: ColRole; patterns: string[] }[] = [
   { role: 'x',         patterns: ['x','die_x','x_loc','xloc','col','column','step_x','stepx','diex','xstep','x_step','xcoord','x_coord','xpos','x_pos'] },
@@ -42,6 +43,7 @@ const EXACT_ROLES: { role: ColRole; patterns: string[] }[] = [
   { role: 'sbin',      patterns: ['sbin','soft_bin','s_bin','softbin','sb','sbn','soft_bin_num','sbin_num'] },
   { role: 'wafer',     patterns: ['wafer','wafer_id','waferid','wafer_num','wafernum','wid','wafer_no','waferno','wfr','wfr_id','wnum'] },
   { role: 'lot',       patterns: ['lot','lot_id','lotid','lot_num','lotnum','lot_no','lotno'] },
+  { role: 'site',      patterns: ['site','site_num','sitenum','site_no','siteno','site_id','siteid'] },
   { role: 'testname',  patterns: ['test_name','testname','param','parameter','param_name','measurement','test_item','test_num','tnum'] },
   { role: 'testvalue', patterns: ['result','value','val','measured','meas','reading','test_value','test_result','meas_value','meas_val'] },
   { role: 'loLimit',   patterns: ['lo_limit','low_limit','lolimit','lower_limit','ll','lsl','spec_lo','spec_low','min_limit','lo_lim'] },
@@ -51,7 +53,7 @@ const EXACT_ROLES: { role: ColRole; patterns: string[] }[] = [
     'testdate','test_date','date','temp','temperature','tst_temp',
     'operator','oper','testprogram','test_program','job_nam',
     'node','node_nam','tester','tstr_typ','part_typ','part_type','device',
-    'site','site_num','handler','hand_typ','sublot','sblot_id',
+    'handler','hand_typ','sublot','sblot_id',
     'exec_typ','exec_ver','serl_num','serial',
   ]},
 ];
@@ -126,6 +128,7 @@ const ROLE_OPTIONS: { value: ColRole; label: string }[] = [
   { value: 'sbin',      label: 'Soft bin' },
   { value: 'wafer',     label: 'Wafer ID' },
   { value: 'lot',       label: 'Lot ID' },
+  { value: 'site',      label: 'Test site' },
   { value: 'test',      label: 'Test value' },
   { value: 'testname',  label: 'Test name (long format)' },
   { value: 'testvalue', label: 'Test result (long format)' },
@@ -142,7 +145,7 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
   const rows = overlay.querySelectorAll<HTMLTableRowElement>('tr[data-col]');
   let x = '', y = '';
   let hbin: string | null = null, sbin: string | null = null;
-  let wafer: string | null = null, lot: string | null = null;
+  let wafer: string | null = null, lot: string | null = null, site: string | null = null;
   let testnameCol: string | null = null, testvalueCol: string | null = null;
   let loLimitCol: string | null = null, hiLimitCol: string | null = null, unitsCol: string | null = null;
   const tests: CsvTestCol[] = [];
@@ -159,6 +162,7 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
     else if (role === 'sbin') sbin = col;
     else if (role === 'wafer') wafer = col;
     else if (role === 'lot')   lot = col;
+    else if (role === 'site')  site = col;
     else if (role === 'testname')  testnameCol = col;
     else if (role === 'testvalue') testvalueCol = col;
     else if (role === 'loLimit') loLimitCol = col;
@@ -179,7 +183,7 @@ function readMapping(overlay: HTMLElement, passBinInput: HTMLInputElement): CsvM
     .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
 
   return {
-    x, y, hbin, sbin, wafer, lot, tests, meta, splitBy, testnameCol, testvalueCol,
+    x, y, hbin, sbin, wafer, lot, site, tests, meta, splitBy, testnameCol, testvalueCol,
     loLimitCol, hiLimitCol, unitsCol,
     passBins: passBins.length ? passBins : [1],
   };
@@ -255,6 +259,7 @@ export async function showMappingOverlay(
     if (saved.sbin) savedRoles[saved.sbin] = 'sbin';
     if (saved.wafer) savedRoles[saved.wafer] = 'wafer';
     if (saved.lot)   savedRoles[saved.lot]   = 'lot';
+    if (saved.site)  savedRoles[saved.site]  = 'site';
     if (saved.testnameCol)  savedRoles[saved.testnameCol]  = 'testname';
     if (saved.testvalueCol) savedRoles[saved.testvalueCol] = 'testvalue';
     if (saved.loLimitCol) savedRoles[saved.loLimitCol] = 'loLimit';
@@ -288,9 +293,9 @@ export async function showMappingOverlay(
         <td><input type="text" class="test-name-input" value="${esc(testName)}" placeholder="Test name"
              style="display:${role === 'test' ? 'inline-block' : 'none'}"></td>
         <td class="split-cell" style="visibility:${role === 'metadata' ? 'visible' : 'hidden'}">
-          <label class="split-label">
+          <label class="split-label" title="Treat each distinct value of this column as a separate wafer. For flat files that pack several wafers into one file with no wafer column. Not for parallel-test sites — map those to 'Test site' instead.">
             <input type="checkbox"${isSavedSplitBy ? ' checked' : ''}>
-            <span>Split gallery</span>
+            <span>Separate wafer per value</span>
             <span class="cardinality-hint">${cardinalityHint}</span>
           </label>
         </td>

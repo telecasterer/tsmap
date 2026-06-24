@@ -42,8 +42,9 @@ export function buildRenameRows(entries: FileWaferEntry[]): RenameRow[] {
   const rows: RenameRow[] = [];
   for (const entry of entries) {
     const source = makeWaferSource(entry.parsed.meta, entry.fileName);
+    const lotId = entry.parsed.meta.fields.find(f => f.key === 'lotId')?.value;
     for (const wafer of entry.parsed.wafers) {
-      const defaultId = resolveWaferId(wafer.waferId, entry.fileName);
+      const defaultId = resolveWaferId(wafer.waferId, entry.fileName, lotId);
       rows.push({ defaultId, fileLabel: entry.fileName, wafer, source });
     }
   }
@@ -119,11 +120,20 @@ export function showRenameOverlay(
   });
 }
 
-/** Resolve a good wafer ID from the content ID and/or filename stem. */
-export function resolveWaferId(contentId: string, fileName: string): string {
+/**
+ * Resolve a display wafer ID, preferring metadata in the data over the filename.
+ * Precedence:
+ *   1. A non-generic wafer ID from the data (e.g. `LOT123-W05`) — use as-is.
+ *   2. A generic wafer ID (`W01`) plus a lot ID — combine: `<lotId> · W01`. This
+ *      keeps wafers distinct within and across lots without touching the
+ *      filename, even for multi-wafer files where every wafer shares the lot.
+ *   3. Neither — fall back to the filename stem (the genuinely metadata-less
+ *      case, e.g. a bare CSV with no lot/wafer columns).
+ */
+export function resolveWaferId(contentId: string, fileName: string, lotId?: string): string {
   const generic = /^W\d+$/.test(contentId); // W1, W01, W12 etc.
   if (!generic) return contentId;
-  // Try to extract something meaningful from the filename
+  if (lotId && lotId.trim()) return `${lotId} · ${contentId}`;
   const stem = fileName.replace(/\.[^.]+$/, '');
   return stem || contentId;
 }

@@ -8,52 +8,52 @@ export interface TestDef {
   units?: string;
 }
 
+/**
+ * One metadata field as a raw key/value pair, as emitted by the parser
+ * (`@paulrobins/testdata-parser`). `key` is the source field name (camelCase
+ * STDF key like `lotId`, `testTemp`, `startT`, or a CSV/JSON column name).
+ * Friendly labels + which fields to surface as facets live in `metadata.ts` —
+ * adding/relabelling a field never touches the parser.
+ */
+export interface MetaField {
+  key: string;
+  value: string;
+}
+
 export interface WaferData {
   waferId: string;
   results: DieResult[];
   partCount?: number;
   goodCount?: number;
   failCount?: number;
+  /** Per-wafer metadata from the parser (STDF/ATDF WIR/WRR fields). */
+  fields?: MetaField[];
   /**
-   * Provenance of this wafer — which file/lot/program it came from. Stamped at
-   * merge time (see `stampSource` in main.ts). Wafers produced by the same
-   * `ParsedFile` share ONE `WaferSource` instance by reference, so grouping can
-   * key on referential identity and an edit to a lot's metadata is a single
+   * Provenance of this wafer — which file/lot it came from. Stamped at merge
+   * time (see `makeWaferSource`/stamping in main.ts). Wafers produced by the
+   * same `ParsedFile` share ONE `WaferSource` instance by reference, so grouping
+   * can key on referential identity and an edit to a lot's metadata is a single
    * write seen by all its wafers. Optional because pre-merge / test wafers may
    * not be stamped yet.
    */
   source?: WaferSource;
 }
 
+/** Lot-level metadata from the parser: an ordered list of raw key/value fields. */
 export interface LotMeta {
-  lotId?: string;
-  partType?: string;
-  jobName?: string;
-  testerType?: string;
-  nodeName?: string;
-  sublotId?: string;
+  fields: MetaField[];
 }
 
 /**
- * Wafer provenance / metadata used as a faceting dimension (group / compare /
- * split by lot, program, temperature, …). Built once per loaded file from its
- * `LotMeta` + filename and shared by reference across that file's wafers.
- *
- * `program`, `temp`, and `date` are not in today's `LotMeta` (only STDF/ATDF
- * MIR fills the base fields); until the parser is enriched they arrive via
- * `extras`. `extras` also carries CSV/JSON user-mapped metadata columns.
+ * Wafer provenance used as a faceting dimension (group / compare / split by lot,
+ * program, temperature, …). Built once per loaded file and shared by reference
+ * across that file's wafers. Generic: `fields` holds the file's lot-level
+ * metadata verbatim (raw keys); tsmap's curation table maps keys → labels and
+ * decides which to surface.
  */
 export interface WaferSource {
-  lotId?: string;
-  sublotId?: string;
-  partType?: string;
-  program?: string;
-  testerType?: string;
-  nodeName?: string;
-  temp?: string;
-  date?: string;
   sourceFile: string;
-  extras?: Record<string, string>;
+  fields: MetaField[];
 }
 
 export interface ParsedFile {

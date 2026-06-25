@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta } from './lib';
+import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData } from './lib';
 import type { LotMeta, ParsedFile, TestDef, WaferSource } from './types';
 
 // ── basename ──────────────────────────────────────────────────────────────────
@@ -207,6 +207,33 @@ describe('makeWaferSource', () => {
     const src = makeWaferSource({ fields: [] }, 'bare.csv');
     expect(src.sourceFile).toBe('bare.csv');
     expect(src.fields).toEqual([]);
+  });
+});
+
+// ── toWaferData ─────────────────────────────────────────────────────────────────
+
+describe('toWaferData', () => {
+  const src: WaferSource = { sourceFile: 'a.stdf', fields: [{ key: 'lotId', value: 'A' }] };
+
+  it('carries per-wafer fields and source through the merge projection', () => {
+    // Regression: the rename/merge flow used to drop `fields`, killing WIR/WRR facets.
+    const fields = [{ key: 'frameId', value: 'F1' }, { key: 'maskId', value: 'M1' }];
+    const out = toWaferData({
+      waferId: 'W1', results: [{ x: 0, y: 0, hbin: 1 }],
+      partCount: 10, goodCount: 9, failCount: 1, fields, source: src,
+    });
+    expect(out.fields).toBe(fields);   // same reference, not dropped
+    expect(out.source).toBe(src);      // shared provenance reference preserved
+    expect(out).toEqual({
+      waferId: 'W1', results: [{ x: 0, y: 0, hbin: 1 }],
+      partCount: 10, goodCount: 9, failCount: 1, fields, source: src,
+    });
+  });
+
+  it('tolerates a minimal wafer (only id + results)', () => {
+    const out = toWaferData({ waferId: 'W1', results: [] });
+    expect(out.fields).toBeUndefined();
+    expect(out.source).toBeUndefined();
   });
 });
 

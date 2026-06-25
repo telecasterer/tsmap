@@ -1,6 +1,6 @@
 [package]
 name = "testdata-parser"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Rust/WASM parsers for semiconductor test data formats (STDF, ATDF, CSV, JSON)"
 repository = "https://github.com/paulrobins/tsmap"
@@ -24,7 +24,6 @@ bench = []   # enables parse_stdf_from_bytes_timed
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rust-stdf = { version = "0.3.1", default-features = false }
 csv = "1"
 indexmap = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

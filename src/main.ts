@@ -7,7 +7,7 @@ import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/w
 import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
 import type { FileHandle, StdfTestNames, ScanResult } from './platform';
-import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta } from './lib';
+import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
@@ -19,7 +19,7 @@ import { ICONS } from './charts/icons';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, renderBinClusterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
-import { buildFacetTable, facetValueOf } from './metadata';
+import { buildFacetTable, facetValueOf, NONE_VALUE } from './metadata';
 import type { BinType, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 
@@ -33,6 +33,7 @@ const openBtn         = document.getElementById('open-btn')!;
 const addBtn          = document.getElementById('add-btn') as HTMLButtonElement;
 const chartsBtn       = document.getElementById('charts-btn') as HTMLButtonElement;
 const filterTestsBtn    = document.getElementById('filter-tests-btn') as HTMLButtonElement;
+const valueFindingsBtn  = document.getElementById('value-findings-btn') as HTMLButtonElement;
 const resetBtn        = document.getElementById('reset-btn') as HTMLButtonElement;
 const helpBtn         = document.getElementById('help-btn') as HTMLButtonElement;
 const fileLabel       = document.getElementById('file-label')!;
@@ -51,6 +52,9 @@ let currentTestDefs: Record<string, TestDef> = {};
 let currentBinaryFiles: FileHandle[] = [];
 let currentBinaryExt = ''; // 'stdf' | 'std' | 'atdf' | 'atd'
 let currentTestNames: StdfTestNames | null = null; // first-pass scan result, reused by "Filter tests…"
+// Whether the current test list came from the largest file only or all files —
+// so "Filter tests…" can still offer to widen the scan if it wasn't already.
+let binaryScanScope: 'largest' | 'all' = 'largest';
 
 
 // ── Chart mode state ──────────────────────────────────────────────────────────
@@ -61,6 +65,32 @@ let viewMode: ViewMode = 'map';
 let yieldSortBy: YieldSortBy = 'yield';
 let binType: BinType = 'hbin';
 let chartColorScheme = 'default';
+// "Value findings" toggle: when on, wmap's regional parametric test-value
+// pass runs (edge/quadrant/site "reads high/low on test X" + spec-region findings).
+// This gates ONLY the test-value (Welch) findings — regional yield and bin findings
+// are separate wmap analyses (enableHard/SoftBinAnalysis, default on) and run
+// regardless of this toggle. Off by default since wmap 0.16.0 — the test-value pass
+// scales with regions × tests × dies and is the dominant cost of analysis. Affects
+// only analyzeWaferMap/Lot, never parsing, so toggling re-renders the in-memory
+// data with no reload (see analyzeOpts).
+let valueFindings = false;
+const analyzeOpts = () => ({ enableTestValueAnalysis: valueFindings });
+
+/**
+ * The "Value findings" toggle only feeds the summary panel, which is part of the
+ * map view — it has no effect on the charts page. Disable (not hide) it in charts
+ * view so the lack of effect is explicit rather than a mystery, restoring it on
+ * the map. Call whenever `viewMode` changes.
+ */
+function syncValueFindingsBtn() {
+  const inCharts = viewMode === 'charts';
+  valueFindingsBtn.disabled = inCharts;
+  valueFindingsBtn.style.opacity = inCharts ? '0.4' : '';
+  valueFindingsBtn.style.cursor = inCharts ? 'default' : '';
+  valueFindingsBtn.title = inCharts
+    ? 'Value findings apply to the wafer map summary panel, not the charts page. Switch to Maps to use it.'
+    : 'Toggle: adds regional test-value findings to the summary panel\'s Findings list — wafer areas (edge, quadrants, sites) that read unusually high or low on a test, or fail spec more there than elsewhere (e.g. "edge ring reads 8% high on VDD"). This is the only thing it changes: the panel\'s per-test stats, value maps, and the Charts page are unaffected, and regional yield/bin findings are always on. Slower on large lots, so off by default. Recomputes in place — no reload.';
+}
 // Faceting: which WaferSource field charts combine by ('' = none). Page-level
 // control populated from buildFacetTable; a change re-renders the charts view.
 // Selecting a field pools each group's dies into one aggregate series per group
@@ -90,6 +120,17 @@ const cachedHistogramSeries: Map<string, ReturnType<typeof buildTestHistogramSer
 // Full N×N matrix cached once per file load; display matrix recomputed when limit changes.
 let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
 const cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
+
+/** Invalidate every memoised chart aggregate. Call whenever the loaded wafer set changes. */
+function clearChartCaches() {
+  cachedLotStats = null;
+  cachedBinData.clear();
+  cachedBoxplotData.clear();
+  cachedHistogramData.clear();
+  cachedHistogramSeries.clear();
+  cachedCorrelationMatrix = null;
+  cachedScatterData.clear();
+}
 
 // ── Log panel ─────────────────────────────────────────────────────────────────
 
@@ -176,11 +217,11 @@ function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof b
       const conf = warning.confidence !== undefined ? ` (confidence ${(warning.confidence * 100).toFixed(0)}%)` : '';
       log('warn', `Wafer ${w.waferId}: ${warning.message}${conf}`);
     }
-    const statsSummary = analyzeWaferMap(waferMap);
+    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
     return { ...waferMap, label: w.waferId, statsSummary };
   });
   const perWaferSummaries = items.map(i => i.statsSummary);
-  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries });
+  const lotStatsSummary = analyzeWaferLot(items, { perWaferSummaries, ...analyzeOpts() });
   return { items, lotStatsSummary };
 }
 
@@ -188,17 +229,18 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   currentWafers = wafers;
   currentFileName = label;
   currentTestDefs = testDefs;
-  cachedLotStats = null;
-  cachedBinData.clear();
-  cachedBoxplotData.clear();
-  cachedHistogramData.clear();
-  cachedHistogramSeries.clear();
-  cachedCorrelationMatrix = null;
-  cachedScatterData.clear();
+  clearChartCaches();
   addBtn.disabled = wafers.length === 0;
   resetBtn.style.display = '';
   chartsBtn.style.display = wafers.length > 0 ? '' : 'none';
   filterTestsBtn.style.display = Object.keys(currentTestDefs).length > 0 ? '' : 'none';
+  // Value findings are only meaningful when there are test values. Reset
+  // it off on every new load so a fresh (possibly large) lot starts on the fast path.
+  const hasTestValues = wafers.some(w => w.results.some(d => d.testValues && Object.keys(d.testValues).length > 0));
+  valueFindings = false;
+  valueFindingsBtn.classList.remove('active');
+  valueFindingsBtn.setAttribute('aria-checked', 'false');
+  valueFindingsBtn.style.display = hasTestValues ? '' : 'none';
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
@@ -230,6 +272,7 @@ const onSaveImage = isTauri
 
 function renderWaferView(wafers: WaferData[], label: string) {
   disconnectAllObservers();
+  syncValueFindingsBtn();
   container.innerHTML = '';
   const stem = label.replace(/\.[^.]+$/, '');
 
@@ -238,7 +281,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
   if (wafers.length === 1) {
     container.classList.remove('gallery', 'charts');
     const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafers[0].source, wafers[0].waferId) } });
-    const statsSummary = analyzeWaferMap(waferMap);
+    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
@@ -299,6 +342,7 @@ function openStackedBin(waferIndices: number[], datum: ChartDatum) {
   if (datum.binCode === undefined) { openSingleWafer(waferIndices); return; }
 
   viewMode = 'map';
+  syncValueFindingsBtn();
   chartsBtn.textContent = '← Back to charts';
   const stackedWafers = waferIndices.map(i => currentWafers[i].waferId).join(', ');
   const label = `${currentFileName} — stacked ${datum.label} across ${waferIndices.length} wafer${waferIndices.length !== 1 ? 's' : ''}: ${stackedWafers}`;
@@ -320,7 +364,7 @@ function openStackedBin(waferIndices: number[], datum: ChartDatum) {
       },
       waferConfig: { metadata: toWmapWaferMeta(sharedSource, `${stackWafers.length} wafers`) },
     });
-    const statsSummary = analyzeWaferMap(waferMap);
+    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
@@ -338,6 +382,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
   if (!wafer) return;
 
   viewMode = 'map';
+  syncValueFindingsBtn();
   chartsBtn.textContent = '← Back to charts';
   const testDef = currentTestDefs[String(testNumber)];
   const testLabel = testDef?.name ? `${testDef.name} (#${testNumber})` : `test #${testNumber}`;
@@ -353,7 +398,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
       { results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, wafer.waferId) } },
       { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
     );
-    const statsSummary = analyzeWaferMap(waferMap);
+    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
     renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
@@ -369,6 +414,7 @@ function openTestValueWafer(waferIndex: number, testNumber: number) {
 
 function renderChartsView() {
   viewMode = 'charts';
+  syncValueFindingsBtn();
   chartsBtn.textContent = 'Maps';
   chartsBtn.classList.add('active');
   container.classList.remove('gallery');
@@ -418,8 +464,9 @@ function renderChartsViewWork(loadedMsg: string) {
   const foldedGroupCount = activeFacet ? Math.max(0, activeFacet.values.length - GROUP_TOP_K) : 0;
   const groupBy = activeFacet
     ? (wafer: WaferData): string | undefined => {
-        const v = facetValueOf(wafer, activeFacet.key);
-        if (v === undefined || v === '') return undefined;
+        // Missing/empty values fold into the explicit `(none)` group (matching the
+        // facet table) rather than being dropped from the grouped chart.
+        const v = facetValueOf(wafer, activeFacet.key) ?? NONE_VALUE;
         return topGroupValues!.has(v) ? v : `… ${foldedGroupCount} more`;
       }
     : undefined;
@@ -727,23 +774,40 @@ function renderChartsViewWork(loadedMsg: string) {
 }
 
 
+/**
+ * Tear down the current maps/charts view for a fresh (non-append) load that has
+ * been committed but may take a while to parse. Unlike `showEmptyState` this does
+ * NOT reset load state (`currentBinaryFiles`, `currentTestNames`, button
+ * visibility) — those are mid-load and still needed; it only blanks the visible
+ * container so the user doesn't see stale data while the new file parses.
+ * `renderWafers` replaces this placeholder once the parse completes.
+ */
+function showLoadingState(msg: string) {
+  disconnectAllObservers();
+  container.classList.remove('gallery', 'charts');
+  container.innerHTML = '';
+  const placeholder = document.createElement('div');
+  placeholder.style.cssText =
+    'display:flex;align-items:center;justify-content:center;position:absolute;inset:0;' +
+    'color:var(--text-faint);font-size:14px;user-select:none;';
+  placeholder.textContent = msg;  // textContent: file names are untrusted
+  container.appendChild(placeholder);
+}
+
+
 function showEmptyState() {
   currentWafers = [];
   currentTestDefs = {};
   currentBinaryFiles = [];
   currentBinaryExt = '';
   currentTestNames = null;
-  cachedLotStats = null;
-  cachedBinData.clear();
-  cachedBoxplotData.clear();
-  cachedHistogramData.clear();
-  cachedHistogramSeries.clear();
-  cachedCorrelationMatrix = null;
-  cachedScatterData.clear();
+  binaryScanScope = 'largest';
+  clearChartCaches();
   addBtn.disabled = true;
   resetBtn.style.display = 'none';
   chartsBtn.style.display = 'none';
   filterTestsBtn.style.display = 'none';
+  valueFindingsBtn.style.display = 'none';
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
@@ -799,6 +863,41 @@ function injectMapBanner(container: HTMLElement, text: string) {
     'box-shadow:0 1px 4px rgba(0,0,0,0.3);';
   banner.textContent = text;
   container.appendChild(banner);
+}
+
+/**
+ * Fast first-pass scan (PTR/FTR names, no die accumulation) across one or more
+ * binary files, merging their test definitions into a single map. Used both for
+ * the default largest-file scan and for the selector's "scan all files" toggle.
+ * `dieCount` is the exact sum of dies across the scanned files. Returns null only
+ * if every scan failed; a per-file failure is logged and skipped. Relies on
+ * `currentBinaryExt` for the format (all binary files in a load share it).
+ */
+async function scanBinaryTests(filesToScan: FileHandle[]): Promise<{ testDefs: StdfTestNames; dieCount: number } | null> {
+  const isAtdf = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd';
+  const merged: StdfTestNames = {};
+  let dieCount = 0;
+  let anyOk = false;
+  for (const file of filesToScan) {
+    setBusy(`Scanning ${file.name} for tests…`);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    try {
+      const result: ScanResult = isAtdf
+        ? await platform.atdfTestNames(file)
+        : await platform.stdfTestNames(file);
+      Object.assign(merged, result.testDefs); // test numbers are the identity key
+      dieCount += result.dieCount;
+      anyOk = true;
+      log('info', `${file.name}: ${Object.keys(result.testDefs).length} tests found, ${result.dieCount.toLocaleString()} dies`);
+    } catch (e) {
+      log('warn', `Test name scan failed for ${file.name}: ${(e as Error).message}`);
+    }
+  }
+  if (!anyOk) {
+    log('warn', 'Test name scan failed — parsing all tests');
+    return null;
+  }
+  return { testDefs: merged, dieCount };
 }
 
 async function handleFiles(files: FileHandle[], isAppend: boolean) {
@@ -900,20 +999,18 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     });
     currentBinaryFiles = binaryFiles;
     currentBinaryExt = effectiveExt(largestBinary.name);
+    binaryScanScope = 'largest';
 
-    setBusy(`Scanning ${largestBinary.name} for tests…`);
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    try {
-      const scanResult: ScanResult = currentBinaryExt === 'atdf' || currentBinaryExt === 'atd'
-        ? await platform.atdfTestNames(largestBinary)
-        : await platform.stdfTestNames(largestBinary);
-      currentTestNames = scanResult.testDefs;
-      firstPassTestDefs = scanResult.testDefs;
-      binaryScanDieCount = scanResult.dieCount * binaryFiles.length;
-      log('info', `${largestBinary.name}: ${Object.keys(scanResult.testDefs).length} tests found, ${scanResult.dieCount.toLocaleString()} dies`);
-    } catch (e) {
-      log('warn', `Test name scan failed: ${(e as Error).message} — parsing all tests`);
+    // Default scan scope: the largest file only — a fast, representative test
+    // list. The selector offers a "scan all files" toggle to widen this when a
+    // test only appears in a smaller file (see scanBinaryTests / onScanAll).
+    const scan = await scanBinaryTests([largestBinary]);
+    if (scan) {
+      currentTestNames = scan.testDefs;
+      firstPassTestDefs = scan.testDefs;
+      // Largest-file die count extrapolated across all files (exact totals come
+      // from a "scan all"). Only used for the selector's memory advisory.
+      binaryScanDieCount = scan.dieCount * binaryFiles.length;
     }
   }
 
@@ -944,45 +1041,96 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   let overlayNameOverrides: Map<number, string> = new Map();
 
   if (firstPassTestDefs && Object.keys(firstPassTestDefs).length > 0) {
-    const allTestNums = new Set(Object.keys(firstPassTestDefs).map(Number));
-    const initialSelection: number[] = [];
-    let nameOverrides: Map<number, string> | undefined;
-
-    // Compute capacity info for the memory advisory in the selector.
     const csvDieCount = Array.from(preParsed.values())
       .reduce((s, p) => s + p.wafers.reduce((ws, w) => ws + w.results.length, 0), 0);
-    const totalDieCount = binaryScanDieCount + csvDieCount;
 
-    testSelection = await new Promise<number[] | null>(resolve => {
-      showTestSelectorOverlay(
-        firstPassTestDefs!,
-        (sel, names) => { overlayNameOverrides = names; resolve(sel); },
-        () => resolve(null),
-        {
-          fromLargestFile: binaryFiles.length > 1,
-          initialSelection,
-          nameOverrides,
-          capacity: totalDieCount > 0 ? { dieCount: totalDieCount, totalTests: allTestNums.size } : undefined,
-          onSave: async (saveEntries) => {
-            const lines = [
-              '# tsmap test list',
-              `# Saved: ${new Date().toISOString()}`,
-              ...saveEntries.map(e => `${e.num},${e.name}`),
-            ];
-            await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+    // The selector can be re-entered when the user clicks "scan all files": we
+    // widen the scope, re-scan, merge, and re-open with the same selection +
+    // name overrides preserved. `scanScope` tracks whether we're still on the
+    // largest file only (so the toggle is offered) or have scanned everything.
+    let scanScope: 'largest' | 'all' = 'largest';
+    let scopedDefs = firstPassTestDefs;
+    let carrySelection: number[] = [];
+    let carryNames = new Map<number, string>();
+
+    selector: for (;;) {
+      const allTestNums = new Set(Object.keys(scopedDefs).map(Number));
+      const totalDieCount = binaryScanDieCount + csvDieCount;
+      // Offer "scan all" only with >1 binary file and while still scoped to largest.
+      const canScanAll = binaryFiles.length > 1 && scanScope === 'largest';
+
+      const result = await new Promise<{ kind: 'confirm'; selection: number[]; names: Map<number, string> }
+                                     | { kind: 'cancel' }
+                                     | { kind: 'scanAll'; selection: number[]; names: Map<number, string> }>(resolve => {
+        showTestSelectorOverlay(
+          scopedDefs,
+          (sel, names) => resolve({ kind: 'confirm', selection: sel, names }),
+          () => resolve({ kind: 'cancel' }),
+          {
+            scanScope: binaryFiles.length > 1 ? scanScope : undefined,
+            scanFileCount: binaryFiles.length,
+            onScanAll: canScanAll ? (sel, names) => resolve({ kind: 'scanAll', selection: sel, names }) : undefined,
+            initialSelection: carrySelection,
+            nameOverrides: carryNames,
+            capacity: totalDieCount > 0 ? { dieCount: totalDieCount, totalTests: allTestNums.size } : undefined,
+            onSave: async (saveEntries) => {
+              const lines = [
+                '# tsmap test list',
+                `# Saved: ${new Date().toISOString()}`,
+                ...saveEntries.map(e => `${e.num},${e.name}`),
+              ];
+              await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+            },
+            onLoad: async () => (await platform.pickTextFile())?.content ?? null,
+            onLog: log,
+            onAsk: (msg) => platform.confirm(msg),
           },
-          onLoad: async () => (await platform.pickTextFile())?.content ?? null,
-          onLog: log,
-          onAsk: (msg) => platform.confirm(msg),
-        },
-      );
-    });
-    if (testSelection === null) {
-      setIdle();
-      return;
+        );
+      });
+
+      if (result.kind === 'cancel') { setIdle(); return; }
+
+      if (result.kind === 'scanAll') {
+        // Preserve the user's in-progress selection/renames across the re-scan.
+        carrySelection = result.selection;
+        carryNames = result.names;
+        const scan = await scanBinaryTests(binaryFiles);
+        if (scan) {
+          scopedDefs = scan.testDefs;
+          firstPassTestDefs = scan.testDefs;   // so the full parse below sees every test
+          currentTestNames = scan.testDefs;    // so "Filter tests…" re-uses the widened list
+          binaryScanDieCount = scan.dieCount;  // exact total now, not extrapolated
+          binaryScanScope = 'all';
+          scanScope = 'all';
+          log('info', `Scanned all ${binaryFiles.length} files: ${Object.keys(scan.testDefs).length} tests total`);
+        }
+        continue selector; // re-open the selector with the merged list
+      }
+
+      // confirm
+      overlayNameOverrides = result.names;
+      testSelection = result.selection;
+      log('info', `Test filter: ${testSelection.length} of ${allTestNums.size} tests selected`);
+      break;
     }
-    log('info', `Test filter: ${testSelection.length} of ${allTestNums.size} tests selected`);
   }
+
+  // The load is now committed (the cancellable mapping/test-selector gates have
+  // resolved) and the full parse below can be slow. For a fresh load (not an
+  // "add"), clear the previous maps/charts now so the user isn't left looking at
+  // stale data from the old file while the new one parses. An append keeps the
+  // current view, since the new wafers are added to it. NOTE: the rename overlay
+  // (further down) can still be cancelled — `abortFreshLoad()` resets to the empty
+  // state on any post-clear bail-out so the user is never stranded on a blank view
+  // showing nothing while the old data is silently still in `currentWafers`.
+  const clearedForFreshLoad = !isAppend;
+  if (clearedForFreshLoad) showLoadingState(`Loading ${files.length === 1 ? files[0].name : `${files.length} files`}…`);
+  // Return to a clean empty state if a committed fresh load bails out (parse error
+  // or rename cancel); for an append the old view is intact, so just go idle.
+  const abortFreshLoad = (msg?: string) => {
+    if (clearedForFreshLoad) showEmptyState();
+    setIdle(msg);
+  };
 
   // ── Full parse for STDF/ATDF, prune/backfill pre-parsed CSV/JSON ──────────
   const entries: FileWaferEntry[] = [];
@@ -1025,12 +1173,12 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
     log('error', `Parse failed: ${msg}. Try selecting fewer tests.`);
-    setIdle('Out of memory — reduce test selection and try again');
+    abortFreshLoad('Out of memory — reduce test selection and try again');
     return;
   }
 
   if (entries.length === 0) {
-    setIdle('Error: no files parsed successfully');
+    abortFreshLoad('Error: no files parsed successfully');
     return;
   }
 
@@ -1048,13 +1196,14 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
         partCount: w.partCount,
         goodCount: w.goodCount,
         failCount: w.failCount,
+        fields: w.fields,
         source,
       })));
     }
     return new Promise(resolve => {
       showRenameOverlay(entries,
         (renamed) => resolve(renamed),
-        () => { setIdle(); resolve(null); }
+        () => { abortFreshLoad(); resolve(null); }
       );
     });
   };
@@ -1073,7 +1222,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
           // worker), or reference identity breaks and grouping by source fails.
           const merged = [
             ...currentWafers,
-            ...renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount, source: r.source })),
+            ...renamed.map(toWaferData),
           ];
           renderWafers(merged, currentFileName, { ...currentTestDefs, ...Object.assign({}, ...entries.map(e => e.parsed.testDefs)) });
           log('info', `Added ${renamed.length} wafer${renamed.length !== 1 ? 's' : ''} — gallery now has ${merged.length}`);
@@ -1084,7 +1233,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     });
   } else {
     renderWafers(
-      renamed.map(r => ({ waferId: r.waferId, results: r.results, partCount: r.partCount, goodCount: r.goodCount, failCount: r.failCount, source: r.source })),
+      renamed.map(toWaferData),
       entries.length === 1 ? entries[0].fileName : `${entries.length} files`,
       Object.assign({}, ...entries.map(e => e.parsed.testDefs))
     );
@@ -1168,6 +1317,25 @@ chartsBtn.addEventListener('click', () => {
   }
 });
 
+valueFindingsBtn.addEventListener('click', () => {
+  // No-op in charts view (button is disabled there) — guard defensively anyway.
+  if (busy || currentWafers.length === 0 || viewMode === 'charts') return;
+  valueFindings = !valueFindings;
+  valueFindingsBtn.classList.toggle('active', valueFindings);
+  valueFindingsBtn.setAttribute('aria-checked', String(valueFindings));
+  // Analysis results are cached; the toggle changes what they contain, so drop
+  // them. Re-render the current map view (gallery/single) with the new setting —
+  // the raw dies are already in memory, so this is a re-analyse, not a reload.
+  cachedLotStats = null;
+  log('info', `Value findings ${valueFindings ? 'on — recomputing regional test-value findings' : 'off'}`);
+  const label = currentFileName;
+  setBusy(`${valueFindings ? 'Analysing' : 'Rendering'} ${label}…`);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    renderWaferView(currentWafers, label);
+    setIdle(`${label} — ${currentWafers.length} wafer${currentWafers.length !== 1 ? 's' : ''}, ${currentWafers.reduce((n, w) => n + w.results.length, 0)} dies`);
+  }));
+});
+
 resetBtn.addEventListener('click', () => {
   if (currentWafers.length === 0) return;
   setIdle();
@@ -1181,28 +1349,61 @@ filterTestsBtn.addEventListener('click', async () => {
   const selectorTestDefs: StdfTestNames = currentTestNames ?? currentTestDefs;
 
   let filterOverrideNames: Map<number, string> = new Map();
-  const testSelection = await new Promise<number[] | null>(resolve => {
-    showTestSelectorOverlay(
-      selectorTestDefs,
-      (sel, names) => { filterOverrideNames = names; resolve(sel); },
-      () => resolve(null),
-      {
-        fromLargestFile: currentBinaryFiles.length > 1,
-        initialSelection: Object.keys(currentTestDefs).map(Number),
-        nameOverrides: new Map(),
-        onSave: async (entries) => {
-          const lines = [
-            '# tsmap test list',
-            `# Saved: ${new Date().toISOString()}`,
-            ...entries.map(e => `${e.num},${e.name}`),
-          ];
-          await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+  let scopedDefs = selectorTestDefs;
+  let carrySelection: number[] = Object.keys(currentTestDefs).map(Number);
+  let carryNames = new Map<number, string>();
+  let testSelection: number[] | null = null;
+
+  filterLoop: for (;;) {
+    // Offer "scan all" only if this is a multi-file binary load not already widened.
+    const canScanAll = currentBinaryFiles.length > 1 && binaryScanScope === 'largest';
+    const result = await new Promise<{ kind: 'confirm'; selection: number[]; names: Map<number, string> }
+                                   | { kind: 'cancel' }
+                                   | { kind: 'scanAll'; selection: number[]; names: Map<number, string> }>(resolve => {
+      showTestSelectorOverlay(
+        scopedDefs,
+        (sel, names) => resolve({ kind: 'confirm', selection: sel, names }),
+        () => resolve({ kind: 'cancel' }),
+        {
+          scanScope: currentBinaryFiles.length > 1 ? binaryScanScope : undefined,
+          scanFileCount: currentBinaryFiles.length,
+          onScanAll: canScanAll ? (sel, names) => resolve({ kind: 'scanAll', selection: sel, names }) : undefined,
+          initialSelection: carrySelection,
+          nameOverrides: carryNames,
+          onSave: async (entries) => {
+            const lines = [
+              '# tsmap test list',
+              `# Saved: ${new Date().toISOString()}`,
+              ...entries.map(e => `${e.num},${e.name}`),
+            ];
+            await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+          },
+          onLoad: async () => (await platform.pickTextFile())?.content ?? null,
+          onLog: log,
         },
-        onLoad: async () => (await platform.pickTextFile())?.content ?? null,
-        onLog: log,
-      },
-    );
-  });
+      );
+    });
+
+    if (result.kind === 'cancel') return;
+
+    if (result.kind === 'scanAll') {
+      carrySelection = result.selection;
+      carryNames = result.names;
+      const scan = await scanBinaryTests(currentBinaryFiles);
+      if (scan) {
+        scopedDefs = scan.testDefs;
+        currentTestNames = scan.testDefs;
+        binaryScanScope = 'all';
+        log('info', `Scanned all ${currentBinaryFiles.length} files: ${Object.keys(scan.testDefs).length} tests total`);
+      }
+      setIdle();
+      continue filterLoop;
+    }
+
+    filterOverrideNames = result.names;
+    testSelection = result.selection;
+    break;
+  }
 
   if (testSelection === null) return;
 

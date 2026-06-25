@@ -140,12 +140,16 @@
       }
       #charts-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #charts-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
-      #filter-tests-btn {
+      #filter-tests-btn, #value-findings-btn {
         background: none; border: 1px solid var(--border-dim); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
         white-space: nowrap;
       }
-      #filter-tests-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #filter-tests-btn:hover, #value-findings-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      /* The checkbox glyph carries the on/off state so the button reads as a toggle, not a nav link. */
+      #value-findings-btn .vf-box::before { content: '\2610'; margin-right: 5px; }      /* ☐ off */
+      #value-findings-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #value-findings-btn.active .vf-box::before { content: '\2611'; }                  /* ☑ on */
       #reset-btn {
         background: none; border: 1px solid var(--border-muted); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
@@ -332,6 +336,8 @@
         <button id="add-btn" disabled>Add files</button>
         <button id="charts-btn" style="display:none">Charts</button>
         <button id="filter-tests-btn" style="display:none">Filter tests…</button>
+        <button id="value-findings-btn" role="switch" style="display:none" aria-checked="false"
+          title="Toggle: adds regional test-value findings to the summary panel's Findings list — wafer areas (edge, quadrants, sites) that read unusually high or low on a test, or fail spec more there than elsewhere (e.g. &quot;edge ring reads 8% high on VDD&quot;). This is the only thing it changes: the panel's per-test stats, value maps, and the Charts page are unaffected, and regional yield/bin findings are always on. Slower on large lots, so off by default. Recomputes in place — no reload."><span class="vf-box"></span>Value findings</button>
         <button id="reset-btn" style="display:none">Clear</button>
         <span>or drop a file anywhere</span>
         <span id="busy-spinner"></span>

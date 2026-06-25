@@ -25,6 +25,26 @@ export function makeWaferSource(meta: LotMeta, sourceFile: string): WaferSource 
   return { sourceFile, fields: meta.fields ?? [] };
 }
 
+/**
+ * Reconstruct a `WaferData` from a wafer-shaped object, carrying EVERY
+ * `WaferData` field across. The rename/merge flow rebuilds wafers at several
+ * points; routing them all through this one helper means adding a field to
+ * `WaferData` is a single edit here, not N field-by-field copy sites that
+ * silently drop the new field (per-wafer `fields` was lost exactly that way).
+ * Preserves the shared `source` reference — do not deep-clone.
+ */
+export function toWaferData(w: Pick<WaferData, 'waferId' | 'results'> & Partial<WaferData>): WaferData {
+  return {
+    waferId: w.waferId,
+    results: w.results,
+    partCount: w.partCount,
+    goodCount: w.goodCount,
+    failCount: w.failCount,
+    fields: w.fields,
+    source: w.source,
+  };
+}
+
 // Map raw metadata keys → wmap WaferMetadata named slots, so wmap renders them
 // with its own nice labels. Unknown keys pass through verbatim via the open
 // index signature, so nothing is lost. `temperature` is coerced to a number.

@@ -7,10 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.15.0 |
-| Latest wmap release | check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| testdata-parser version | 0.3.1 |
-| Last updated | 2026-06-24 (testdata-parser 0.3.0 — generic `LotMeta.fields`/`WaferData.fields` (all MIR/WIR/WRR fields); 0.3.1 — CSV/JSON `site` column → per-die `site_num` parity. wmap still 0.15.0.) |
+| wmap version in use | 0.16.0 |
+| Latest wmap release | 0.16.0 — check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
+| testdata-parser version | 0.4.0 (Cargo bumped — **not yet published**; root still pins ^0.3.1 until publish) |
+| Last updated | 2026-06-25 (testdata-parser 0.4.0: removed the `rust-stdf` dependency — own the STDF record framing + endianness; **added big-endian STDF support** (FAR CPU_TYPE 1=BE/2=LE), parser ~13% faster (148 MB/s), CSV parser 3.4× faster, ATDF parser 2.8× faster + SDR→sites parity, filtered-parse WRR-metadata parity fix. 91 Rust + 168 JS tests green, WASM + native build clean. **Publish pending** — see steps below.) |
 
 ## Rust Backend Notes
 
@@ -162,6 +162,23 @@ their data's bin range. At minimum, the TSDoc should call out that omitting
 
 **Fix applied:** `perWaferTestStats` added to `LotStatsSummary` (not `StatsSummary`) — projected from `perWafer[i].summary.stats.perTestStats` in `analyzeWaferLot`. Shape matches the proposal above plus a `label` field. Only present when `enableTestValueAnalysis: true`. tsmap can drop `buildTestBoxplotData` and read `lotSummary.perWaferTestStats` directly.
 
+> **Update (2026-06-24, wmap 0.16.0):** still not consolidated, and the calculus
+> changed. 0.16.0 made `enableTestValueAnalysis` opt-in (default off) for
+> performance, and tsmap took that default — so `perWaferTestStats` is no longer
+> populated in tsmap's render path, and `buildTestBoxplotData`/`buildTestHistogramData`
+> remain the source of box-plot/histogram stats. **However** 0.16.0 also added the
+> *cheap* `computePerTestStats: true` option (the changelog explicitly recommends it
+> for "box-plot / histogram panels that need distribution shape but not spatial
+> findings") — but it produces **lot-level** `perTestStats`, not the **per-wafer ×
+> per-test** five-number summary tsmap's per-wafer boxplot needs, and it is implied
+> by `enableTestValueAnalysis` so there's still no cheap *per-wafer* path.
+> **Suggested fix:** have `computePerTestStats: true` also populate
+> `LotStatsSummary.perWaferTestStats` (per-wafer five-number summaries) *without*
+> requiring the expensive `enableTestValueAnalysis` Welch pass. Then tsmap can
+> finally retire its duplicated quantile logic in `aggregate.ts` and read per-wafer
+> box-plot data straight from the cheap analysis path. Until then, tsmap's own
+> raw-die computation stays — and is correct to keep.
+
 ### ~~11. Die hover tooltip has no row cap — becomes taller than the viewport with many tests~~ (fixed in v0.13.4)
 
 **Where:** wmap die tooltip renderer (wherever per-die `testValues` are listed in the hover popup).
@@ -211,7 +228,7 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 
 ---
 
-### 14. `enableTestValueAnalysis` computation model doesn't match tsmap's usage pattern
+### ~~14. `enableTestValueAnalysis` computation model doesn't match tsmap's usage pattern~~ (fixed in 0.16.0)
 
 **Where:** `analyzeWaferMap` / `analyzeWaferLot` in wmap stats.
 
@@ -220,6 +237,12 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 **Workaround in tsmap:** Reverted to computing boxplot quartiles directly from die data in tsmap's own `buildTestBoxplotData` / `buildTrendData` functions (lazy, one test at a time, only on panel interaction). `analyzeWaferMap` is now called without the flag.
 
 **Suggested fix in wmap:** Split the flag into two independent options: (a) `computePerTestStats: true` — only the quartile scan, no region passes, cheap; (b) `enableTestValueAnalysis: true` — full regional Welch t-tests, expensive, opt-in separately. This lets hosts get lightweight quartiles without paying for spatial analysis they don't use.
+
+**Fix applied (wmap, pending release):** Both parts done.
+1. **The flag was split exactly as suggested.** `computePerTestStats: true` runs only the per-test quartile scan (→ `StatsSummary.stats.perTestStats` / `LotStatsSummary.perWaferTestStats`); `enableTestValueAnalysis: true` runs the full regional Welch findings pass (and implies `perTestStats`). Both now **default to `false`** — the old default-`true` on `enableTestValueAnalysis` was the root cause: any caller not opting out paid the expensive pass. This is a breaking default change (wmap minor bump).
+2. **The expensive pass itself was rewritten** to be allocation-light (columnar single-pass running sums per region; "rest of wafer" derived by subtraction, never materialised). ~2–2.3× faster with byte-identical findings (p-values exact; effect sizes within ~1e-12). Profiling had shown ~95% of analysis cost was array/GC churn around the Welch math, not the math — so WASM was considered and rejected (it would only touch the ~2% that is arithmetic and reintroduce the IPC marshalling of issue #10).
+
+**Net effect for tsmap:** tsmap already calls `analyzeWaferMap(waferMap)` with no options and reads only the panel's yield/bin/ring sections (never the test-value findings or `perTestStats`), so under the new default it **automatically gets the fast path with no code change** — analysis drops from ≈285–867 ms/wafer to ≈23–31 ms/wafer, and a 10-wafer lot from multiple seconds to ≈293 ms. If tsmap later wants wmap-computed box-plot quartiles instead of its own `buildTestBoxplotData`, it can now pass `computePerTestStats: true` (≈149 ms at 2.8k × 200 tests) without triggering the Welch pass. **Adoption note:** because tsmap calls `analyzeWaferMap` with no options, bumping the wmap dependency to 0.16.0 *automatically* picks up the fast default — no tsmap code change required, but it is a behaviour change (the panel no longer carries regional test-value findings, which tsmap never displayed).
 
 ### ~~15. `stdf_test_names` / `atdf_test_names` WASM functions return wrong shape~~ (fixed in testdata-parser 0.2.3)
 
@@ -249,7 +272,7 @@ Die-level metadata (arbitrary string/number fields attached to each die, e.g. si
 
 **Suggested fix in wmap:** Export the icon set (or a curated subset) as a public API — e.g. `export const ICONS` from a stable entry point, or a small `getIcon(name)` helper — so host apps can import the exact same SVGs and stay in sync automatically. Document which icon keys are stable/public. This generalises beyond tsmap to any host wanting to match wmap's look.
 
-### ~~17. Expand-modal fullscreen button uses the real Fullscreen API — dead in macOS WKWebView~~ (fixed — pending wmap release)
+### ~~17. Expand-modal fullscreen button uses the real Fullscreen API — dead in macOS WKWebView~~ (fixed in 0.16.0)
 
 **Where:** `packages/canvas-adapter/toolbar.ts` — the modal opened by `openModal`. The fullscreen button click handler (line ~848), the `F`/`Esc` key handler in `onKeyDown` (~902–910), the `onFsChange` handler (~864), and the `document.addEventListener('fullscreenchange', onFsChange)` registration (~939). Also `getMenuParent`-style `document.fullscreenElement` reads at ~170 and ~333.
 
@@ -284,7 +307,7 @@ So even a prefixed shim isn't enough on macOS Tauri without opting into private 
 
 **Fix applied (0.15.0):** `packages/renderer/index.ts` now `export type { WaferMetadata, DieMetadata } from '../core/metadata.js'`.
 
-### 20. tsmap/wmap capability boundary — charts ↔ summary-panel redundancy (architectural, ongoing)
+### ~~20. tsmap/wmap capability boundary — charts ↔ summary-panel redundancy~~ (decided 2026-06-24)
 
 **Context:** tsmap has become a proving-ground for analysis/visualisation ideas. Several now overlap what wmap's summary panel already does, and the strategic question is *where each capability should ultimately live* — tsmap-only, or promoted into wmap so every wmap host benefits. The owner is not against moving more into wmap when that's the best home; the point of this entry is to make the boundary a deliberate, logged decision rather than drift.
 
@@ -305,4 +328,12 @@ So even a prefixed shim isn't enough on macOS Tauri without opting into private 
 - **Generic metadata model** — `{key,value}` fields with host-side curation (already partly in wmap via `WaferMetadata`'s open index; the *faceting* on top is tsmap's).
 - **Interactive distribution charts** (boxplot, histogram, correlation matrix, scatter) vs. the panel's numeric summaries.
 
-**Suggested direction (to decide in a working session):** pick per-capability among (a) lean-in + signpost the panel-vs-charts split (cheapest), (b) trim tsmap's duplicated chart panels in favour of the panel, or (c) promote the genuinely-better tsmap capability into wmap. No change made yet — recorded so the boundary is chosen deliberately. See the tsmap plan file "Phase 8" section for the fuller analysis.
+**Decision (2026-06-24) — option (a), boundary drawn by data scope, not widget type:**
+
+- **wmap panel owns** single-population summaries (per-wafer yield, pooled bin pareto, per-test value numbers, ring/quadrant) **and** spatial + significance *findings*. These are one-lot, no-grouping facts that belong beside the maps. No change to the panel.
+- **tsmap charts own** faceting / group-compare / split-by (yield-per-group, boxplot-per-group, overlaid histograms, clustered pareto, scatter/correlation coloured-by-group) **and** interactive distributions (boxplot, histogram, correlation, scatter). This is a cross-population analytics surface.
+- **The middle-band duplication stays — it is intentional.** The panel gives the engineer the exact pooled figure beside the wafer; the chart gives distribution shape and lets them split by lot/program/temperature. Same fact, two reading modes. Not trimmed.
+
+**Faceting is NOT promoted into wmap.** It depends on three things wmap's panel deliberately does not carry: the generic `{key,value}` metadata model (the *storage* already exists in wmap via `WaferMetadata`'s open index — but the *faceting on top* does not), a host-curated label/which-to-facet table (tsmap `src/metadata.ts` `FIELD_META`), and a charting runtime. Promoting it would force every wmap host onto tsmap's curation conventions and pull a chart engine into the renderer-agnostic, DOM-light panel. Faceting stays host-side.
+
+No code change in either repo — this entry records the boundary so future work doesn't grow faceting into the panel by drift. See the tsmap plan file "Phase 8" section for the fuller analysis.

@@ -138,7 +138,7 @@ and pre-filled.
 | **Low limit (long format)** | LSL in a long-format file |
 | **High limit (long format)** | USL in a long-format file |
 | **Units (long format)** | Units string in a long-format file |
-| **Display info** | Additional metadata captured for grouping/comparison (and shown in tooltips). The **Separate wafer per value** checkbox is a structural escape hatch for flat files that pack several wafers into one file with no wafer column — it treats each distinct value of the column as its own wafer map. (Do not use it for parallel-test sites — map those to **Test site** instead.) |
+| **Display info** | Additional metadata captured for grouping/comparison (and shown in tooltips). The **Subdivide file by this column** checkbox is a structural escape hatch for flat files that pack several wafers into one file with no wafer column — it subdivides the file into one wafer map per distinct value of the column. (Do not use it for parallel-test sites — map those to **Test site** instead.) |
 | **— ignore —** | Column is not imported |
 
 ### Wide vs long format
@@ -310,8 +310,12 @@ re-open the test selector at any time and change which tests are imported. The f
 re-parsed with the new selection — bin and yield data is preserved regardless of which
 tests you select.
 
-For multi-file batches, the selector is shown once based on the largest file; the same
-selection is applied to all files.
+For multi-file batches, the selector is shown once and the same selection is applied to
+all files. By default the test list is scanned from the **largest file only** — a fast,
+representative default. If a test appears only in a smaller file (so it's missing from the
+list), click **Scan all N files** in the selector to re-scan every file and merge the full
+test list; your current selection is preserved. The "Filter tests…" dialog offers the same
+toggle if you didn't widen the scan at load time.
 
 ---
 
@@ -323,6 +327,29 @@ with the summary panel open by default; a multi-wafer lot shows a side-by-side g
 The map is delivered by the wmap rendering engine. For a full walkthrough of toolbar
 controls, plot modes, overlays, zoom and pan, die hover tooltips, findings panel, summary
 panel, and gallery controls, click the **?** help button in the map toolbar.
+
+### Value findings
+
+The wafer map's summary panel has a **Findings** list — statistically significant spatial
+patterns: regions of the wafer (edge ring, quadrants, clusters, test sites) with unusually
+low yield or distinctive bin patterns. These yield and bin findings are fast to compute and
+**always on**.
+
+The **Value findings** toolbar control is a **toggle** (shown with a ☐ / ☑ checkbox) that
+adds one more category to that same Findings list: regions that read unusually high or low on
+a specific *test value*, or fail spec more often there than elsewhere ("the edge ring reads
+8% high on VDD_CORE"). This is the **only** thing it changes. It does **not** affect:
+
+- the panel's per-test Min/Mean/Max statistics (always shown),
+- test-value maps or stacked value maps,
+- the Charts page (boxplots, histograms, scatter, correlation — all independent).
+
+Because this regional value pass scales with regions × tests × dies, it is **off by default**
+to keep loads fast. The toggle appears once a file with test values is loaded; switch it on
+and the maps re-render with the extra findings in the panel — the wafer's data is already in
+memory, so this recomputes in place with no reload. Switch it off to remove them. It resets to
+off each time you load a new file, and is disabled in the Charts view (it only affects the
+map's summary panel).
 
 ---
 

@@ -293,9 +293,9 @@ export async function showMappingOverlay(
         <td><input type="text" class="test-name-input" value="${esc(testName)}" placeholder="Test name"
              style="display:${role === 'test' ? 'inline-block' : 'none'}"></td>
         <td class="split-cell" style="visibility:${role === 'metadata' ? 'visible' : 'hidden'}">
-          <label class="split-label" title="Treat each distinct value of this column as a separate wafer. For flat files that pack several wafers into one file with no wafer column. Not for parallel-test sites — map those to 'Test site' instead.">
+          <label class="split-label" title="Subdivide this flat file into one wafer map per distinct value of this column. Use only when a single file packs several wafers together with no wafer-ID column. Not for parallel-test sites — map those to 'Test site' instead.">
             <input type="checkbox"${isSavedSplitBy ? ' checked' : ''}>
-            <span>Separate wafer per value</span>
+            <span>Subdivide file by this column</span>
             <span class="cardinality-hint">${cardinalityHint}</span>
           </label>
         </td>
@@ -314,7 +314,7 @@ export async function showMappingOverlay(
         <table class="mapping-table">
           <thead><tr>
             <th>Column</th><th></th><th>Role</th><th>Test name</th>
-            <th>Gallery split</th>
+            <th>Subdivide file</th>
           </tr></thead>
           <tbody>${tableRows}</tbody>
         </table>

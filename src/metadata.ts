@@ -10,6 +10,15 @@
 
 import type { WaferData } from './types';
 
+/**
+ * Bucket label for wafers that have no value for the active facet field. Loading
+ * a mix where some files set a field (e.g. test program) and others don't must
+ * not silently drop the value-less wafers from a grouped chart — they form this
+ * explicit group instead, so the data stays visible and accountable. Used both
+ * as a facet-table value and as the `groupBy` key for missing values.
+ */
+export const NONE_VALUE = '(none)';
+
 /** One distinct value of a facet field, with how much data it covers. */
 export interface FacetValue {
   value: string;
@@ -91,7 +100,12 @@ function dateOnly(value: string): string {
   return t > 0 ? value.slice(0, t) : value;
 }
 
-/** Look up a field's value across a wafer's lot-level (source) and per-wafer fields. */
+/**
+ * Look up a field's value across a wafer's lot-level (source) and per-wafer fields.
+ * Lot-level (`source.fields`) wins by design: keys are disjoint in practice
+ * (lot/MIR vs wafer/WIR-WRR), so the order only matters in the rare overlap, where
+ * the lot value is the more authoritative one. Per-wafer fields are the fallback.
+ */
 function rawValueOf(wafer: WaferData, key: string): string | undefined {
   const fromSource = wafer.source?.fields.find(f => f.key === key)?.value;
   if (fromSource !== undefined) return fromSource;
@@ -139,10 +153,12 @@ export function buildFacetTable(wafers: WaferData[], facetableOnly = true): Face
     // fields unless explicitly asked for.
     if (facetableOnly && known && !known.facet) continue;
 
+    // Wafers without a value for this field fold into an explicit `(none)` bucket
+    // (the key is in `present`, so at least one wafer DOES have a value) — they are
+    // counted and shown, never dropped from the table or from grouped charts.
     const byValue = new Map<string, { waferCount: number; dieCount: number }>();
     for (const w of wafers) {
-      const v = facetValueOf(w, key);
-      if (v === undefined || v === '') continue;
+      const v = facetValueOf(w, key) ?? NONE_VALUE;
       const entry = byValue.get(v) ?? { waferCount: 0, dieCount: 0 };
       entry.waferCount += 1;
       entry.dieCount += w.results.length;
@@ -153,7 +169,11 @@ export function buildFacetTable(wafers: WaferData[], facetableOnly = true): Face
     const values: FacetValue[] = Array.from(byValue, ([value, c]) => ({
       value, waferCount: c.waferCount, dieCount: c.dieCount,
     }));
-    values.sort((a, b) => b.waferCount - a.waferCount || a.value.localeCompare(b.value, undefined, { numeric: true }));
+    // `(none)` always sorts last (it's the residual bucket), regardless of size.
+    values.sort((a, b) =>
+      (a.value === NONE_VALUE ? 1 : 0) - (b.value === NONE_VALUE ? 1 : 0) ||
+      b.waferCount - a.waferCount ||
+      a.value.localeCompare(b.value, undefined, { numeric: true }));
 
     table.push({ key, label: labelFor(key), values, splittable: values.length > 1 });
   }

@@ -15,11 +15,11 @@ const WRR: &[&str] = &[
     "GOOD_CNT","FUNC_CNT","WAFER_ID2","FABWF_ID","FRAME_ID","MASK_ID",
     "USR_DESC","EXC_DESC",
 ];
-const PIR: &[&str] = &["HEAD_NUM","SITE_NUM"];
-const PRR: &[&str] = &[
-    "HEAD_NUM","SITE_NUM","PART_ID","NUM_TEST","PASS_FAIL","HARD_BIN","SOFT_BIN",
-    "X_COORD","Y_COORD","RETEST_CODE","ABORT_CODE","TEST_T","PART_TXT","PART_FIX",
-];
+// SDR: site description. HEAD_NUM, SITE_GRP, SITE_CNT, then SITE_NUM (a
+// sub-delimited list), followed by per-site descriptor fields we don't surface.
+const SDR: &[&str] = &["HEAD_NUM","SITE_GRP","SITE_CNT","SITE_NUM"];
+// PTR is used by the first-pass scan; the full parse reads PIR/PRR/FTR positionally
+// (see the *_idx constants), so no field-name arrays are needed for those.
 const PTR: &[&str] = &[
     "TEST_NUM","HEAD_NUM","SITE_NUM","RESULT","PASS_FAIL","ALARM_FLAGS",
     "TEST_TXT","ALARM_ID","LIMIT_COMPARE","UNITS","LO_LIMIT","HI_LIMIT",
@@ -36,6 +36,51 @@ fn field_map<'a>(names: &[&'static str], values: &'a [&'a str]) -> HashMap<&'sta
 
 fn get<'a>(m: &HashMap<&str, &'a str>, key: &str) -> &'a str {
     m.get(key).copied().unwrap_or("").trim()
+}
+
+/// Positional field access for the hot record types (PTR/FTR/PIR/PRR), which make
+/// up ~99% of records. Avoids building a `HashMap<&str,&str>` per record (and the
+/// per-field hashmap lookups) — the field order is fixed by the spec, so we read
+/// by index directly. Cold records (MIR/WIR/WRR, a handful per file) keep
+/// `field_map`. Index constants below mirror the PTR/PRR/PIR/FTR name arrays.
+#[inline]
+fn at<'a>(fields: &[&'a str], i: usize) -> &'a str {
+    fields.get(i).copied().unwrap_or("").trim()
+}
+
+// PTR field indices (see `PTR` array).
+const PTR_TEST_NUM: usize = 0;
+const PTR_HEAD_NUM: usize = 1;
+const PTR_SITE_NUM: usize = 2;
+const PTR_RESULT: usize = 3;
+const PTR_TEST_TXT: usize = 6;
+const PTR_UNITS: usize = 9;
+const PTR_LO_LIMIT: usize = 10;
+const PTR_HI_LIMIT: usize = 11;
+// FTR field indices (see `FTR` array).
+const FTR_TEST_NUM: usize = 0;
+const FTR_HEAD_NUM: usize = 1;
+const FTR_SITE_NUM: usize = 2;
+const FTR_PASS_FAIL: usize = 3;
+// PIR field indices (see `PIR` array).
+const PIR_HEAD_NUM: usize = 0;
+const PIR_SITE_NUM: usize = 1;
+// PRR field indices (see `PRR` array).
+const PRR_HEAD_NUM: usize = 0;
+const PRR_SITE_NUM: usize = 1;
+const PRR_PART_ID: usize = 2;
+const PRR_HARD_BIN: usize = 5;
+const PRR_SOFT_BIN: usize = 6;
+const PRR_X_COORD: usize = 7;
+const PRR_Y_COORD: usize = 8;
+
+/// Pack (head, site) into a single u32 key — replaces the `format!("{},{}")`
+/// string key (one heap alloc per record) for the pending PIR→PRR maps.
+#[inline]
+fn site_key(head: &str, site: &str) -> u32 {
+    let h: u32 = head.parse().unwrap_or(1);
+    let s: u32 = site.parse().unwrap_or(1);
+    (h << 16) | (s & 0xFFFF)
 }
 
 fn nonempty(s: &str) -> Option<String> {
@@ -90,10 +135,22 @@ fn soft_bin_warning(fabricated: usize) -> Vec<String> {
 pub fn parse_atdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
     let raw = std::str::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    parse_atdf_str(raw)
+    parse_atdf_str(raw, None)
 }
 
-fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
+/// Parse ATDF text. `selected: Some(set)` accumulates only those test numbers
+/// (filtered second pass); `None` accumulates all. Hot records (PTR/FTR/PIR/PRR,
+/// ~99% of lines) read fields positionally and key the pending PIR→PRR maps by a
+/// packed (head,site) u32 — no per-record `HashMap<&str,&str>` and no per-record
+/// `format!` string key. Cold records (MIR/WIR/WRR) keep `field_map`.
+fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) -> Result<ParsedStdf, String> {
+    // Accumulate a test value iff there's no filter, or the filter contains it.
+    let want = |test_num: &str| -> bool {
+        match selected {
+            None => true,
+            Some(set) => test_num.parse::<u32>().map_or(false, |n| set.contains(&n)),
+        }
+    };
     // Detect delimiter from the FAR record. FAR must be the first non-empty record
     // per the ATDF spec, so we can read it during the single join pass without
     // collecting all records first.
@@ -120,8 +177,11 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
     let mut wafers: Vec<WaferData> = Vec::new();
     let mut current_wafer: Option<WaferData> = None;
-    let mut pending_values: HashMap<String, HashMap<String, f64>> = HashMap::new();
-    let mut pending_site: HashMap<String, u32> = HashMap::new();
+    let mut sites: Vec<SiteInfo> = Vec::new();
+    // Keyed by packed (head,site) u32 (see `site_key`) — avoids a `format!` string
+    // key per PIR/PTR/FTR/PRR. Inner map keyed by test-number string (tsmap identity).
+    let mut pending_values: HashMap<u32, HashMap<String, f64>> = HashMap::new();
+    let mut pending_site: HashMap<u32, u32> = HashMap::new();
     let mut soft_bin_fabricated: usize = 0;
 
     for rec in &records {
@@ -133,9 +193,24 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
         let raw_fields: Vec<&str> = rec[colon + 1..].split(delim).collect();
 
         match name {
+            // ── Cold records (a handful per file): keep `field_map` so metadata
+            //    extraction stays identical — no field can be dropped. ──
             "MIR" => {
                 let f = field_map(MIR, &raw_fields);
                 meta.fields = fields_from(&f, MIR_KEYS);
+            }
+            "SDR" => {
+                // Site description → ParsedStdf.sites, matching the STDF parser
+                // (which fills sites from SDR). HEAD_NUM at [0]; every numeric field
+                // from the SITE_CNT position (index 2) onward is a site number — our
+                // generators emit the site list with the primary delimiter.
+                let f = field_map(SDR, &raw_fields);
+                let head: u32 = get(&f, "HEAD_NUM").parse().unwrap_or(1);
+                for raw in raw_fields.iter().skip(2) {
+                    if let Ok(site) = raw.trim().parse::<u32>() {
+                        sites.push(SiteInfo { head_num: head, site_num: site });
+                    }
+                }
             }
             "WIR" => {
                 let f = field_map(WIR, &raw_fields);
@@ -169,73 +244,76 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
                     wafers.push(w);
                 }
             }
+            // ── Hot records (~99% of lines): positional field access, packed
+            //    (head,site) u32 keys, and the `want` filter gate. No per-record
+            //    HashMap, no per-record `format!` key. ──
             "PIR" => {
-                let f = field_map(PIR, &raw_fields);
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                let site: u32 = get(&f, "SITE_NUM").parse().unwrap_or(1);
-                pending_site.insert(key.clone(), site);
+                let key = site_key(at(&raw_fields, PIR_HEAD_NUM), at(&raw_fields, PIR_SITE_NUM));
+                let site: u32 = at(&raw_fields, PIR_SITE_NUM).parse().unwrap_or(1);
+                pending_site.insert(key, site);
                 pending_values.insert(key, HashMap::new());
             }
             "PTR" => {
-                let f = field_map(PTR, &raw_fields);
-                let test_num = get(&f, "TEST_NUM").to_string();
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                test_defs.entry(test_num.clone()).or_insert_with(|| {
-                    let lo = get(&f, "LO_LIMIT").parse::<f64>().ok();
-                    let hi = get(&f, "HI_LIMIT").parse::<f64>().ok();
-                    TestDef {
-                        name: {
-                            let t = get(&f, "TEST_TXT");
-                            if t.is_empty() { test_num.clone() } else { t.to_string() }
-                        },
+                let test_num = at(&raw_fields, PTR_TEST_NUM);
+                let key = site_key(at(&raw_fields, PTR_HEAD_NUM), at(&raw_fields, PTR_SITE_NUM));
+                if !test_defs.contains_key(test_num) {
+                    let lo = at(&raw_fields, PTR_LO_LIMIT).parse::<f64>().ok();
+                    let hi = at(&raw_fields, PTR_HI_LIMIT).parse::<f64>().ok();
+                    let txt = at(&raw_fields, PTR_TEST_TXT);
+                    test_defs.insert(test_num.to_string(), TestDef {
+                        name: if txt.is_empty() { test_num.to_string() } else { txt.to_string() },
                         test_type: "P".to_string(),
                         lo_limit: lo,
                         hi_limit: hi,
-                        units: nonempty(get(&f, "UNITS")),
-                    }
-                });
-                if let Ok(result) = get(&f, "RESULT").parse::<f64>() {
-                    if let Some(vals) = pending_values.get_mut(&key) {
-                        vals.insert(test_num, result);
+                        units: nonempty(at(&raw_fields, PTR_UNITS)),
+                    });
+                }
+                if want(test_num) {
+                    if let Ok(result) = at(&raw_fields, PTR_RESULT).parse::<f64>() {
+                        if let Some(vals) = pending_values.get_mut(&key) {
+                            vals.insert(test_num.to_string(), result);
+                        }
                     }
                 }
             }
             "FTR" => {
-                let f = field_map(FTR, &raw_fields);
-                let test_num = get(&f, "TEST_NUM").to_string();
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                test_defs.entry(test_num.clone()).or_insert_with(|| TestDef {
-                    name: test_num.clone(),
-                    test_type: "F".to_string(),
-                    lo_limit: None,
-                    hi_limit: None,
-                    units: None,
-                });
-                let passed = get(&f, "PASS_FAIL").eq_ignore_ascii_case("P");
-                if let Some(vals) = pending_values.get_mut(&key) {
-                    vals.insert(test_num, if passed { 1.0 } else { 0.0 });
+                let test_num = at(&raw_fields, FTR_TEST_NUM);
+                let key = site_key(at(&raw_fields, FTR_HEAD_NUM), at(&raw_fields, FTR_SITE_NUM));
+                if !test_defs.contains_key(test_num) {
+                    test_defs.insert(test_num.to_string(), TestDef {
+                        name: test_num.to_string(),
+                        test_type: "F".to_string(),
+                        lo_limit: None,
+                        hi_limit: None,
+                        units: None,
+                    });
+                }
+                if want(test_num) {
+                    let passed = at(&raw_fields, FTR_PASS_FAIL).eq_ignore_ascii_case("P");
+                    if let Some(vals) = pending_values.get_mut(&key) {
+                        vals.insert(test_num.to_string(), if passed { 1.0 } else { 0.0 });
+                    }
                 }
             }
             "PRR" => {
-                let f = field_map(PRR, &raw_fields);
-                let x: i32 = match get(&f, "X_COORD").parse() {
+                let x: i32 = match at(&raw_fields, PRR_X_COORD).parse() {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                let y: i32 = match get(&f, "Y_COORD").parse() {
+                let y: i32 = match at(&raw_fields, PRR_Y_COORD).parse() {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
+                let key = site_key(at(&raw_fields, PRR_HEAD_NUM), at(&raw_fields, PRR_SITE_NUM));
                 let site_num = pending_site.remove(&key);
                 let test_values = pending_values.remove(&key).unwrap_or_default();
-                let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
-                let raw_sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok();
+                let hbin: Option<u32> = at(&raw_fields, PRR_HARD_BIN).parse().ok();
+                let raw_sbin: Option<u32> = at(&raw_fields, PRR_SOFT_BIN).parse().ok();
                 if raw_sbin == Some(65535) { soft_bin_fabricated += 1; }
                 let sbin: Option<u32> = raw_sbin
                     .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
                     .or(hbin);
-                let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
+                let part_id: Option<u32> = at(&raw_fields, PRR_PART_ID).parse().ok();
                 let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values };
                 match current_wafer.as_mut() {
                     Some(w) => w.results.push(die),
@@ -264,14 +342,14 @@ fn parse_atdf_str(raw: &str) -> Result<ParsedStdf, String> {
     }
 
     let warnings = soft_bin_warning(soft_bin_fabricated);
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings })
+    Ok(ParsedStdf { meta, wafers, test_defs, sites, warnings })
 }
 
 #[cfg(feature = "native")]
 pub fn parse_atdf_sync(path: String) -> Result<ParsedStdf, String> {
     let text = crate::read_file::read_text(&path)
         .map_err(|e| format!("Failed to read {path}: {e}"))?;
-    parse_atdf_str(&text)
+    parse_atdf_str(&text, None)
 }
 
 // ── First-pass test name scan ─────────────────────────────────────────────────
@@ -363,192 +441,9 @@ pub fn parse_atdf_from_bytes_filtered(
 ) -> Result<ParsedStdf, String> {
     let raw = std::str::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    parse_atdf_str_filtered(raw, selected)
+    parse_atdf_str(raw, Some(selected))
 }
 
-fn parse_atdf_str_filtered(
-    raw: &str,
-    selected: &std::collections::HashSet<u32>,
-) -> Result<ParsedStdf, String> {
-    let mut delim: Option<char> = None;
-    let mut records: Vec<String> = Vec::new();
-    for line in raw.lines() {
-        if line.starts_with(' ') {
-            if let Some(last) = records.last_mut() {
-                last.push_str(line.trim_start());
-                continue;
-            }
-        }
-        let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            if delim.is_none() && trimmed.starts_with("FAR:") {
-                delim = trimmed.chars().nth(5);
-            }
-            records.push(trimmed.to_string());
-        }
-    }
-    let delim = delim.unwrap_or('|');
-
-    let mut meta = LotMeta::default();
-    let mut test_defs: HashMap<String, TestDef> = HashMap::new();
-    let mut wafers: Vec<WaferData> = Vec::new();
-    let mut current_wafer: Option<WaferData> = None;
-    let mut pending_values: HashMap<String, HashMap<String, f64>> = HashMap::new();
-    let mut pending_site: HashMap<String, u32> = HashMap::new();
-    let mut soft_bin_fabricated: usize = 0;
-
-    for rec in &records {
-        let colon = match rec.find(':') {
-            Some(i) => i,
-            None => continue,
-        };
-        let name = &rec[..colon];
-        let raw_fields: Vec<&str> = rec[colon + 1..].split(delim).collect();
-
-        match name {
-            "MIR" => {
-                let f = field_map(MIR, &raw_fields);
-                meta.fields = fields_from(&f, MIR_KEYS);
-            }
-            "WIR" => {
-                let f = field_map(WIR, &raw_fields);
-                let wafer_id = {
-                    let id = get(&f, "WAFER_ID");
-                    if id.is_empty() { format!("W{}", wafers.len() + 1) } else { id.to_string() }
-                };
-                let mut fields = Vec::new();
-                push_field(&mut fields, "waferStartT", nonempty(get(&f, "START_T")));
-                current_wafer = Some(WaferData {
-                    wafer_id,
-                    results: Vec::new(),
-                    part_count: None,
-                    good_count: None,
-                    fail_count: None,
-                    fields,
-                });
-            }
-            "WRR" => {
-                let f = field_map(WRR, &raw_fields);
-                if let Some(mut w) = current_wafer.take() {
-                    w.fields.extend(fields_from(&f, WRR_KEYS));
-                    let wid = get(&f, "WAFER_ID");
-                    if !wid.is_empty() { w.wafer_id = wid.to_string(); }
-                    w.part_count = get(&f, "PART_CNT").parse().ok();
-                    w.good_count = get(&f, "GOOD_CNT").parse().ok();
-                    w.fail_count = match (w.part_count, w.good_count) {
-                        (Some(p), Some(g)) => Some(p.saturating_sub(g)),
-                        _ => None,
-                    };
-                    wafers.push(w);
-                }
-            }
-            "PIR" => {
-                let f = field_map(PIR, &raw_fields);
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                let site: u32 = get(&f, "SITE_NUM").parse().unwrap_or(1);
-                pending_site.insert(key.clone(), site);
-                pending_values.insert(key, HashMap::new());
-            }
-            "PTR" => {
-                let f = field_map(PTR, &raw_fields);
-                let test_num_str = get(&f, "TEST_NUM").to_string();
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                // Always register test def
-                test_defs.entry(test_num_str.clone()).or_insert_with(|| {
-                    let lo = get(&f, "LO_LIMIT").parse::<f64>().ok();
-                    let hi = get(&f, "HI_LIMIT").parse::<f64>().ok();
-                    TestDef {
-                        name: {
-                            let t = get(&f, "TEST_TXT");
-                            if t.is_empty() { test_num_str.clone() } else { t.to_string() }
-                        },
-                        test_type: "P".to_string(),
-                        lo_limit: lo,
-                        hi_limit: hi,
-                        units: nonempty(get(&f, "UNITS")),
-                    }
-                });
-                // Only accumulate if selected (unparseable test_num is excluded)
-                let test_num_u32: Option<u32> = test_num_str.parse().ok();
-                if test_num_u32.map_or(false, |n| selected.contains(&n)) {
-                    if let Ok(result) = get(&f, "RESULT").parse::<f64>() {
-                        if let Some(vals) = pending_values.get_mut(&key) {
-                            vals.insert(test_num_str, result);
-                        }
-                    }
-                }
-            }
-            "FTR" => {
-                let f = field_map(FTR, &raw_fields);
-                let test_num_str = get(&f, "TEST_NUM").to_string();
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                // Always register test def
-                test_defs.entry(test_num_str.clone()).or_insert_with(|| TestDef {
-                    name: test_num_str.clone(),
-                    test_type: "F".to_string(),
-                    lo_limit: None,
-                    hi_limit: None,
-                    units: None,
-                });
-                // Only accumulate if selected (unparseable test_num is excluded)
-                let test_num_u32: Option<u32> = test_num_str.parse().ok();
-                if test_num_u32.map_or(false, |n| selected.contains(&n)) {
-                    let passed = get(&f, "PASS_FAIL").eq_ignore_ascii_case("P");
-                    if let Some(vals) = pending_values.get_mut(&key) {
-                        vals.insert(test_num_str, if passed { 1.0 } else { 0.0 });
-                    }
-                }
-            }
-            "PRR" => {
-                let f = field_map(PRR, &raw_fields);
-                let x: i32 = match get(&f, "X_COORD").parse() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let y: i32 = match get(&f, "Y_COORD").parse() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let key = format!("{},{}", get(&f, "HEAD_NUM"), get(&f, "SITE_NUM"));
-                let site_num = pending_site.remove(&key);
-                let test_values = pending_values.remove(&key).unwrap_or_default();
-                let hbin: Option<u32> = get(&f, "HARD_BIN").parse().ok();
-                let raw_sbin: Option<u32> = get(&f, "SOFT_BIN").parse().ok();
-                if raw_sbin == Some(65535) { soft_bin_fabricated += 1; }
-                let sbin: Option<u32> = raw_sbin
-                    .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
-                    .or(hbin);
-                let part_id: Option<u32> = get(&f, "PART_ID").parse().ok();
-                let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values };
-                match current_wafer.as_mut() {
-                    Some(w) => w.results.push(die),
-                    None => {
-                        let mut w = WaferData {
-                            wafer_id: format!("W{}", wafers.len() + 1),
-                            results: Vec::new(),
-                            part_count: None,
-                            good_count: None,
-                            fail_count: None,
-                            fields: Vec::new(),
-                        };
-                        w.results.push(die);
-                        current_wafer = Some(w);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(w) = current_wafer {
-        if !w.results.is_empty() {
-            wafers.push(w);
-        }
-    }
-
-    let warnings = soft_bin_warning(soft_bin_fabricated);
-    Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings })
-}
 
 #[cfg(test)]
 mod tests {
@@ -652,6 +547,49 @@ mod tests {
         assert_eq!(result.wafers.len(), 2);
         assert_eq!(result.wafers[0].wafer_id, "W01");
         assert_eq!(result.wafers[1].wafer_id, "W02");
+    }
+
+    #[test]
+    fn sdr_populates_sites() {
+        // Parity with the STDF parser, which fills ParsedStdf.sites from SDR.
+        let inner = pir(1,1) + &prr(1,1,0,0,1,1);
+        let text = format!("{}{}SDR:1|1|1|2|3|4\n{}{}{}", far(), mir_full(), wir("W01"), inner, wrr("W01", 1, 1));
+        let path = tmp(&text);
+        let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
+        let site_nums: Vec<u32> = result.sites.iter().map(|s| s.site_num).collect();
+        assert_eq!(site_nums, vec![1, 2, 3, 4]);
+        assert!(result.sites.iter().all(|s| s.head_num == 1));
+    }
+
+    #[test]
+    fn hot_path_values_bins_and_site_preserved() {
+        // Guards the positional/packed-key fast path: test values, bins and per-die
+        // site_num must survive across multiple sites in one batch.
+        let inner = pir(1,2) + &pir(1,3)
+            + &ptr_rec("1000", 1, 2, 1.5, 0.0, 5.0, "leak", "nA")
+            + &ptr_rec("1000", 1, 3, 2.5, 0.0, 5.0, "leak", "nA")
+            + &ftr_rec("2000", 1, 2, true)
+            + &prr(1, 2, 0, 0, 1, 1)
+            + &prr(1, 3, 1, 0, 2, 2);
+        let text = one_wafer("W01", &inner);
+        let path = tmp(&text);
+        let r = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
+        let dies = &r.wafers[0].results;
+        assert_eq!(dies.len(), 2);
+        let d2 = dies.iter().find(|d| d.site_num == Some(2)).expect("site 2 die");
+        let d3 = dies.iter().find(|d| d.site_num == Some(3)).expect("site 3 die");
+        // Each site's value landed on the right die (packed key disambiguates sites).
+        assert_eq!(d2.test_values.get("1000"), Some(&1.5));
+        assert_eq!(d2.test_values.get("2000"), Some(&1.0)); // FTR pass → 1.0
+        assert_eq!(d3.test_values.get("1000"), Some(&2.5));
+        assert_eq!(d2.hbin, Some(1));
+        assert_eq!(d3.hbin, Some(2));
+        // Test defs registered with limits/units from the full PTR.
+        let td = r.test_defs.get("1000").expect("test 1000 def");
+        assert_eq!(td.name, "leak");
+        assert_eq!(td.units.as_deref(), Some("nA"));
+        assert_eq!(td.lo_limit, Some(0.0));
+        assert_eq!(td.hi_limit, Some(5.0));
     }
 
     #[test]
@@ -864,5 +802,29 @@ mod tests {
         let plain_dies: usize = plain.wafers.iter().map(|w| w.results.len()).sum();
         let gz_dies:    usize = gz.wafers.iter().map(|w| w.results.len()).sum();
         assert_eq!(gz_dies, plain_dies);
+    }
+
+    // Run with: cargo test --manifest-path packages/parsers/Cargo.toml --features bench --release -- --nocapture bench_parse_atdf
+    #[cfg(feature = "bench")]
+    #[test]
+    fn bench_parse_atdf() {
+        let path = "/tmp/bench.atdf";
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => { eprintln!("SKIP: {path} not found — run scripts/generate_atdf_bench.py"); return; }
+        };
+        let file_mb = bytes.len() as f64 / 1_048_576.0;
+
+        let _ = parse_atdf_from_bytes(&bytes).unwrap(); // warm
+        let t = std::time::Instant::now();
+        let result = parse_atdf_from_bytes(&bytes).unwrap();
+        let ms = t.elapsed().as_millis();
+        let dies: usize = result.wafers.iter().map(|w| w.results.len()).sum();
+        println!(
+            "\n=== bench_parse_atdf ({file_mb:.1} MB) ===\n\
+             wafers: {}\ndies:   {dies}\ntests:  {}\ntotal:  {ms} ms\nthroughput: {:.0} MB/s",
+            result.wafers.len(), result.test_defs.len(),
+            file_mb / (ms as f64 / 1000.0).max(0.001),
+        );
     }
 }

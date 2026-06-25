@@ -164,11 +164,22 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
 
+    // ── Wide-format fast path ──────────────────────────────────────────────────
+    // The common case (one column per test). Read each StringRecord by resolved
+    // column index, parsing values straight to their target type — no per-cell
+    // HashMap<String,String>, no string round-trips, no `format!` per test cell.
+    if !is_long_format {
+        return Ok(parse_csv_wide(&all_rows, &col_idx, &mapping, test_defs));
+    }
+
+    // ── Long-format path (pivot rows → dies) ───────────────────────────────────
+    // Less common: one row per (die, test). We discover test numbers dynamically
+    // and pivot into a wide per-die HashMap; the structure below is unchanged.
     let active_rows: Vec<HashMap<String, String>>;
     let mut long_fmt_test_numbers: HashMap<String, u32> = HashMap::new();
     let mut next_test_num: u32 = 1001;
 
-    if is_long_format {
+    {
         let name_col = mapping.testname_col.as_deref().unwrap();
         let val_col = mapping.testvalue_col.as_deref().unwrap();
         let mut die_map: indexmap::IndexMap<String, HashMap<String, String>> =
@@ -224,17 +235,6 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
             }
         }
         active_rows = die_map.into_values().collect();
-    } else {
-        active_rows = all_rows
-            .iter()
-            .map(|rec| {
-                headers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, h)| (h.clone(), rec.get(i).unwrap_or("").trim().to_string()))
-                    .collect()
-            })
-            .collect();
     }
 
     let mut groups: indexmap::IndexMap<String, Vec<&HashMap<String, String>>> =
@@ -299,20 +299,13 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
             let site_num: Option<u32> = mapping.site.as_deref()
                 .and_then(|c| row.get(c)).and_then(|v| v.trim().parse().ok());
 
+            // Long format only (wide returns early above): test values were pivoted
+            // into `__test_{n}` keys keyed by discovered test number.
             let mut test_values: HashMap<String, f64> = HashMap::new();
-
-            if is_long_format {
-                for tnum in long_fmt_test_numbers.values() {
-                    let k = format!("__test_{}", tnum);
-                    if let Some(v) = row.get(&k).and_then(|s| s.parse::<f64>().ok()) {
-                        test_values.insert(tnum.to_string(), v);
-                    }
-                }
-            } else {
-                for t in &mapping.tests {
-                    if let Some(v) = row.get(&t.col).and_then(|s| s.parse::<f64>().ok()) {
-                        test_values.insert(t.test_number.to_string(), v);
-                    }
+            for tnum in long_fmt_test_numbers.values() {
+                let k = format!("__test_{}", tnum);
+                if let Some(v) = row.get(&k).and_then(|s| s.parse::<f64>().ok()) {
+                    test_values.insert(tnum.to_string(), v);
                 }
             }
 
@@ -355,6 +348,117 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
     }
 
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
+}
+
+/// Allocation-light wide-format parse: resolve every mapped column to an index
+/// once, then read each `StringRecord` by index and parse straight to the target
+/// type. Avoids the per-cell `HashMap<String,String>` materialisation, the string
+/// round-trips for x/y/bins, and the per-test `format!` of the original path.
+/// Result shape (wafers grouped by wafer/split key, part/good/fail counts, lot
+/// metadata from the first kept row) matches the long-format path exactly.
+fn parse_csv_wide(
+    all_rows: &[csv::StringRecord],
+    col_idx: &HashMap<&str, usize>,
+    mapping: &CsvMapping,
+    test_defs: HashMap<String, TestDef>,
+) -> ParsedStdf {
+    // Resolve a mapped column name to its record index once.
+    let idx = |name: &str| col_idx.get(name).copied();
+    let opt_idx = |c: &Option<String>| c.as_deref().and_then(idx);
+
+    let x_i = idx(&mapping.x);
+    let y_i = idx(&mapping.y);
+    let hbin_i = opt_idx(&mapping.hbin);
+    let sbin_i = opt_idx(&mapping.sbin);
+    let site_i = opt_idx(&mapping.site);
+    let wafer_i = opt_idx(&mapping.wafer);
+    let lot_i = opt_idx(&mapping.lot);
+    let split_i: Vec<(String, usize)> = mapping.split_by.iter()
+        .filter_map(|c| idx(c).map(|i| (c.clone(), i))).collect();
+    // (test_number string key, column index) — resolved once, reused per row.
+    let test_i: Vec<(String, usize)> = mapping.tests.iter()
+        .filter_map(|t| idx(&t.col).map(|i| (t.test_number.to_string(), i))).collect();
+
+    fn cell(rec: &csv::StringRecord, i: usize) -> &str { rec.get(i).unwrap_or("").trim() }
+    fn cell_opt(rec: &csv::StringRecord, i: Option<usize>) -> &str {
+        i.map(|i| cell(rec, i)).unwrap_or("")
+    }
+
+    let pass_bin_set: HashSet<u32> = mapping.pass_bins.iter().copied().collect();
+
+    // Group dies by wafer/split key, preserving first-seen order.
+    let mut groups: indexmap::IndexMap<String, WaferData> = indexmap::IndexMap::new();
+    // Lot metadata is taken from the first kept row.
+    let mut first_kept: Option<csv::StringRecord> = None;
+
+    for rec in all_rows {
+        // x/y are required and numeric — skip the row otherwise (matches old behaviour).
+        let x: i32 = match x_i.and_then(|i| cell(rec, i).parse().ok()) { Some(v) => v, None => continue };
+        let y: i32 = match y_i.and_then(|i| cell(rec, i).parse().ok()) { Some(v) => v, None => continue };
+
+        let wid = {
+            let w = cell_opt(rec, wafer_i);
+            if w.is_empty() { "W1" } else { w }
+        };
+        let key = if split_i.is_empty() {
+            wid.to_string()
+        } else {
+            let parts: Vec<String> = split_i.iter()
+                .filter_map(|(name, i)| {
+                    let v = cell(rec, *i);
+                    if v.is_empty() { None } else { Some(format!("{}: {}", name, v)) }
+                })
+                .collect();
+            if parts.is_empty() { wid.to_string() } else { format!("{} · {}", wid, parts.join(" · ")) }
+        };
+
+        let hbin = hbin_i.and_then(|i| cell(rec, i).parse::<u32>().ok());
+        let sbin = sbin_i.and_then(|i| cell(rec, i).parse::<u32>().ok());
+        let site_num = site_i.and_then(|i| cell(rec, i).parse::<u32>().ok());
+
+        let mut test_values: HashMap<String, f64> = HashMap::with_capacity(test_i.len());
+        for (tnum, i) in &test_i {
+            let s = cell(rec, *i);
+            if !s.is_empty() {
+                if let Ok(v) = s.parse::<f64>() { test_values.insert(tnum.clone(), v); }
+            }
+        }
+
+        if first_kept.is_none() { first_kept = Some(rec.clone()); }
+
+        let wafer = groups.entry(key).or_insert_with(|| WaferData {
+            wafer_id: wid.to_string(),
+            results: Vec::new(),
+            part_count: None, good_count: None, fail_count: None,
+            fields: Vec::new(),
+        });
+        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
+    }
+
+    // Finalise per-wafer counts.
+    let wafers: Vec<WaferData> = groups.into_values().map(|mut w| {
+        let part = w.results.len() as u32;
+        let good = w.results.iter().filter(|d|
+            pass_bin_set.is_empty()
+            || d.hbin.map_or(false, |b| pass_bin_set.contains(&b))
+            || d.sbin.map_or(false, |b| pass_bin_set.contains(&b))
+        ).count() as u32;
+        w.part_count = Some(part);
+        w.good_count = Some(good);
+        w.fail_count = Some(part - good);
+        w
+    }).collect();
+
+    // Lot metadata from the first kept row, keyed by column name.
+    let mut meta = LotMeta::default();
+    if let Some(rec) = &first_kept {
+        if let Some(i) = lot_i { meta.push("lotId", Some(cell(rec, i).to_string())); }
+        for c in &mapping.meta {
+            if let Some(i) = idx(c) { meta.push(c, Some(cell(rec, i).to_string())); }
+        }
+    }
+
+    ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] }
 }
 
 fn detect_delimiter(bytes: &[u8]) -> u8 {
@@ -750,5 +854,49 @@ mod tests {
         let gz    = parse_csv_inner(gz_path.to_str().unwrap().to_string(), m2).unwrap();
         assert_eq!(gz.wafers[0].results.len(), plain.wafers[0].results.len());
         assert_eq!(gz.wafers[0].part_count, plain.wafers[0].part_count);
+    }
+
+    /// Wide-format mapping matching scripts/generate_csv_json_bench.py.
+    #[cfg(feature = "bench")]
+    fn bench_mapping(n_tests: usize) -> CsvMapping {
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hbin".to_string());
+        m.sbin = Some("sbin".to_string());
+        m.site = Some("site".to_string());
+        m.wafer = Some("wafer".to_string());
+        m.lot = Some("lot".to_string());
+        m.pass_bins = vec![1];
+        m.tests = (0..n_tests)
+            .map(|i| {
+                let num = 1000 + i as u32;
+                CsvTestCol { col: format!("t{num}"), name: format!("t{num}"), test_number: num }
+            })
+            .collect();
+        m
+    }
+
+    // Run with: cargo test --manifest-path packages/parsers/Cargo.toml --features bench --release -- --nocapture bench_parse_csv
+    #[cfg(feature = "bench")]
+    #[test]
+    fn bench_parse_csv() {
+        let path = "/tmp/bench.csv";
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => { eprintln!("SKIP: {path} not found — run scripts/generate_csv_json_bench.py"); return; }
+        };
+        let file_mb = bytes.len() as f64 / 1_048_576.0;
+        let mapping = bench_mapping(50);
+
+        let _ = parse_csv_from_bytes(&bytes, mapping.clone()).unwrap(); // warm
+        let t = std::time::Instant::now();
+        let result = parse_csv_from_bytes(&bytes, mapping).unwrap();
+        let ms = t.elapsed().as_millis();
+        let dies: usize = result.wafers.iter().map(|w| w.results.len()).sum();
+        println!(
+            "\n=== bench_parse_csv ({file_mb:.1} MB) ===\n\
+             wafers: {}\ndies:   {dies}\ntests:  {}\ntotal:  {ms} ms\nthroughput: {:.0} MB/s",
+            result.wafers.len(), result.test_defs.len(),
+            file_mb / (ms as f64 / 1000.0).max(0.001),
+        );
     }
 }

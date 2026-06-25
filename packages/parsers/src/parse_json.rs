@@ -45,9 +45,11 @@ pub fn parse_json_sync(path: String, mapping: CsvMapping) -> Result<ParsedStdf, 
 }
 
 pub fn parse_json_from_bytes(bytes: &[u8], mapping: CsvMapping) -> Result<ParsedStdf, String> {
-    let text = String::from_utf8(bytes.to_vec())
-        .map_err(|e| format!("UTF-8 decode failed: {}", e))?;
-    let raw: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+    // Parse straight from the byte slice — `from_slice` UTF-8-validates internally,
+    // so the previous `String::from_utf8(bytes.to_vec())` (a full copy of the file)
+    // is pure waste. Strip a leading UTF-8 BOM by byte so we still skip it.
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let raw: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("Invalid JSON: {}", e))?;
     parse_json_from_value(raw, mapping)
 }
@@ -131,7 +133,10 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
         }
         active_rows = die_map.into_values().collect();
     } else {
-        active_rows = flat_rows;
+        // Wide-format fast path: read each flattened row once by mapped key,
+        // parsing straight to the target type and grouping dies by wafer/split key
+        // in a single pass — no `groups` map of references, no per-die re-lookup.
+        return Ok(parse_json_wide(&flat_rows, &mapping, test_defs, &pass_bin_set));
     }
 
     let mut groups: indexmap::IndexMap<String, Vec<&HashMap<String, String>>> =
@@ -176,18 +181,12 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
             let site_num: Option<u32> = mapping.site.as_deref()
                 .and_then(|c| row.get(c)).and_then(|v| v.trim().parse().ok());
 
+            // Long format only (wide returns early above): values were pivoted into
+            // `__test_{n}` keys keyed by discovered test number.
             let mut test_values: HashMap<String, f64> = HashMap::new();
-            if is_long_format {
-                for tnum in long_fmt_test_numbers.values() {
-                    if let Some(v) = row.get(&format!("__test_{}", tnum)).and_then(|s| s.parse().ok()) {
-                        test_values.insert(tnum.to_string(), v);
-                    }
-                }
-            } else {
-                for t in &mapping.tests {
-                    if let Some(v) = row.get(&t.col).and_then(|s| s.parse().ok()) {
-                        test_values.insert(t.test_number.to_string(), v);
-                    }
+            for tnum in long_fmt_test_numbers.values() {
+                if let Some(v) = row.get(&format!("__test_{}", tnum)).and_then(|s| s.parse().ok()) {
+                    test_values.insert(tnum.to_string(), v);
                 }
             }
 
@@ -222,6 +221,96 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
     }
 
     Ok(ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] })
+}
+
+/// Allocation-light wide-format JSON parse over already-flattened rows. Reads each
+/// row once by mapped key, parses straight to the target type, and groups dies by
+/// wafer/split key in a single pass — avoiding the `groups` map of references and
+/// the per-die re-lookup/re-parse of the original path. Result shape matches the
+/// long-format path exactly.
+fn parse_json_wide(
+    flat_rows: &[HashMap<String, String>],
+    mapping: &CsvMapping,
+    test_defs: HashMap<String, TestDef>,
+    pass_bin_set: &std::collections::HashSet<u32>,
+) -> ParsedStdf {
+    // (test_number string key, source column) — resolved once, reused per row.
+    let test_cols: Vec<(String, &str)> = mapping.tests.iter()
+        .map(|t| (t.test_number.to_string(), t.col.as_str())).collect();
+
+    let mut groups: indexmap::IndexMap<String, WaferData> = indexmap::IndexMap::new();
+    let mut first_kept: Option<&HashMap<String, String>> = None;
+
+    for row in flat_rows {
+        let x: i32 = match row.get(&mapping.x).and_then(|v| v.parse().ok()) {
+            Some(v) => v, None => continue,
+        };
+        let y: i32 = match row.get(&mapping.y).and_then(|v| v.parse().ok()) {
+            Some(v) => v, None => continue,
+        };
+
+        let wid: &str = mapping.wafer.as_deref()
+            .and_then(|c| row.get(c)).map(|s| s.as_str())
+            .filter(|v| !v.is_empty()).unwrap_or("W1");
+
+        let key = if mapping.split_by.is_empty() {
+            wid.to_string()
+        } else {
+            let parts: Vec<String> = mapping.split_by.iter()
+                .filter_map(|col| {
+                    let v = row.get(col)?;
+                    if v.is_empty() { None } else { Some(format!("{}: {}", col, v)) }
+                })
+                .collect();
+            if parts.is_empty() { wid.to_string() } else { format!("{} · {}", wid, parts.join(" · ")) }
+        };
+
+        let hbin = mapping.hbin.as_deref().and_then(|c| row.get(c)).and_then(|v| v.parse::<u32>().ok());
+        let sbin = mapping.sbin.as_deref().and_then(|c| row.get(c)).and_then(|v| v.parse::<u32>().ok());
+        let site_num = mapping.site.as_deref().and_then(|c| row.get(c)).and_then(|v| v.trim().parse::<u32>().ok());
+
+        let mut test_values: HashMap<String, f64> = HashMap::with_capacity(test_cols.len());
+        for (tnum, col) in &test_cols {
+            if let Some(v) = row.get(*col).and_then(|s| s.parse::<f64>().ok()) {
+                test_values.insert(tnum.clone(), v);
+            }
+        }
+
+        if first_kept.is_none() { first_kept = Some(row); }
+
+        let wafer = groups.entry(key).or_insert_with(|| WaferData {
+            wafer_id: wid.to_string(),
+            results: Vec::new(),
+            part_count: None, good_count: None, fail_count: None,
+            fields: Vec::new(),
+        });
+        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
+    }
+
+    let wafers: Vec<WaferData> = groups.into_values().map(|mut w| {
+        let part = w.results.len() as u32;
+        let good = w.results.iter().filter(|d|
+            pass_bin_set.is_empty()
+            || d.hbin.map_or(false, |b| pass_bin_set.contains(&b))
+            || d.sbin.map_or(false, |b| pass_bin_set.contains(&b))
+        ).count() as u32;
+        w.part_count = Some(part);
+        w.good_count = Some(good);
+        w.fail_count = Some(part - good);
+        w
+    }).collect();
+
+    let mut meta = LotMeta::default();
+    if let Some(row) = first_kept {
+        if let Some(lot_col) = mapping.lot.as_deref() {
+            meta.push("lotId", row.get(lot_col).cloned());
+        }
+        for col in &mapping.meta {
+            meta.push(col, row.get(col).cloned());
+        }
+    }
+
+    ParsedStdf { meta, wafers, test_defs, sites: vec![], warnings: vec![] }
 }
 
 fn flatten_to_rows(val: &Value) -> Option<Vec<HashMap<String, String>>> {
@@ -511,5 +600,49 @@ mod tests {
         m.lot = Some("lot".to_string());
         let result = parse_json_sync(path.to_str().unwrap().to_string(), m).unwrap();
         assert_eq!(result.meta.get("lotId"), Some("LOT-99"));
+    }
+
+    /// Wide-format mapping matching scripts/generate_csv_json_bench.py.
+    #[cfg(feature = "bench")]
+    fn bench_mapping(n_tests: usize) -> CsvMapping {
+        let mut m = basic_mapping("x", "y");
+        m.hbin = Some("hbin".to_string());
+        m.sbin = Some("sbin".to_string());
+        m.site = Some("site".to_string());
+        m.wafer = Some("wafer".to_string());
+        m.lot = Some("lot".to_string());
+        m.pass_bins = vec![1];
+        m.tests = (0..n_tests)
+            .map(|i| {
+                let num = 1000 + i as u32;
+                CsvTestCol { col: format!("t{num}"), name: format!("t{num}"), test_number: num }
+            })
+            .collect();
+        m
+    }
+
+    // Run with: cargo test --manifest-path packages/parsers/Cargo.toml --features bench --release -- --nocapture bench_parse_json
+    #[cfg(feature = "bench")]
+    #[test]
+    fn bench_parse_json() {
+        let path = "/tmp/bench.json";
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => { eprintln!("SKIP: {path} not found — run scripts/generate_csv_json_bench.py"); return; }
+        };
+        let file_mb = bytes.len() as f64 / 1_048_576.0;
+        let mapping = bench_mapping(50);
+
+        let _ = parse_json_from_bytes(&bytes, mapping.clone()).unwrap(); // warm
+        let t = std::time::Instant::now();
+        let result = parse_json_from_bytes(&bytes, mapping).unwrap();
+        let ms = t.elapsed().as_millis();
+        let dies: usize = result.wafers.iter().map(|w| w.results.len()).sum();
+        println!(
+            "\n=== bench_parse_json ({file_mb:.1} MB) ===\n\
+             wafers: {}\ndies:   {dies}\ntests:  {}\ntotal:  {ms} ms\nthroughput: {:.0} MB/s",
+            result.wafers.len(), result.test_defs.len(),
+            file_mb / (ms as f64 / 1000.0).max(0.001),
+        );
     }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFacetTable, facetValueOf } from './metadata';
+import { buildFacetTable, facetValueOf, NONE_VALUE } from './metadata';
 import type { MetaField, WaferData, WaferSource } from './types';
 
 const fields = (o: Record<string, string>): MetaField[] =>
@@ -106,14 +106,42 @@ describe('buildFacetTable', () => {
     expect(date.values.find(v => v.value === '2026-06-23')!.waferCount).toBe(2);
   });
 
-  it('skips wafers with no source and empty values without crashing', () => {
+  it('folds wafers with no source or empty value into an explicit (none) group', () => {
+    // Mixed load: some wafers carry the field, others don't — the value-less
+    // wafers must be counted in a `(none)` bucket, never silently dropped.
     const table = buildFacetTable([
-      wafer('W1', 2, undefined),
-      wafer('W2', 3, src({ lotId: '' })),
+      wafer('W1', 2, undefined),        // no source at all
+      wafer('W2', 3, src({ lotId: '' })), // present-but-empty value
       wafer('W3', 4, src({ lotId: 'A' })),
     ]);
     const lot = table.find(f => f.key === 'lotId')!;
-    expect(lot.values).toEqual([{ value: 'A', waferCount: 1, dieCount: 4 }]);
+    expect(lot.values).toEqual([
+      { value: 'A', waferCount: 1, dieCount: 4 },
+      { value: NONE_VALUE, waferCount: 2, dieCount: 5 }, // W1 + W2 pooled
+    ]);
+    // Two buckets (A vs none) ⇒ the field can be split on.
+    expect(lot.splittable).toBe(true);
+  });
+
+  it('sorts the (none) bucket last regardless of its size', () => {
+    // `(none)` is the larger bucket here but is still a residual — it sorts last.
+    const table = buildFacetTable([
+      wafer('W1', 1, undefined),
+      wafer('W2', 1, undefined),
+      wafer('W3', 1, undefined),
+      wafer('W4', 1, src({ lotId: 'A' })),
+    ]);
+    const lot = table.find(f => f.key === 'lotId')!;
+    expect(lot.values.map(v => v.value)).toEqual(['A', NONE_VALUE]);
+  });
+
+  it('does not invent a (none) bucket when every wafer has the value', () => {
+    const table = buildFacetTable([
+      wafer('W1', 1, src({ lotId: 'A' })),
+      wafer('W2', 1, src({ lotId: 'B' })),
+    ]);
+    const lot = table.find(f => f.key === 'lotId')!;
+    expect(lot.values.map(v => v.value)).toEqual(['A', 'B']);
   });
 
   it('returns an empty table when no wafer has metadata', () => {

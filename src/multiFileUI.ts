@@ -17,6 +17,8 @@ export interface RenamedWafer {
   partCount?: number;
   goodCount?: number;
   failCount?: number;
+  /** Per-wafer metadata (WIR/WRR fields) — carried through so facets work. */
+  fields?: WaferData['fields'];
   /**
    * Provenance of this wafer, carried through the rename overlay so it survives
    * into the merge. Wafers from the same source file share one instance by
@@ -113,6 +115,7 @@ export function showRenameOverlay(
       partCount: row.wafer.partCount,
       goodCount: row.wafer.goodCount,
       failCount: row.wafer.failCount,
+      fields: row.wafer.fields,
       source: row.source,
     }));
     closeOverlay();

@@ -9,7 +9,22 @@ export interface CapacityInfo {
 }
 
 export interface TestSelectorOptions {
-  fromLargestFile?: boolean;
+  /**
+   * Current scan scope for a multi-file binary load: `'largest'` = the test list
+   * came from the largest file only (a fast default); `'all'` = every file was
+   * scanned and merged. Drives the source caption + the "scan all" toggle.
+   * Undefined for single-file or CSV/JSON loads (no scope to widen).
+   */
+  scanScope?: 'largest' | 'all';
+  /** Number of binary files in the load — shown in the "scan all N files" toggle. */
+  scanFileCount?: number;
+  /**
+   * Invoked when the user asks to widen the scan to all files. Receives the
+   * in-progress selection + name overrides so the host can re-open the selector
+   * with them preserved. Only wired when widening is possible (>1 file, scope
+   * still `'largest'`); absent otherwise, which hides the toggle.
+   */
+  onScanAll?: (selection: number[], nameOverrides: Map<number, string>) => void;
   initialSelection?: number[];
   nameOverrides?: Map<number, string>;
   capacity?: CapacityInfo;
@@ -368,15 +383,42 @@ export function showTestSelectorOverlay(
   const footer = document.createElement('div');
   footer.style.cssText = 'display:flex;flex-direction:column;gap:8px';
 
+  // Scan-scope row: a caption describing where the test list came from, and — when
+  // only the largest file was scanned — a button to widen the scan to all files.
+  const scopeRow = document.createElement('div');
+  scopeRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+
+  const fileCount = options.scanFileCount ?? 0;
+  if (options.scanScope) {
+    const scopeNote = document.createElement('span');
+    scopeNote.style.cssText = 'font-size:12px;color:var(--text-dim);opacity:0.8';
+    scopeNote.textContent = options.scanScope === 'all'
+      ? `Test list merged from all ${fileCount} files.`
+      : 'Test list from the largest file.';
+    scopeRow.appendChild(scopeNote);
+
+    if (options.scanScope === 'largest' && options.onScanAll) {
+      const scanAllBtn = document.createElement('button');
+      scanAllBtn.textContent = `Scan all ${fileCount} files`;
+      scanAllBtn.style.cssText = [
+        'padding:3px 10px;border-radius:4px;border:1px solid var(--border-mid)',
+        'background:none;color:var(--accent,#4a9eff);cursor:pointer;font-size:12px',
+      ].join(';');
+      scanAllBtn.title = 'Re-scan every file and merge the full test list (use when a test only appears in a smaller file). Your current selection is kept.';
+      scanAllBtn.addEventListener('click', () => {
+        cleanup();
+        options.onScanAll!(Array.from(selected).sort((a, b) => a - b), new Map(nameOverrides));
+      });
+      scopeRow.appendChild(scanAllBtn);
+    }
+  }
+
   const footerNote = document.createElement('div');
   footerNote.style.cssText = 'font-size:12px;color:var(--text-dim);opacity:0.7';
 
   function setFooterNotes(loadWarning?: string): void {
-    const parts: string[] = [];
-    if (options.fromLargestFile) parts.push('Test list from largest file — use Filter after load if tests are missing.');
-    if (loadWarning) parts.push(loadWarning);
-    footerNote.textContent = parts.join(' ');
-    footerNote.style.display = parts.length > 0 ? '' : 'none';
+    footerNote.textContent = loadWarning ?? '';
+    footerNote.style.display = loadWarning ? '' : 'none';
   }
   setFooterNotes();
 
@@ -521,7 +563,7 @@ export function showTestSelectorOverlay(
 
   btnRow.append(cancelBtn, confirmBtn);
   footerRow.append(countLabel, btnRow);
-  footer.append(footerNote, memAdvisory, footerRow);
+  footer.append(scopeRow, footerNote, memAdvisory, footerRow);
 
   // ── Backdrop click ────────────────────────────────────────────────────────
 

@@ -1,6 +1,4 @@
-use rust_stdf::{stdf_file::StdfReader, CompressType, StdfRecord};
 use std::collections::HashMap;
-use std::io::{BufReader, Cursor};
 use crate::types::*;
 
 fn nonempty(s: String) -> Option<String> {
@@ -15,65 +13,109 @@ const SENTINEL_I2: i16 = -32768;
 // friendly labels and which fields to surface, so adding or relabelling a facet
 // never requires republishing this crate. Keys are camelCase STDF field names.
 
-/// All non-empty lot-level fields from the MIR record.
-fn mir_fields(mir: &rust_stdf::MIR) -> Vec<MetaField> {
+// Read a sequence of Cn strings starting at `pos`, returning each in order. A
+// truncated record yields empty strings for the missing trailing fields (Cn
+// reader returns "" past end), so optional tail fields degrade gracefully.
+struct CnSeq<'a> { b: &'a [u8], pos: usize }
+impl<'a> CnSeq<'a> {
+    fn new(b: &'a [u8], pos: usize) -> Self { Self { b, pos } }
+    fn next(&mut self) -> String {
+        let (s, p) = read_cn_str(self.b, self.pos);
+        self.pos = p;
+        s
+    }
+}
+
+/// All non-empty lot-level fields from a MIR record body (STDF V4, 1·10).
+/// Fixed prefix is 15 bytes: SETUP_T(U4) START_T(U4) STAT_NUM(U1) MODE_COD(C1)
+/// RTST_COD(C1) PROT_COD(C1) BURN_TIM(U2) CMOD_COD(C1); then a run of Cn strings.
+fn mir_fields(b: &[u8], o: ByteOrder) -> Vec<MetaField> {
     let mut f = Vec::new();
     // Timestamps → ISO 8601 (host truncates to date where it groups by date).
-    push_field(&mut f, "setupT", epoch_to_iso(mir.setup_t));
-    push_field(&mut f, "startT", epoch_to_iso(mir.start_t));
-    // Character fields (Cn → String). Single-char code fields (C1) are skipped as
-    // low-value; tsmap can ignore any it doesn't want regardless.
-    push_field(&mut f, "lotId",    nonempty(mir.lot_id.clone()));
-    push_field(&mut f, "partType", nonempty(mir.part_typ.clone()));
-    push_field(&mut f, "nodeName", nonempty(mir.node_nam.clone()));
-    push_field(&mut f, "testerType", nonempty(mir.tstr_typ.clone()));
-    push_field(&mut f, "jobName",  nonempty(mir.job_nam.clone()));
-    push_field(&mut f, "jobRev",   nonempty(mir.job_rev.clone()));
-    push_field(&mut f, "sublotId", nonempty(mir.sblot_id.clone()));
-    push_field(&mut f, "operName", nonempty(mir.oper_nam.clone()));
-    push_field(&mut f, "execType", nonempty(mir.exec_typ.clone()));
-    push_field(&mut f, "execVer",  nonempty(mir.exec_ver.clone()));
-    push_field(&mut f, "testCode", nonempty(mir.test_cod.clone()));
-    push_field(&mut f, "testTemp", nonempty(mir.tst_temp.clone()));
-    push_field(&mut f, "userText", nonempty(mir.user_txt.clone()));
-    push_field(&mut f, "auxFile",  nonempty(mir.aux_file.clone()));
-    push_field(&mut f, "packageType", nonempty(mir.pkg_typ.clone()));
-    push_field(&mut f, "familyId", nonempty(mir.famly_id.clone()));
-    push_field(&mut f, "dateCode", nonempty(mir.date_cod.clone()));
-    push_field(&mut f, "facilityId", nonempty(mir.facil_id.clone()));
-    push_field(&mut f, "floorId",  nonempty(mir.floor_id.clone()));
-    push_field(&mut f, "processId", nonempty(mir.proc_id.clone()));
-    push_field(&mut f, "operFreq", nonempty(mir.oper_frq.clone()));
-    push_field(&mut f, "specName", nonempty(mir.spec_nam.clone()));
-    push_field(&mut f, "specVer",  nonempty(mir.spec_ver.clone()));
-    push_field(&mut f, "flowId",   nonempty(mir.flow_id.clone()));
-    push_field(&mut f, "setupId",  nonempty(mir.setup_id.clone()));
-    push_field(&mut f, "designRev", nonempty(mir.dsgn_rev.clone()));
-    push_field(&mut f, "engId",    nonempty(mir.eng_id.clone()));
-    push_field(&mut f, "romCode",  nonempty(mir.rom_cod.clone()));
-    push_field(&mut f, "serialNum", nonempty(mir.serl_num.clone()));
-    push_field(&mut f, "supervisorName", nonempty(mir.supr_nam.clone()));
+    push_field(&mut f, "setupT", read_u4(b, 0, o).and_then(epoch_to_iso));
+    push_field(&mut f, "startT", read_u4(b, 4, o).and_then(epoch_to_iso));
+    // Single-char code fields (STAT_NUM/MODE_COD/RTST_COD/PROT_COD/BURN_TIM/
+    // CMOD_COD) are low-value and skipped; the Cn run begins at byte 15.
+    let mut cn = CnSeq::new(b, 15);
+    // Order matches the STDF V4 MIR Cn field sequence.
+    push_field(&mut f, "lotId",      nonempty(cn.next())); // LOT_ID
+    push_field(&mut f, "partType",   nonempty(cn.next())); // PART_TYP
+    push_field(&mut f, "nodeName",   nonempty(cn.next())); // NODE_NAM
+    push_field(&mut f, "testerType", nonempty(cn.next())); // TSTR_TYP
+    push_field(&mut f, "jobName",    nonempty(cn.next())); // JOB_NAM
+    push_field(&mut f, "jobRev",     nonempty(cn.next())); // JOB_REV
+    push_field(&mut f, "sublotId",   nonempty(cn.next())); // SBLOT_ID
+    push_field(&mut f, "operName",   nonempty(cn.next())); // OPER_NAM
+    push_field(&mut f, "execType",   nonempty(cn.next())); // EXEC_TYP
+    push_field(&mut f, "execVer",    nonempty(cn.next())); // EXEC_VER
+    push_field(&mut f, "testCode",   nonempty(cn.next())); // TEST_COD
+    push_field(&mut f, "testTemp",   nonempty(cn.next())); // TST_TEMP
+    push_field(&mut f, "userText",   nonempty(cn.next())); // USER_TXT
+    push_field(&mut f, "auxFile",    nonempty(cn.next())); // AUX_FILE
+    push_field(&mut f, "packageType", nonempty(cn.next())); // PKG_TYP
+    push_field(&mut f, "familyId",   nonempty(cn.next())); // FAMLY_ID
+    push_field(&mut f, "dateCode",   nonempty(cn.next())); // DATE_COD
+    push_field(&mut f, "facilityId", nonempty(cn.next())); // FACIL_ID
+    push_field(&mut f, "floorId",    nonempty(cn.next())); // FLOOR_ID
+    push_field(&mut f, "processId",  nonempty(cn.next())); // PROC_ID
+    push_field(&mut f, "operFreq",   nonempty(cn.next())); // OPER_FRQ
+    push_field(&mut f, "specName",   nonempty(cn.next())); // SPEC_NAM
+    push_field(&mut f, "specVer",    nonempty(cn.next())); // SPEC_VER
+    push_field(&mut f, "flowId",     nonempty(cn.next())); // FLOW_ID
+    push_field(&mut f, "setupId",    nonempty(cn.next())); // SETUP_ID
+    push_field(&mut f, "designRev",  nonempty(cn.next())); // DSGN_REV
+    push_field(&mut f, "engId",      nonempty(cn.next())); // ENG_ID
+    push_field(&mut f, "romCode",    nonempty(cn.next())); // ROM_COD
+    push_field(&mut f, "serialNum",  nonempty(cn.next())); // SERL_NUM
+    push_field(&mut f, "supervisorName", nonempty(cn.next())); // SUPR_NAM
     f
 }
 
-/// All non-empty wafer-level string fields from a WIR record.
-fn wir_fields(wir: &rust_stdf::WIR) -> Vec<MetaField> {
-    let mut f = Vec::new();
-    push_field(&mut f, "waferStartT", epoch_to_iso(wir.start_t));
-    f
+/// WIR record body (2·10): HEAD_NUM(U1) SITE_GRP(U1) START_T(U4) WAFER_ID(Cn).
+struct WirData { wafer_id: String, fields: Vec<MetaField> }
+fn decode_wir(b: &[u8], o: ByteOrder) -> WirData {
+    let mut fields = Vec::new();
+    push_field(&mut fields, "waferStartT", read_u4(b, 2, o).and_then(epoch_to_iso));
+    let (wafer_id, _) = read_cn_str(b, 6);
+    WirData { wafer_id, fields }
 }
 
-/// All non-empty wafer-level string fields from a WRR record (appended to the
-/// wafer's existing fields). Numeric counts are surfaced via partCount etc.
-fn wrr_fields(wrr: &rust_stdf::WRR) -> Vec<MetaField> {
-    let mut f = Vec::new();
-    push_field(&mut f, "waferFinishT", epoch_to_iso(wrr.finish_t));
-    push_field(&mut f, "fabWaferId", nonempty(wrr.fabwf_id.clone()));
-    push_field(&mut f, "frameId", nonempty(wrr.frame_id.clone()));
-    push_field(&mut f, "maskId",  nonempty(wrr.mask_id.clone()));
-    push_field(&mut f, "waferDescUser", nonempty(wrr.usr_desc.clone()));
-    push_field(&mut f, "waferDescExec", nonempty(wrr.exc_desc.clone()));
-    f
+/// WRR record body (2·20): HEAD_NUM(U1) SITE_GRP(U1) FINISH_T(U4) PART_CNT(U4)
+/// RTST_CNT(U4) ABRT_CNT(U4) GOOD_CNT(U4) FUNC_CNT(U4) WAFER_ID(Cn) FABWF_ID(Cn)
+/// FRAME_ID(Cn) MASK_ID(Cn) USR_DESC(Cn) EXC_DESC(Cn).
+struct WrrData { wafer_id: String, part_cnt: u32, good_cnt: u32, fields: Vec<MetaField> }
+fn decode_wrr(b: &[u8], o: ByteOrder) -> WrrData {
+    let part_cnt = read_u4(b, 6, o).unwrap_or(SENTINEL_U4);
+    let good_cnt = read_u4(b, 18, o).unwrap_or(SENTINEL_U4);
+    let mut cn = CnSeq::new(b, 26);
+    let wafer_id = cn.next();           // WAFER_ID
+    let fabwf_id = cn.next();           // FABWF_ID
+    let frame_id = cn.next();           // FRAME_ID
+    let mask_id  = cn.next();           // MASK_ID
+    let usr_desc = cn.next();           // USR_DESC
+    let exc_desc = cn.next();           // EXC_DESC
+    let mut fields = Vec::new();
+    push_field(&mut fields, "waferFinishT", read_u4(b, 2, o).and_then(epoch_to_iso));
+    push_field(&mut fields, "fabWaferId", nonempty(fabwf_id));
+    push_field(&mut fields, "frameId", nonempty(frame_id));
+    push_field(&mut fields, "maskId",  nonempty(mask_id));
+    push_field(&mut fields, "waferDescUser", nonempty(usr_desc));
+    push_field(&mut fields, "waferDescExec", nonempty(exc_desc));
+    WrrData { wafer_id, part_cnt, good_cnt, fields }
+}
+
+/// SDR record body (1·80): HEAD_NUM(U1) SITE_GRP(U1) SITE_CNT(U1) then
+/// SITE_NUM array of SITE_CNT × U1, followed by descriptor Cn fields we ignore.
+/// Returns (head_num, [site_num…]).
+fn decode_sdr(b: &[u8]) -> (u32, Vec<u32>) {
+    if b.len() < 3 { return (1, Vec::new()); }
+    let head = b[0] as u32;
+    let cnt = b[2] as usize;
+    let mut sites = Vec::with_capacity(cnt);
+    for i in 0..cnt {
+        if let Some(&s) = b.get(3 + i) { sites.push(s as u32); }
+    }
+    (head, sites)
 }
 
 // ── Warnings ───────────────────────────────────────────────────────────────────
@@ -91,28 +133,101 @@ fn soft_bin_warning(fabricated: usize) -> Vec<String> {
     }
 }
 
+// ── Byte order ────────────────────────────────────────────────────────────────
+
+/// STDF byte order, read from the FAR record's CPU_TYPE byte (1 = big-endian
+/// legacy Sun/SPARC controllers; 2 = little-endian x86). Honoured per-file — a
+/// Teradyne IG-XL floor can still emit either depending on its controller.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ByteOrder {
+    Little,
+    Big,
+}
+
 // ── Raw byte helpers ──────────────────────────────────────────────────────────
 
 // All readers are bounds-checked and return None on a short slice, so a
 // truncated record can never panic (in WASM a panic aborts the whole module).
+// Multi-byte integers/floats honour the file's byte order.
 #[inline(always)]
-fn read_u4_le(b: &[u8], pos: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(pos..pos + 4)?.try_into().ok()?))
+fn read_u4(b: &[u8], pos: usize, o: ByteOrder) -> Option<u32> {
+    let a: [u8; 4] = b.get(pos..pos + 4)?.try_into().ok()?;
+    Some(match o { ByteOrder::Little => u32::from_le_bytes(a), ByteOrder::Big => u32::from_be_bytes(a) })
 }
 
 #[inline(always)]
-fn read_u2_le(b: &[u8], pos: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(pos..pos + 2)?.try_into().ok()?))
+fn read_u2(b: &[u8], pos: usize, o: ByteOrder) -> Option<u16> {
+    let a: [u8; 2] = b.get(pos..pos + 2)?.try_into().ok()?;
+    Some(match o { ByteOrder::Little => u16::from_le_bytes(a), ByteOrder::Big => u16::from_be_bytes(a) })
 }
 
 #[inline(always)]
-fn read_i2_le(b: &[u8], pos: usize) -> Option<i16> {
-    Some(i16::from_le_bytes(b.get(pos..pos + 2)?.try_into().ok()?))
+fn read_i2(b: &[u8], pos: usize, o: ByteOrder) -> Option<i16> {
+    let a: [u8; 2] = b.get(pos..pos + 2)?.try_into().ok()?;
+    Some(match o { ByteOrder::Little => i16::from_le_bytes(a), ByteOrder::Big => i16::from_be_bytes(a) })
 }
 
 #[inline(always)]
-fn read_f32_le(b: &[u8], pos: usize) -> Option<f32> {
-    Some(f32::from_le_bytes(b.get(pos..pos + 4)?.try_into().ok()?))
+fn read_f32(b: &[u8], pos: usize, o: ByteOrder) -> Option<f32> {
+    let bits = read_u4(b, pos, o)?;
+    Some(f32::from_bits(bits))
+}
+
+// ── Record framing ────────────────────────────────────────────────────────────
+
+/// One STDF record: type/sub codes and a borrowed view of its body.
+struct RawRecord<'a> {
+    typ: u8,
+    sub: u8,
+    body: &'a [u8],
+}
+
+/// Borrowing iterator over STDF records in `bytes`. Header is
+/// `[REC_LEN: U2][REC_TYP: U1][REC_SUB: U1]` followed by REC_LEN body bytes;
+/// REC_LEN is read in the file's byte order. Stops at the first malformed/short
+/// header (matching how a truncated file tails off). Pure borrow — no per-record
+/// allocation, the body is a slice into the original buffer.
+struct RecordIter<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    order: ByteOrder,
+}
+
+impl<'a> RecordIter<'a> {
+    fn next_record(&mut self) -> Option<RawRecord<'a>> {
+        // Need at least a 4-byte header.
+        if self.pos + 4 > self.bytes.len() { return None; }
+        let len = read_u2(self.bytes, self.pos, self.order)? as usize;
+        let typ = self.bytes[self.pos + 2];
+        let sub = self.bytes[self.pos + 3];
+        let body_start = self.pos + 4;
+        let body_end = body_start + len;
+        if body_end > self.bytes.len() { return None; } // truncated final record
+        let body = &self.bytes[body_start..body_end];
+        self.pos = body_end;
+        Some(RawRecord { typ, sub, body })
+    }
+}
+
+/// Read the FAR record to determine byte order and validate it's STDF V4. FAR is
+/// always the first record: header `[REC_LEN][0][10]`, body `[CPU_TYPE][STDF_VER]`.
+/// CPU_TYPE and the header type/sub are single bytes (byte-order-independent), so
+/// we can read CPU_TYPE before knowing the order. CPU_TYPE: 1 = big-endian (legacy
+/// Sun/SPARC), 2 = little-endian (x86). Other values are rejected.
+fn detect_byte_order(bytes: &[u8]) -> Result<ByteOrder, String> {
+    // FAR header is 4 bytes, body is CPU_TYPE(1) + STDF_VER(1).
+    if bytes.len() < 6 {
+        return Err("file too short to contain a FAR record".to_string());
+    }
+    if bytes[2] != 0 || bytes[3] != 10 {
+        return Err("first record is not a FAR — not a valid STDF file".to_string());
+    }
+    let cpu_type = bytes[4];
+    match cpu_type {
+        1 => Ok(ByteOrder::Big),
+        2 => Ok(ByteOrder::Little),
+        other => Err(format!("unsupported STDF CPU_TYPE {other} (expected 1=big-endian or 2=little-endian)")),
+    }
 }
 
 // Read a Cn (1-byte length + ASCII) and return (string, new_pos).
@@ -145,15 +260,15 @@ struct PrrFields {
     part_id: Option<u32>,
 }
 
-fn parse_prr(b: &[u8]) -> Option<PrrFields> {
+fn parse_prr(b: &[u8], o: ByteOrder) -> Option<PrrFields> {
     if b.len() < 14 { return None; }
     let head     = b[0];
     let site     = b[1];
     // b[2] = part_flg, b[3..5] = num_test
-    let hard_bin = read_u2_le(b, 5)?;
-    let soft_bin = read_u2_le(b, 7).unwrap_or(hard_bin);
-    let x        = read_i2_le(b, 9).unwrap_or(SENTINEL_I2);
-    let y        = read_i2_le(b, 11).unwrap_or(SENTINEL_I2);
+    let hard_bin = read_u2(b, 5, o)?;
+    let soft_bin = read_u2(b, 7, o).unwrap_or(hard_bin);
+    let x        = read_i2(b, 9, o).unwrap_or(SENTINEL_I2);
+    let y        = read_i2(b, 11, o).unwrap_or(SENTINEL_I2);
     // test_t is 4 bytes at 13..17, then part_id as Cn at 17
     let part_id  = if b.len() > 17 {
         let (s, _) = read_cn_str(b, 17);
@@ -178,20 +293,20 @@ struct PtrFast {
 }
 
 #[inline(always)]
-fn parse_ptr_fast(b: &[u8]) -> Option<PtrFast> {
+fn parse_ptr_fast(b: &[u8], o: ByteOrder) -> Option<PtrFast> {
     if b.len() < 12 { return None; }
     Some(PtrFast {
-        test_num: read_u4_le(b, 0)?,
+        test_num: read_u4(b, 0, o)?,
         head:     b[4],
         site:     b[5],
         failed:   b[6] & 0x80 != 0,
-        result:   read_f32_le(b, 8)?,
+        result:   read_f32(b, 8, o)?,
     })
 }
 
 // Extract test_txt and optional lo/hi limits from a PTR raw record.
 // Called only on the first occurrence of each test_num.
-fn ptr_defs_from_raw(b: &[u8]) -> (String, Option<f64>, Option<f64>, Option<String>) {
+fn ptr_defs_from_raw(b: &[u8], o: ByteOrder) -> (String, Option<f64>, Option<f64>, Option<String>) {
     if b.len() < 12 {
         return (String::new(), None, None, None);
     }
@@ -207,13 +322,13 @@ fn ptr_defs_from_raw(b: &[u8]) -> (String, Option<f64>, Option<f64>, Option<Stri
     }
     let pos = pos + 3; // skip res_scal, llm_scal, hlm_scal (1 byte each)
     let lo = if opt_flag & 0x40 == 0 {
-        read_f32_le(b, pos).map(|v| v as f64)
+        read_f32(b, pos, o).map(|v| v as f64)
     } else {
         None
     };
     let pos = pos + 4;
     let hi = if opt_flag & 0x80 == 0 {
-        read_f32_le(b, pos).map(|v| v as f64)
+        read_f32(b, pos, o).map(|v| v as f64)
     } else {
         None
     };
@@ -241,21 +356,55 @@ fn ptr_limits_explicitly_absent(b: &[u8]) -> bool {
 
 // FTR layout: [0..4] test_num, [4] head, [5] site, [6] test_flg
 #[inline(always)]
-fn parse_ftr_fast(b: &[u8]) -> Option<(u32, u8, u8, bool)> {
+fn parse_ftr_fast(b: &[u8], o: ByteOrder) -> Option<(u32, u8, u8, bool)> {
     if b.len() < 7 { return None; }
-    let test_num = read_u4_le(b, 0)?;
+    let test_num = read_u4(b, 0, o)?;
     let head = b[4];
     let site = b[5];
     let failed = b[6] & 0x80 != 0;
     Some((test_num, head, site, failed))
 }
 
-// FTR test_txt is deep in the record after many fixed + variable fields.
-// Only needed on first occurrence; fall back to struct parse via rust-stdf.
-fn ftr_test_txt_from_struct(b: &[u8], order: &rust_stdf::ByteOrder) -> String {
-    let mut ftr = rust_stdf::FTR::new();
-    ftr.read_from_bytes(b, order);
-    ftr.test_txt
+// FTR TEST_TXT is deep in the record after many fixed + variable-length fields.
+// Layout (STDF V4 FTR, 1,20): TEST_NUM(U4) HEAD(U1) SITE(U1) TEST_FLG(B1)
+// OPT_FLAG(B1), then five U4 counts (CYCL_CNT, REL_VADR, REPT_CNT, NUM_FAIL,
+// XFAIL_AD i4, YFAIL_AD i4), VECT_OFF(i2), then four U2 array counts
+// (RTN_ICNT, PGM_ICNT) which precede variable-length arrays… rather than decode
+// all of that, we scan to TEST_TXT by walking the documented field sequence. In
+// practice TEST_TXT only matters on the first occurrence of each test number, so
+// this is cold. We bound-check every step and return "" if the record is short.
+fn ftr_test_txt_from_raw(b: &[u8], o: ByteOrder) -> String {
+    // Fixed head: TEST_NUM(4) HEAD(1) SITE(1) TEST_FLG(1) OPT_FLAG(1) = 8 bytes.
+    if b.len() < 8 { return String::new(); }
+    let opt_flag = b[7];
+    let mut pos = 8usize;
+    // Five U4 + two I4 conditional on OPT_FLAG, per the spec these are always
+    // present as U4/I4 (15 bytes of fixed numerics): CYCL_CNT, REL_VADR,
+    // REPT_CNT, NUM_FAIL, XFAIL_AD, YFAIL_AD, VECT_OFF.
+    // CYCL_CNT U4, REL_VADR U4, REPT_CNT U4, NUM_FAIL U4 (4×4=16), XFAIL_AD I4,
+    // YFAIL_AD I4 (2×4=8), VECT_OFF I2 (2) = 26 bytes.
+    pos += 26;
+    // RTN_ICNT (U2), PGM_ICNT (U2).
+    let rtn_icnt = read_u2(b, pos, o).unwrap_or(0) as usize; pos += 2;
+    let pgm_icnt = read_u2(b, pos, o).unwrap_or(0) as usize; pos += 2;
+    // RTN_INDX: rtn_icnt × U2.
+    pos += rtn_icnt * 2;
+    // RTN_STAT: rtn_icnt nibbles → ceil(rtn_icnt/2) bytes.
+    pos += rtn_icnt.div_ceil(2);
+    // PGM_INDX: pgm_icnt × U2.
+    pos += pgm_icnt * 2;
+    // PGM_STAT: pgm_icnt nibbles → ceil(pgm_icnt/2) bytes.
+    pos += pgm_icnt.div_ceil(2);
+    // FAIL_PIN: Dn (bit-encoded) → U2 bit count + ceil(bits/8) bytes.
+    if let Some(bits) = read_u2(b, pos, o) { pos += 2 + (bits as usize).div_ceil(8); } else { return String::new(); }
+    // VECT_NAM(Cn), TIME_SET(Cn), OP_CODE(Cn): skip three Cn strings.
+    let (_, p) = read_cn_str(b, pos); pos = p;
+    let (_, p) = read_cn_str(b, pos); pos = p;
+    let (_, p) = read_cn_str(b, pos); pos = p;
+    // TEST_TXT(Cn).
+    let _ = opt_flag; // opt_flag governs whether some counts are valid, not presence
+    let (txt, _) = read_cn_str(b, pos);
+    txt
 }
 
 // ── Per-site accumulator ──────────────────────────────────────────────────────
@@ -322,13 +471,8 @@ impl SiteAccum {
 // ── Main parser ───────────────────────────────────────────────────────────────
 
 pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
-    // We still use StdfReader for endianness detection and header validation,
-    // but iterate via RawDataIter to avoid per-PTR struct allocation.
-    let mut reader = StdfReader::from(
-        BufReader::new(Cursor::new(bytes)),
-        &CompressType::Uncompressed,
-    )
-    .map_err(|e| e.to_string())?;
+    let order = detect_byte_order(bytes)?;
+    let mut iter = RecordIter { bytes, pos: 0, order };
 
     let mut meta = LotMeta::default();
     let mut sites: Vec<SiteInfo> = Vec::new();
@@ -348,21 +492,20 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
     // test_num → ordered key string (parallel to test_index.order)
     let mut index_keys: Vec<String> = Vec::new();
 
-    for raw in reader.get_rawdata_iter() {
-        let raw = raw.map_err(|e| e.to_string())?;
-        let (typ, sub) = (raw.header.typ, raw.header.sub);
-        let b = &raw.raw_data;
+    while let Some(raw) = iter.next_record() {
+        let (typ, sub) = (raw.typ, raw.sub);
+        let b = raw.body;
 
         match (typ, sub) {
             // ── PTR ──────────────────────────────────────────────────────────
             (15, 10) => {
-                let Some(ptr) = parse_ptr_fast(b) else { continue };
+                let Some(ptr) = parse_ptr_fast(b, order) else { continue };
                 let key = (ptr.head, ptr.site);
 
                 // Register test def on first occurrence; update limits until resolved
                 if !test_num_to_key.contains_key(&ptr.test_num) {
                     let key_str = ptr.test_num.to_string();
-                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b, order);
                     let resolved = lo.is_some() || hi.is_some()
                         || ptr_limits_explicitly_absent(b);
                     if resolved { limits_resolved.insert(ptr.test_num); }
@@ -381,7 +524,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                     test_num_to_key.insert(ptr.test_num, key_str);
                 } else if !limits_resolved.contains(&ptr.test_num) {
                     // Limits not yet found — check this record
-                    let (_, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (_, lo, hi, units) = ptr_defs_from_raw(b, order);
                     if lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b) {
                         limits_resolved.insert(ptr.test_num);
                         if let Some(key_str) = test_num_to_key.get(&ptr.test_num) {
@@ -407,12 +550,12 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
 
             // ── FTR ──────────────────────────────────────────────────────────
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b) else { continue };
+                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
 
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
-                    let test_txt = ftr_test_txt_from_struct(b, &raw.byte_order);
+                    let test_txt = ftr_test_txt_from_raw(b, order);
                     test_defs.insert(key_str.clone(), TestDef {
                         name: test_txt,
                         test_type: "F".to_string(),
@@ -444,7 +587,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
 
             // ── PRR ──────────────────────────────────────────────────────────
             (5, 20) => {
-                let Some(prr) = parse_prr(b) else { continue };
+                let Some(prr) = parse_prr(b, order) else { continue };
                 if prr.x == SENTINEL_I2 || prr.y == SENTINEL_I2 {
                     site_accums.remove(&(prr.head, prr.site));
                     continue;
@@ -484,56 +627,49 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                 }
             }
 
-            // ── Rare structural records — parse via rust-stdf ─────────────
-            _ => {
-                let mut rec = StdfRecord::new_from_header(raw.header);
-                rec.read_from_bytes(b, &raw.byte_order);
-                match rec {
-                    StdfRecord::MIR(mir) => {
-                        meta.fields = mir_fields(&mir);
-                    }
-                    StdfRecord::SDR(sdr) => {
-                        for &site in &sdr.site_num {
-                            sites.push(SiteInfo {
-                                head_num: sdr.head_num as u32,
-                                site_num: site as u32,
-                            });
-                        }
-                    }
-                    StdfRecord::WIR(wir) => {
-                        let fields = wir_fields(&wir);
-                        current_wafer = Some(WaferData {
-                            wafer_id: if wir.wafer_id.is_empty() {
-                                format!("W{}", wafers.len() + 1)
-                            } else {
-                                wir.wafer_id
-                            },
-                            results: Vec::new(),
-                            part_count: None,
-                            good_count: None,
-                            fail_count: None,
-                            fields,
-                        });
-                    }
-                    StdfRecord::WRR(wrr) => {
-                        if let Some(mut wafer) = current_wafer.take() {
-                            wafer.fields.extend(wrr_fields(&wrr));
-                            if !wrr.wafer_id.is_empty() {
-                                wafer.wafer_id = wrr.wafer_id;
-                            }
-                            wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
-                            wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
-                            wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
-                                Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
-                            } else {
-                                None
-                            };
-                            wafers.push(wafer);
-                        }
-                    }
-                    _ => {}
+            // ── Structural records (cold: a handful per file) ─────────────
+            (1, 10) => { // MIR
+                meta.fields = mir_fields(b, order);
+            }
+            (1, 80) => { // SDR
+                let (head, site_nums) = decode_sdr(b);
+                for site in site_nums {
+                    sites.push(SiteInfo { head_num: head, site_num: site });
                 }
             }
+            (2, 10) => { // WIR
+                let wir = decode_wir(b, order);
+                current_wafer = Some(WaferData {
+                    wafer_id: if wir.wafer_id.is_empty() {
+                        format!("W{}", wafers.len() + 1)
+                    } else {
+                        wir.wafer_id
+                    },
+                    results: Vec::new(),
+                    part_count: None,
+                    good_count: None,
+                    fail_count: None,
+                    fields: wir.fields,
+                });
+            }
+            (2, 20) => { // WRR
+                if let Some(mut wafer) = current_wafer.take() {
+                    let wrr = decode_wrr(b, order);
+                    wafer.fields.extend(wrr.fields);
+                    if !wrr.wafer_id.is_empty() {
+                        wafer.wafer_id = wrr.wafer_id;
+                    }
+                    wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
+                    wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
+                    wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
+                        Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
+                    } else {
+                        None
+                    };
+                    wafers.push(wafer);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -559,27 +695,23 @@ pub fn parse_stdf_sync(path: String) -> Result<ParsedStdf, String> {
 /// Does not accumulate die results. Used to populate the test selector overlay
 /// before the full parse. Returns a flat map of test_num string → TestDef.
 pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, String> {
-    let mut reader = StdfReader::from(
-        BufReader::new(Cursor::new(bytes)),
-        &CompressType::Uncompressed,
-    )
-    .map_err(|e| e.to_string())?;
+    let order = detect_byte_order(bytes)?;
+    let mut iter = RecordIter { bytes, pos: 0, order };
 
     let mut test_defs: HashMap<String, TestDef> = HashMap::new();
     let mut test_num_to_key: HashMap<u32, String> = HashMap::new();
     let mut limits_resolved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut pir_count: u32 = 0;
 
-    for raw in reader.get_rawdata_iter() {
-        let raw = raw.map_err(|e| e.to_string())?;
-        let b = &raw.raw_data;
-        match (raw.header.typ, raw.header.sub) {
+    while let Some(raw) = iter.next_record() {
+        let b = raw.body;
+        match (raw.typ, raw.sub) {
             (5, 10) => { pir_count += 1; }
             (15, 10) => {
-                let Some(test_num) = read_u4_le(b, 0) else { continue; };
+                let Some(test_num) = read_u4(b, 0, order) else { continue; };
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
-                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b, order);
                     let resolved = lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b);
                     if resolved { limits_resolved.insert(test_num); }
                     test_defs.insert(key_str.clone(), TestDef {
@@ -591,7 +723,7 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, S
                     });
                     test_num_to_key.insert(test_num, key_str);
                 } else if !limits_resolved.contains(&test_num) {
-                    let (_, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (_, lo, hi, units) = ptr_defs_from_raw(b, order);
                     if lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b) {
                         limits_resolved.insert(test_num);
                         if let Some(key_str) = test_num_to_key.get(&test_num) {
@@ -605,10 +737,10 @@ pub fn parse_stdf_test_names(bytes: &[u8]) -> Result<crate::types::ScanResult, S
                 }
             }
             (15, 20) => {
-                let Some(test_num) = read_u4_le(b, 0) else { continue; };
+                let Some(test_num) = read_u4(b, 0, order) else { continue; };
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
-                    let test_txt = ftr_test_txt_from_struct(b, &raw.byte_order);
+                    let test_txt = ftr_test_txt_from_raw(b, order);
                     test_defs.insert(key_str.clone(), TestDef {
                         name: test_txt,
                         test_type: "F".to_string(),
@@ -635,11 +767,8 @@ pub fn parse_stdf_from_bytes_filtered(
     bytes: &[u8],
     selected: &std::collections::HashSet<u32>,
 ) -> Result<ParsedStdf, String> {
-    let mut reader = StdfReader::from(
-        BufReader::new(Cursor::new(bytes)),
-        &CompressType::Uncompressed,
-    )
-    .map_err(|e| e.to_string())?;
+    let order = detect_byte_order(bytes)?;
+    let mut iter = RecordIter { bytes, pos: 0, order };
 
     let mut meta = LotMeta::default();
     let mut sites: Vec<SiteInfo> = Vec::new();
@@ -653,20 +782,19 @@ pub fn parse_stdf_from_bytes_filtered(
     let mut site_accums: HashMap<(u8, u8), SiteAccum> = HashMap::new();
     let mut index_keys: Vec<String> = Vec::new();
 
-    for raw in reader.get_rawdata_iter() {
-        let raw = raw.map_err(|e| e.to_string())?;
-        let (typ, sub) = (raw.header.typ, raw.header.sub);
-        let b = &raw.raw_data;
+    while let Some(raw) = iter.next_record() {
+        let (typ, sub) = (raw.typ, raw.sub);
+        let b = raw.body;
 
         match (typ, sub) {
             (15, 10) => {
-                let Some(ptr) = parse_ptr_fast(b) else { continue };
+                let Some(ptr) = parse_ptr_fast(b, order) else { continue };
                 let key = (ptr.head, ptr.site);
 
                 // Always register/update test def regardless of selection
                 if !test_num_to_key.contains_key(&ptr.test_num) {
                     let key_str = ptr.test_num.to_string();
-                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b, order);
                     let resolved = lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b);
                     if resolved { limits_resolved.insert(ptr.test_num); }
                     test_defs.insert(key_str.clone(), TestDef {
@@ -684,7 +812,7 @@ pub fn parse_stdf_from_bytes_filtered(
                         index_keys[idx] = key_str;
                     }
                 } else if !limits_resolved.contains(&ptr.test_num) {
-                    let (_, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (_, lo, hi, units) = ptr_defs_from_raw(b, order);
                     if lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b) {
                         limits_resolved.insert(ptr.test_num);
                         if let Some(key_str) = test_num_to_key.get(&ptr.test_num) {
@@ -708,12 +836,12 @@ pub fn parse_stdf_from_bytes_filtered(
             }
 
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b) else { continue };
+                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
 
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
-                    let test_txt = ftr_test_txt_from_struct(b, &raw.byte_order);
+                    let test_txt = ftr_test_txt_from_raw(b, order);
                     test_defs.insert(key_str.clone(), TestDef {
                         name: test_txt,
                         test_type: "F".to_string(),
@@ -747,7 +875,7 @@ pub fn parse_stdf_from_bytes_filtered(
             }
 
             (5, 20) => {
-                let Some(prr) = parse_prr(b) else { continue };
+                let Some(prr) = parse_prr(b, order) else { continue };
                 if prr.x == SENTINEL_I2 || prr.y == SENTINEL_I2 {
                     site_accums.remove(&(prr.head, prr.site));
                     continue;
@@ -785,52 +913,46 @@ pub fn parse_stdf_from_bytes_filtered(
                 if let Some(ref mut wafer) = current_wafer { wafer.results.push(die); }
             }
 
-            _ => {
-                let mut rec = StdfRecord::new_from_header(raw.header);
-                rec.read_from_bytes(b, &raw.byte_order);
-                match rec {
-                    StdfRecord::MIR(mir) => {
-                        meta.fields = mir_fields(&mir);
-                    }
-                    StdfRecord::SDR(sdr) => {
-                        for &site in &sdr.site_num {
-                            sites.push(SiteInfo {
-                                head_num: sdr.head_num as u32,
-                                site_num: site as u32,
-                            });
-                        }
-                    }
-                    StdfRecord::WIR(wir) => {
-                        let fields = wir_fields(&wir);
-                        current_wafer = Some(WaferData {
-                            wafer_id: if wir.wafer_id.is_empty() {
-                                format!("W{}", wafers.len() + 1)
-                            } else {
-                                wir.wafer_id
-                            },
-                            results: Vec::new(),
-                            part_count: None,
-                            good_count: None,
-                            fail_count: None,
-                            fields,
-                        });
-                    }
-                    StdfRecord::WRR(wrr) => {
-                        if let Some(mut wafer) = current_wafer.take() {
-                            if !wrr.wafer_id.is_empty() { wafer.wafer_id = wrr.wafer_id; }
-                            wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
-                            wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
-                            wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
-                                Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
-                            } else {
-                                None
-                            };
-                            wafers.push(wafer);
-                        }
-                    }
-                    _ => {}
+            (1, 10) => { // MIR
+                meta.fields = mir_fields(b, order);
+            }
+            (1, 80) => { // SDR
+                let (head, site_nums) = decode_sdr(b);
+                for site in site_nums {
+                    sites.push(SiteInfo { head_num: head, site_num: site });
                 }
             }
+            (2, 10) => { // WIR
+                let wir = decode_wir(b, order);
+                current_wafer = Some(WaferData {
+                    wafer_id: if wir.wafer_id.is_empty() {
+                        format!("W{}", wafers.len() + 1)
+                    } else {
+                        wir.wafer_id
+                    },
+                    results: Vec::new(),
+                    part_count: None,
+                    good_count: None,
+                    fail_count: None,
+                    fields: wir.fields,
+                });
+            }
+            (2, 20) => { // WRR
+                if let Some(mut wafer) = current_wafer.take() {
+                    let wrr = decode_wrr(b, order);
+                    wafer.fields.extend(wrr.fields);
+                    if !wrr.wafer_id.is_empty() { wafer.wafer_id = wrr.wafer_id; }
+                    wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
+                    wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
+                    wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
+                        Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
+                    } else {
+                        None
+                    };
+                    wafers.push(wafer);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -861,11 +983,8 @@ pub struct ParseTiming {
 pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTiming), String> {
     use std::time::Instant;
 
-    let mut reader = StdfReader::from(
-        BufReader::new(Cursor::new(bytes)),
-        &CompressType::Uncompressed,
-    )
-    .map_err(|e| e.to_string())?;
+    let order = detect_byte_order(bytes)?;
+    let mut iter = RecordIter { bytes, pos: 0, order };
 
     let mut meta = LotMeta::default();
     let mut sites: Vec<SiteInfo> = Vec::new();
@@ -884,18 +1003,17 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
 
     let loop_start = Instant::now();
 
-    for raw in reader.get_rawdata_iter() {
-        let raw = raw.map_err(|e| e.to_string())?;
-        let (typ, sub) = (raw.header.typ, raw.header.sub);
-        let b = &raw.raw_data;
+    while let Some(raw) = iter.next_record() {
+        let (typ, sub) = (raw.typ, raw.sub);
+        let b = raw.body;
 
         match (typ, sub) {
             (15, 10) => {
-                let Some(ptr) = parse_ptr_fast(b) else { continue };
+                let Some(ptr) = parse_ptr_fast(b, order) else { continue };
                 let key = (ptr.head, ptr.site);
                 if !test_num_to_key.contains_key(&ptr.test_num) {
                     let key_str = ptr.test_num.to_string();
-                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (test_txt, lo, hi, units) = ptr_defs_from_raw(b, order);
                     let resolved = lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b);
                     if resolved { limits_resolved.insert(ptr.test_num); }
                     test_defs.insert(key_str.clone(), TestDef {
@@ -907,7 +1025,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                     index_keys[idx] = key_str.clone();
                     test_num_to_key.insert(ptr.test_num, key_str);
                 } else if !limits_resolved.contains(&ptr.test_num) {
-                    let (_, lo, hi, units) = ptr_defs_from_raw(b);
+                    let (_, lo, hi, units) = ptr_defs_from_raw(b, order);
                     if lo.is_some() || hi.is_some() || ptr_limits_explicitly_absent(b) {
                         limits_resolved.insert(ptr.test_num);
                         if let Some(key_str) = test_num_to_key.get(&ptr.test_num) {
@@ -926,11 +1044,11 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                 }
             }
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b) else { continue };
+                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
-                    let test_txt = ftr_test_txt_from_struct(b, &raw.byte_order);
+                    let test_txt = ftr_test_txt_from_raw(b, order);
                     test_defs.insert(key_str.clone(), TestDef {
                         name: test_txt, test_type: "F".to_string(),
                         lo_limit: None, hi_limit: None, units: None,
@@ -952,7 +1070,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                 site_accums.entry(key).or_insert_with(|| SiteAccum::new(cap)).reset();
             }
             (5, 20) => {
-                let Some(prr) = parse_prr(b) else { continue };
+                let Some(prr) = parse_prr(b, order) else { continue };
                 if prr.x == SENTINEL_I2 || prr.y == SENTINEL_I2 {
                     site_accums.remove(&(prr.head, prr.site));
                     continue;
@@ -979,44 +1097,37 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                     current_wafer = Some(WaferData {
                         wafer_id: format!("W{}", wafers.len() + 1),
                         results: Vec::new(), part_count: None, good_count: None, fail_count: None,
+                        fields: Vec::new(),
                     });
                 }
                 if let Some(ref mut wafer) = current_wafer { wafer.results.push(die); }
             }
-            _ => {
-                let mut rec = StdfRecord::new_from_header(raw.header);
-                rec.read_from_bytes(b, &raw.byte_order);
-                match rec {
-                    StdfRecord::MIR(mir) => {
-                        meta.fields = mir_fields(&mir);
-                    }
-                    StdfRecord::SDR(sdr) => {
-                        for &site in &sdr.site_num {
-                            sites.push(SiteInfo { head_num: sdr.head_num as u32, site_num: site as u32 });
-                        }
-                    }
-                    StdfRecord::WIR(wir) => {
-                        current_wafer = Some(WaferData {
-                            wafer_id: if wir.wafer_id.is_empty() {
-                                format!("W{}", wafers.len() + 1)
-                            } else { wir.wafer_id },
-                            results: Vec::new(), part_count: None, good_count: None, fail_count: None,
-                        });
-                    }
-                    StdfRecord::WRR(wrr) => {
-                        if let Some(mut wafer) = current_wafer.take() {
-                            if !wrr.wafer_id.is_empty() { wafer.wafer_id = wrr.wafer_id; }
-                            wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
-                            wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
-                            wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
-                                Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
-                            } else { None };
-                            wafers.push(wafer);
-                        }
-                    }
-                    _ => {}
+            (1, 10) => { meta.fields = mir_fields(b, order); }
+            (1, 80) => {
+                let (head, site_nums) = decode_sdr(b);
+                for site in site_nums { sites.push(SiteInfo { head_num: head, site_num: site }); }
+            }
+            (2, 10) => {
+                let wir = decode_wir(b, order);
+                current_wafer = Some(WaferData {
+                    wafer_id: if wir.wafer_id.is_empty() { format!("W{}", wafers.len() + 1) } else { wir.wafer_id },
+                    results: Vec::new(), part_count: None, good_count: None, fail_count: None,
+                    fields: Vec::new(),
+                });
+            }
+            (2, 20) => {
+                if let Some(mut wafer) = current_wafer.take() {
+                    let wrr = decode_wrr(b, order);
+                    if !wrr.wafer_id.is_empty() { wafer.wafer_id = wrr.wafer_id; }
+                    wafer.part_count = if wrr.part_cnt != SENTINEL_U4 { Some(wrr.part_cnt) } else { None };
+                    wafer.good_count = if wrr.good_cnt != SENTINEL_U4 { Some(wrr.good_cnt) } else { None };
+                    wafer.fail_count = if wrr.good_cnt != SENTINEL_U4 && wrr.part_cnt != SENTINEL_U4 {
+                        Some(wrr.part_cnt.saturating_sub(wrr.good_cnt))
+                    } else { None };
+                    wafers.push(wafer);
                 }
             }
+            _ => {}
         }
     }
 
@@ -1258,5 +1369,138 @@ mod tests {
             total    = total_ms,
             tp       = file_mb / (total_ms as f64 / 1000.0),
         );
+    }
+
+    // ── Byte-order (big-endian) support ────────────────────────────────────────
+    // Build a minimal STDF in-memory in a given byte order and assert LE and BE
+    // produce identical parse output. A Teradyne/legacy big-endian file must read
+    // the same as the little-endian equivalent.
+    mod byte_order {
+        use super::super::*;
+
+        struct Builder { order: ByteOrder, buf: Vec<u8> }
+        impl Builder {
+            fn new(order: ByteOrder) -> Self { Self { order, buf: Vec::new() } }
+            fn u4(&self, v: u32) -> [u8; 4] {
+                match self.order { ByteOrder::Little => v.to_le_bytes(), ByteOrder::Big => v.to_be_bytes() }
+            }
+            fn u2(&self, v: u16) -> [u8; 2] {
+                match self.order { ByteOrder::Little => v.to_le_bytes(), ByteOrder::Big => v.to_be_bytes() }
+            }
+            fn i2(&self, v: i16) -> [u8; 2] {
+                match self.order { ByteOrder::Little => v.to_le_bytes(), ByteOrder::Big => v.to_be_bytes() }
+            }
+            fn f32(&self, v: f32) -> [u8; 4] { self.u4(v.to_bits()) }
+            fn cn(&self, s: &str) -> Vec<u8> {
+                let mut v = vec![s.len() as u8];
+                v.extend_from_slice(s.as_bytes());
+                v
+            }
+            // Append a record: header [REC_LEN u2][typ u1][sub u1] + body.
+            fn rec(&mut self, typ: u8, sub: u8, body: &[u8]) {
+                self.buf.extend_from_slice(&self.u2(body.len() as u16));
+                self.buf.push(typ);
+                self.buf.push(sub);
+                self.buf.extend_from_slice(body);
+            }
+        }
+
+        fn build(order: ByteOrder) -> Vec<u8> {
+            let b = Builder::new(order);
+            let cpu = match order { ByteOrder::Little => 2u8, ByteOrder::Big => 1u8 };
+            let mut out = Builder::new(order);
+            // FAR: CPU_TYPE, STDF_VER
+            out.rec(0, 10, &[cpu, 4]);
+            // MIR: 15-byte fixed prefix then Cn run. We only need LOT_ID populated.
+            let mut mir = Vec::new();
+            mir.extend_from_slice(&b.u4(0));   // SETUP_T
+            mir.extend_from_slice(&b.u4(0));   // START_T
+            mir.push(1);                        // STAT_NUM
+            mir.extend_from_slice(b" \0\0");   // MODE/RTST/PROT C1
+            mir.extend_from_slice(&b.u2(0));   // BURN_TIM
+            mir.push(b' ');                     // CMOD_COD C1
+            mir.extend_from_slice(&b.cn("LOT-BE"));   // LOT_ID
+            mir.extend_from_slice(&b.cn("WIDGET"));   // PART_TYP
+            out.rec(1, 10, &mir);
+            // SDR: head=1, grp=1, cnt=2, sites [1,2]
+            out.rec(1, 80, &[1, 1, 2, 1, 2]);
+            // WIR: head, grp, START_T u4, WAFER_ID
+            let mut wir = vec![1, 0];
+            wir.extend_from_slice(&b.u4(0));
+            wir.extend_from_slice(&b.cn("W01"));
+            out.rec(2, 10, &wir);
+            // PIR head=1 site=1
+            out.rec(5, 10, &[1, 1]);
+            // PTR: test_num u4, head, site, test_flg, parm_flg, result f32, then test_txt Cn
+            let mut ptr = Vec::new();
+            ptr.extend_from_slice(&b.u4(1000));
+            ptr.extend_from_slice(&[1, 1, 0, 0]);
+            ptr.extend_from_slice(&b.f32(1.25));
+            ptr.extend_from_slice(&b.cn("VDD"));
+            out.rec(15, 10, &ptr);
+            // PRR: head, site, part_flg, num_test u2, hard_bin u2, soft_bin u2, x i2, y i2, test_t u4, part_id Cn
+            let mut prr = vec![1, 1, 0];
+            prr.extend_from_slice(&b.u2(1));   // num_test
+            prr.extend_from_slice(&b.u2(1));   // hard_bin
+            prr.extend_from_slice(&b.u2(1));   // soft_bin
+            prr.extend_from_slice(&b.i2(3));   // x
+            prr.extend_from_slice(&b.i2(7));   // y
+            prr.extend_from_slice(&b.u4(0));   // test_t
+            prr.extend_from_slice(&b.cn("1")); // part_id
+            out.rec(5, 20, &prr);
+            // WRR: head, grp, FINISH_T u4, PART_CNT u4, RTST u4, ABRT u4, GOOD_CNT u4, FUNC u4, WAFER_ID Cn
+            let mut wrr = vec![1, 0];
+            wrr.extend_from_slice(&b.u4(0));   // finish_t
+            wrr.extend_from_slice(&b.u4(1));   // part_cnt
+            wrr.extend_from_slice(&b.u4(0));   // rtst
+            wrr.extend_from_slice(&b.u4(0));   // abrt
+            wrr.extend_from_slice(&b.u4(1));   // good_cnt
+            wrr.extend_from_slice(&b.u4(0));   // func
+            wrr.extend_from_slice(&b.cn("W01"));
+            out.rec(2, 20, &wrr);
+            out.buf
+        }
+
+        #[test]
+        fn le_and_be_parse_identically() {
+            let le = parse_stdf_from_bytes(&build(ByteOrder::Little)).unwrap();
+            let be = parse_stdf_from_bytes(&build(ByteOrder::Big)).unwrap();
+
+            // Metadata
+            assert_eq!(le.meta.get("lotId"), Some("LOT-BE"));
+            assert_eq!(be.meta.get("lotId"), Some("LOT-BE"));
+            assert_eq!(le.meta.get("partType"), be.meta.get("partType"));
+            // Sites from SDR
+            assert_eq!(le.sites.len(), 2);
+            assert_eq!(be.sites.iter().map(|s| s.site_num).collect::<Vec<_>>(),
+                       le.sites.iter().map(|s| s.site_num).collect::<Vec<_>>());
+            // Wafer + die
+            assert_eq!(le.wafers.len(), 1);
+            assert_eq!(be.wafers.len(), 1);
+            let ld = &le.wafers[0].results[0];
+            let bd = &be.wafers[0].results[0];
+            assert_eq!((ld.x, ld.y, ld.hbin, ld.sbin), (3, 7, Some(1), Some(1)));
+            assert_eq!((bd.x, bd.y, bd.hbin, bd.sbin), (3, 7, Some(1), Some(1)));
+            // Test value (the f32 result — the field most sensitive to byte order)
+            assert_eq!(ld.test_values.get("1000"), Some(&1.25));
+            assert_eq!(bd.test_values.get("1000"), Some(&1.25));
+            assert_eq!(le.test_defs.get("1000").map(|d| d.name.as_str()), Some("VDD"));
+            assert_eq!(be.test_defs.get("1000").map(|d| d.name.as_str()), Some("VDD"));
+        }
+
+        #[test]
+        fn rejects_unknown_cpu_type() {
+            // CPU_TYPE 9 is neither big- nor little-endian.
+            let mut bytes = build(ByteOrder::Little);
+            bytes[4] = 9;
+            assert!(parse_stdf_from_bytes(&bytes).is_err());
+        }
+
+        #[test]
+        fn rejects_non_far_first_record() {
+            let mut bytes = build(ByteOrder::Little);
+            bytes[2] = 1; // change first record type away from FAR (0)
+            assert!(parse_stdf_from_bytes(&bytes).is_err());
+        }
     }
 }

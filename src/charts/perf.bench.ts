@@ -143,12 +143,24 @@ describe('wmap: buildWaferMap + analyzeWaferMap', () => {
 });
 
 describe('wmap: full lot pipeline (buildWaferMap + analyzeWaferMap × N + analyzeWaferLot)', () => {
-  bench('medium (10 wafers × 2k dies × 50 tests)', () => {
+  // Findings-on: the pre-0.16.0 cost (regional Welch test-value pass enabled).
+  bench('medium — findings on (10 wafers × 2k dies × 50 tests)', () => {
     const items = medWafers.map((w, i) => {
       const waferMap = buildWaferMap({ results: w.results, testDefs: wmapDefs });
       const statsSummary = analyzeWaferMap(waferMap, { enableTestValueAnalysis: true });
       return { ...waferMap, label: `W${i}`, statsSummary };
     });
     analyzeWaferLot(items, { perWaferSummaries: items.map(i => i.statsSummary), enableTestValueAnalysis: true });
+  });
+
+  // Default: what tsmap actually runs from wmap 0.16.0 — no options, so the
+  // expensive regional test-value pass is off. This is the real render-path cost.
+  bench('medium — default (10 wafers × 2k dies × 50 tests)', () => {
+    const items = medWafers.map((w, i) => {
+      const waferMap = buildWaferMap({ results: w.results, testDefs: wmapDefs });
+      const statsSummary = analyzeWaferMap(waferMap);
+      return { ...waferMap, label: `W${i}`, statsSummary };
+    });
+    analyzeWaferLot(items, { perWaferSummaries: items.map(i => i.statsSummary) });
   });
 });

@@ -5,6 +5,7 @@
 
 import type { ChartDatum, ChartKind } from './types';
 import { ICONS } from './icons';
+import { attachTooltip } from '../tooltip';
 
 // ── ResizeObserver lifecycle ───────────────────────────────────────────────────
 
@@ -30,6 +31,14 @@ export interface ChartPanel {
   barColor?: (datum: ChartDatum, index: number) => string;
   valueLabel?: (datum: ChartDatum) => string;
   /**
+   * What a single click on a bar does, phrased as an action ("click to open this
+   * wafer"). Drives both the static hint line and the per-bar hover tooltip's
+   * final line, so yield ("…this wafer") and bin pareto ("…this bin across all
+   * wafers") describe their genuinely different `onOpen` behaviour. Defaults to
+   * 'click to open this wafer'.
+   */
+  clickHint?: string;
+  /**
    * Optional self-contained segmented control (yield sort, hard/soft bins).
    * When present the panel renders a radio group and, on change, recomputes its
    * own data and redraws in place — never rebuilding the charts grid (which
@@ -46,7 +55,6 @@ export interface ChartPanel {
 
 export interface RenderChartsOptions {
   onOpen: (waferIndices: number[], datum: ChartDatum) => void;
-  onOpenSelection: (waferIndices: number[], data: ChartDatum[]) => void;
   savePng?: (blob: Blob, stem: string) => void;
   getHeaderLines?: (title: string) => { title: string; subtitle: string };
 }
@@ -236,9 +244,9 @@ export function makeSegmented(
 
 export function makeIconBtn(svg: string, title: string): HTMLButtonElement {
   const btn = document.createElement('button');
-  btn.title = title;
   btn.setAttribute('aria-label', title); // icon-only button — give SRs a name
   btn.innerHTML = svg; // wmap-aligned Lucide SVG; inherits color via currentColor
+  attachTooltip(btn, title); // themed hover tooltip in place of the slow native title
   // Bordered box matching wmap's gallery-card buttons (themed via tsmap tokens).
   Object.assign(btn.style, {
     border: `1px solid ${cssVar('--border-mid')}`, borderRadius: '4px',
@@ -372,19 +380,24 @@ export function openExpandModal(card: HTMLElement, title: string) {
   const hoverIn = (b: HTMLElement) => { b.style.borderColor = cssVar('--accent'); b.style.color = cssVar('--accent'); };
   const hoverOut = (b: HTMLElement) => { b.style.borderColor = cssVar('--border-mid'); b.style.color = cssVar('--text-muted'); };
 
+  // CSS maximize state declared up here so the fullscreen button's tooltip getter
+  // can read it (applyMaximize, below, flips it). Themed tooltips (attachTooltip)
+  // replace the slow native `title`; the getter keeps the hint in step with state.
+  let maximized = false;
+
   const fullscreenBtn = document.createElement('button');
   fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.title = 'Fullscreen (F)';
   fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
   Object.assign(fullscreenBtn.style, modalBtnStyle);
+  attachTooltip(fullscreenBtn, () => maximized ? 'Restore (F)' : 'Maximize (F)');
   fullscreenBtn.addEventListener('mouseenter', () => hoverIn(fullscreenBtn));
   fullscreenBtn.addEventListener('mouseleave', () => hoverOut(fullscreenBtn));
 
   const closeBtn = document.createElement('button');
   closeBtn.innerHTML = ICONS.close;
-  closeBtn.title = 'Close (Esc)';
   closeBtn.setAttribute('aria-label', 'Close');
   Object.assign(closeBtn.style, modalBtnStyle);
+  attachTooltip(closeBtn, 'Close (Esc)');
   closeBtn.addEventListener('mouseenter', () => hoverIn(closeBtn));
   closeBtn.addEventListener('mouseleave', () => hoverOut(closeBtn));
   header.append(titleEl, fullscreenBtn, closeBtn);
@@ -422,10 +435,8 @@ export function openExpandModal(card: HTMLElement, title: string) {
   // We deliberately avoid the real Fullscreen API: WKWebView (macOS Tauri) has
   // element fullscreen disabled unless `macOSPrivateApi` is enabled, and that
   // uses Apple private API. CSS maximize behaves identically on every target.
-  let maximized = false;
   const applyMaximize = () => {
     fullscreenBtn.innerHTML = maximized ? ICONS.shrink : ICONS.maximize;
-    fullscreenBtn.title = maximized ? 'Restore (F)' : 'Maximize (F)';
     if (maximized) {
       box.style.borderRadius = '0'; box.style.resize = 'none';
       box.style.width = '100vw'; box.style.height = '100vh';

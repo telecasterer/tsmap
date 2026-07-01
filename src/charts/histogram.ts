@@ -5,6 +5,7 @@
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { HistogramBucket, HistogramSeriesData, TestOption } from './types';
 import { cardShell, cssVar, formatValue, trackObserver, applyCanvasFlow, chartFillHeight, PADDING } from './chartShell';
+import { attachTooltip } from '../tooltip';
 
 const HIST_HEIGHT = 230;
 const HIST_AXIS_HEIGHT = 36;
@@ -320,12 +321,31 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
       }
     }
 
+    // Informational tooltip (no click action — single-wafer bars aren't clickable).
+    card.style.position = 'relative';
+    let tooltip = card.querySelector<HTMLElement>('.hist-tooltip');
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.className = 'hist-tooltip';
+      tooltip.style.cssText = `position:absolute;display:none;pointer-events:none;z-index:50;background:${cssVar('--bg-overlay')};border:1px solid ${cssVar('--border-subtle')};border-radius:4px;padding:5px 8px;font-size:11px;font-family:system-ui,sans-serif;color:${textColor};white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);`;
+      card.appendChild(tooltip);
+    }
+    const tt = tooltip;
+
     canvas.addEventListener('mousemove', e => {
       const rect = canvas.getBoundingClientRect();
       const bar = barAt(e.clientX - rect.left);
       if (bar !== hovered) { hovered = bar; draw(); }
+      if (bar >= 0) {
+        const b = buckets[bar];
+        const cardRect = card.getBoundingClientRect();
+        tt.innerHTML = `<strong>${formatValue(b.rangeLow)} – ${formatValue(b.rangeHigh)}${unit ? ` ${unit}` : ''}</strong><br>${b.count} dies`;
+        tt.style.display = 'block';
+        tt.style.left = `${e.clientX - cardRect.left + 14}px`;
+        tt.style.top = `${e.clientY - cardRect.top + 14}px`;
+      } else { tt.style.display = 'none'; }
     });
-    canvas.addEventListener('mouseleave', () => { if (hovered !== -1) { hovered = -1; draw(); } });
+    canvas.addEventListener('mouseleave', () => { if (hovered !== -1) { hovered = -1; draw(); } tt.style.display = 'none'; });
 
     trackObserver(new ResizeObserver(() => draw())).observe(card);
     draw();
@@ -358,6 +378,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
     series.forEach((s, i) => {
       const item = document.createElement('button');
       item.type = 'button';
+      attachTooltip(item, `${s.groupKey} — click to emphasise (dim the rest)`);
       item.style.cssText = `display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 4px;border:none;background:none;cursor:pointer;color:${cssVar('--text-secondary')};border-radius:3px;`;
       const sw = document.createElement('span');
       sw.style.cssText = `width:10px;height:10px;border-radius:2px;background:${colorOf(i)};flex:0 0 auto;`;

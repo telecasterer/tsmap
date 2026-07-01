@@ -5,6 +5,7 @@
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { ScatterPoint, TestOption } from './types';
 import { cardShell, cssVar, formatValue, drawAxisUnit, trackObserver, applyCanvasFlow, chartFillHeight } from './chartShell';
+import { attachTooltip } from '../tooltip';
 
 export interface ScatterPanelOptions {
   title: string;
@@ -138,7 +139,7 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
     for (const cat of cats) {
       const swatch = document.createElement('button');
       swatch.dataset.cat = cat;
-      swatch.title = `${labelOfCategory(cat)} — click to filter`;
+      attachTooltip(swatch, `${labelOfCategory(cat)} — click to filter`);
       const color = colorOfCategory(cat);
       swatch.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;border:1px solid ${cssVar('--border-mid')};background:none;cursor:pointer;font-size:11px;color:${cssVar('--text-secondary')};white-space:nowrap;`;
       const dot = document.createElement('span');

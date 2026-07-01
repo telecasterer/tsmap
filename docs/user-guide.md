@@ -41,6 +41,34 @@ before the data is parsed.
 
 ## 2. Opening files
 
+### Installing past security warnings
+
+tsmap's installers are not code-signed, so your operating system may warn that the app is
+from an unknown or unidentified developer the first time you run it. This is expected — it
+reflects the absence of a paid signing certificate, not a problem with the app. The steps
+below let you install anyway. If you would rather not install at all, the
+[browser version](https://telecasterer.github.io/tsmap/app/) runs with no download.
+
+**Windows** — SmartScreen shows a blue "Windows protected your PC" dialog when you run
+`tsmap-<version>-windows-x64.msi` (or the `-setup.exe` installer). Click **More info**, then
+**Run anyway**. The warning fades as more people install the app.
+
+**macOS** — Gatekeeper blocks the app with "tsmap can't be opened because it is from an
+unidentified developer." After mounting the `.dmg`
+(`tsmap-<version>-macos-apple-silicon.dmg` for M-series Macs, `-macos-intel.dmg` for Intel)
+and dragging tsmap to Applications, **right-click** the app in Applications and choose
+**Open**, then click **Open** in the dialog. You only need to do this once. If macOS instead
+says the app is "damaged and can't be opened" — common on Apple Silicon for downloaded
+unsigned apps — clear the quarantine flag in Terminal:
+
+    xattr -dr com.apple.quarantine /Applications/tsmap.app
+
+**Linux** — the `.deb`, `.rpm`, and `.AppImage` builds run normally; any warning is just a
+browser download nag. For the AppImage, mark it executable first:
+
+    chmod +x tsmap-*-linux-x86_64.AppImage
+    ./tsmap-*-linux-x86_64.AppImage
+
 <div class="tsmap-mockup" style="display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;font-size:13px;margin:8px 0 12px;">
   <span style="background:none;border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-size:12px;padding:3px 10px;">Open file</span>
   <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Add files</span>
@@ -414,9 +442,8 @@ Two deliberate choices are worth noting:
 Horizontal bar chart showing pass yield per wafer across the lot.
 
 - **Sort** dropdown — Sort bars by yield (descending) or by wafer ID order.
-- Click a bar to open that wafer's map.
-- Shift-click or Ctrl-click multiple bars to select a group, then click **Open selected**
-  to open a filtered view of those wafers.
+- Click a bar to open that wafer's map in a pop-up modal. Close the modal (Esc, the close
+  button, or click outside it) to return to the charts page exactly where you left it.
 - **Grouped:** one bar per group showing the group's pooled, die-weighted yield.
 
 ### 6.2 Bin pareto
@@ -428,10 +455,11 @@ Failure count by bin across the entire lot, sorted from most to least frequent.
 - **Bins** dropdown — Switch between Hard bins and Soft bins.
 - Pass bin appears first and is labelled separately; all other bins are sorted by fail
   count descending.
-- Click a bar to highlight dies with that bin.
+- Click a bar to open a stacked-bin map — that bin counted across the wafers that contain it
+  — in a pop-up modal. Close the modal to return to the charts page.
 - **Grouped:** clustered bars — within each bin, one colour-coded sub-bar per group, with a
   legend. Hover a sub-bar for its count and share of the bin; click it to open that group's
-  wafers.
+  wafers in a modal.
 
 ### 6.3 Test value distribution (boxplot)
 
@@ -447,7 +475,8 @@ Per-wafer five-number summary for one parametric test: minimum, Q1, median, Q3, 
 - **Trend line** checkbox — Connect the per-wafer medians with a line to reveal drift
   across wafers in lot order (breaks across wafers with no data for the test).
 - Spec limits appear as dashed vertical lines on the plot.
-- Click a wafer's box to open that wafer's test value map.
+- Click a wafer's box to open that wafer's test value map in a pop-up modal. Close the modal
+  to return to the charts page.
 - Hover a row to see the full five-number summary in a tooltip.
 - **Grouped:** one box per group, pooling all of that group's dies into a single summary.
 

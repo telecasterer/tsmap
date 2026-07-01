@@ -16,6 +16,7 @@ import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
 import { ICONS } from './charts/icons';
+import { attachTooltip, upgradeTitleTooltips } from './tooltip';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, renderBinClusterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
@@ -82,14 +83,18 @@ const analyzeOpts = () => ({ enableTestValueAnalysis: valueFindings });
  * view so the lack of effect is explicit rather than a mystery, restoring it on
  * the map. Call whenever `viewMode` changes.
  */
+// Live tooltip text for the value-findings toggle (changes with the view).
+// Read by the themed tooltip via a getter; not a native `title`.
+function valueFindingsTip(): string {
+  return viewMode === 'charts'
+    ? 'Only applies in the map view — switch to Maps to use it'
+    : 'Add regional test-value findings to the summary panel (slower on large lots)';
+}
 function syncValueFindingsBtn() {
   const inCharts = viewMode === 'charts';
   valueFindingsBtn.disabled = inCharts;
   valueFindingsBtn.style.opacity = inCharts ? '0.4' : '';
   valueFindingsBtn.style.cursor = inCharts ? 'default' : '';
-  valueFindingsBtn.title = inCharts
-    ? 'Value findings apply to the wafer map summary panel, not the charts page. Switch to Maps to use it.'
-    : 'Toggle: adds regional test-value findings to the summary panel\'s Findings list — wafer areas (edge, quadrants, sites) that read unusually high or low on a test, or fail spec more there than elsewhere (e.g. "edge ring reads 8% high on VDD"). This is the only thing it changes: the panel\'s per-test stats, value maps, and the Charts page are unaffected, and regional yield/bin findings are always on. Slower on large lots, so off by default. Recomputes in place — no reload.';
 }
 // Faceting: which WaferSource field charts combine by ('' = none). Page-level
 // control populated from buildFacetTable; a change re-renders the charts view.
@@ -112,6 +117,15 @@ let scatterYTest: number | null = null;
 let correlationMatrixLimit = 25;
 
 let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
+// The wmap controller for the map currently rendered into the main `container`
+// (full-window map/gallery view). Destroyed before the container is cleared so
+// wmap's observers/listeners are disconnected deterministically (see
+// WMAP_ISSUES.md #21). The modal drilldown owns its own controller separately.
+let mainViewController: { destroy(): void } | null = null;
+function destroyMainView() {
+  mainViewController?.destroy();
+  mainViewController = null;
+}
 const cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
 // Keyed by `${testNumber}:${groupBy}` so faceting changes invalidate the entry.
 const cachedBoxplotData: Map<string, ReturnType<typeof buildTestBoxplotData>> = new Map();
@@ -143,7 +157,7 @@ function log(level: LogLevel, msg: string) {
   el.textContent = `${time}  ${msg}`;
   logList.appendChild(el);
   logList.scrollTop = logList.scrollHeight;
-  if (level === 'error') logPanel.classList.add('open');
+  if (level === 'error') { logPanel.classList.add('open'); syncLogToggle(); }
   const errors = logList.querySelectorAll('.log-error').length;
   logToggle.textContent = errors > 0 ? `Log (${errors} error${errors > 1 ? 's' : ''})` : 'Log';
 }
@@ -153,7 +167,18 @@ function logWarnings(parsed: ParsedFile) {
   for (const w of parsed.warnings ?? []) log('warn', `${parsed.fileName}: ${w}`);
 }
 
-logToggle.addEventListener('click', () => logPanel.classList.toggle('open'));
+/** Reflect the log panel's open state on the toggle (aria). Tooltip text is a
+ *  getter (logToggleTip) so it tracks the open state without a native title. */
+function syncLogToggle() {
+  logToggle.setAttribute('aria-expanded', String(logPanel.classList.contains('open')));
+}
+function logToggleTip(): string {
+  return logPanel.classList.contains('open') ? 'Hide the log panel' : 'Show the log panel';
+}
+logToggle.addEventListener('click', () => {
+  logPanel.classList.toggle('open');
+  syncLogToggle();
+});
 
 log('info', `tsmap v${__APP_VERSION__} (${__BUILD_DATE__})`);
 
@@ -272,6 +297,7 @@ const onSaveImage = isTauri
 
 function renderWaferView(wafers: WaferData[], label: string) {
   disconnectAllObservers();
+  destroyMainView();
   syncValueFindingsBtn();
   container.innerHTML = '';
   const stem = label.replace(/\.[^.]+$/, '');
@@ -282,7 +308,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
     container.classList.remove('gallery', 'charts');
     const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafers[0].source, wafers[0].waferId) } });
     const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-    renderWaferMap(container, waferMap, {
+    mainViewController = renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       showHelpButton: true,
@@ -294,7 +320,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
     container.classList.add('gallery');
     cachedLotStats ??= buildLotStatsSummary(wafers);
     const { items, lotStatsSummary } = cachedLotStats;
-    renderWaferGallery(container, items, {
+    mainViewController = renderWaferGallery(container, items, {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       showHelpButton: true,
@@ -321,95 +347,228 @@ function makeSelect(optionLabels: Array<[string, string]>, current: string, onCh
   return select;
 }
 
+// Base z-index for wmap's transient overlays (menus, tooltip, expand/help modals)
+// when a map is rendered inside the wafer drilldown modal. The modal box is z 201;
+// wmap layers its overlays from this value upward (base, +1, +2), so it must clear
+// 201. Passed as the `zIndex` render option (wmap 0.16.1+) to every render in
+// openWaferModal — replaces the old global `--wmap-z` mutation. See WMAP_ISSUES.md #22/#23.
+const WAFER_MODAL_OVERLAY_Z = 300;
+
+/**
+ * Open a wafer-map drilldown as a MODAL over the charts view. The charts grid
+ * stays mounted untouched behind it, so closing the modal (Esc / close button /
+ * backdrop click) returns the user to exactly where they were — same scroll,
+ * same selectors. Modelled on `openExpandModal` (chartShell.ts): fixed backdrop,
+ * dialog box with a title + maximize + close header, body-scroll lock. The
+ * difference: the box body is a sized flex container that `render` draws a wmap
+ * map into. Never touches `viewMode` — drilldown is not navigation.
+ *
+ * `render` returns the wmap controller it created; on close we call its
+ * `destroy()` to disconnect wmap's internal ResizeObserver / pointer / window /
+ * document listeners deterministically, then remove the modal DOM. Both
+ * `renderWaferMap` (WaferMapController) and `renderWaferGallery` (GalleryController)
+ * expose `destroy(): void` — see WMAP_ISSUES.md #21.
+ */
+function openWaferModal(title: string, render: (body: HTMLElement) => { destroy(): void }) {
+  const savedOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+
+  const backdrop = document.createElement('div');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(3px);';
+
+  const box = document.createElement('div');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', title);
+  box.tabIndex = -1;
+  // `wmap-modal-box`: wmap's toolbar reparents its plot-mode dropdown into the
+  // nearest `.wmap-modal-box` ancestor (menuRootFor), so the menu lands inside
+  // this box rather than at document.body. Overlay stacking above this modal is
+  // handled per-render via the `zIndex` option (WAFER_MODAL_OVERLAY_Z), not a
+  // global `--wmap-z` mutation. See WMAP_ISSUES.md #22/#23.
+  box.className = 'wmap-modal-box';
+  box.style.cssText = 'background:var(--bg-overlay);border:1px solid var(--border-subtle);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;width:min(92vw,1100px);height:min(88vh,800px);box-shadow:0 24px 64px rgba(0,0,0,0.5);resize:both;min-width:400px;min-height:300px;max-width:100vw;max-height:100vh;z-index:201;';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px;flex-shrink:0;border-bottom:1px solid var(--border-subtle);';
+  const titleEl = document.createElement('span');
+  titleEl.textContent = title;
+  titleEl.style.cssText = 'flex:1;font-weight:600;font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+  // Declared before the fullscreen button so its tooltip getter can read it
+  // (attachTooltip resolves the text once at attach time — avoids a TDZ throw).
+  let maximized = false;
+
+  const btnStyle = 'border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);cursor:pointer;color:var(--text-muted);padding:0;line-height:1;display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex-shrink:0;';
+  const fullscreenBtn = document.createElement('button');
+  fullscreenBtn.innerHTML = ICONS.maximize;
+  fullscreenBtn.setAttribute('aria-label', 'Maximize');
+  fullscreenBtn.style.cssText = btnStyle;
+  attachTooltip(fullscreenBtn, () => maximized ? 'Restore (F)' : 'Maximize (F)');
+  const closeBtn = document.createElement('button');
+  closeBtn.innerHTML = ICONS.close;
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.style.cssText = btnStyle;
+  attachTooltip(closeBtn, 'Close (Esc)');
+  header.append(titleEl, fullscreenBtn, closeBtn);
+
+  // Body: position:relative so injectMapBanner's absolute banner anchors here;
+  // flex:1/min-height:0 (never height:100%) so the wmap canvas sizes correctly
+  // in WebView2 — see CLAUDE.md cross-platform CSS rules.
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden;';
+
+  box.append(header, body);
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+  box.focus();
+
+  // Set by render() below; destroyed on close to disconnect wmap's observers/listeners.
+  let controller: { destroy(): void } | undefined;
+
+  function close() {
+    document.removeEventListener('keydown', onKeyDown);
+    document.body.style.overflow = savedOverflow;
+    controller?.destroy(); // disconnect wmap's observers/listeners (incl. zIndex restore) before detaching DOM
+    backdrop.remove();
+  }
+
+  // CSS maximize, same rationale as openExpandModal (avoid the real Fullscreen
+  // API, disabled in macOS WKWebView without private API).
+  const applyMaximize = () => {
+    fullscreenBtn.innerHTML = maximized ? ICONS.shrink : ICONS.maximize;
+    if (maximized) {
+      box.style.borderRadius = '0'; box.style.resize = 'none';
+      box.style.width = '100vw'; box.style.height = '100vh';
+    } else {
+      box.style.borderRadius = '10px'; box.style.resize = 'both';
+      box.style.width = 'min(92vw,1100px)'; box.style.height = 'min(88vh,800px)';
+    }
+  };
+  const toggleFullscreen = () => { maximized = !maximized; applyMaximize(); };
+  fullscreenBtn.addEventListener('click', toggleFullscreen);
+
+  function onKeyDown(e: KeyboardEvent) {
+    const active = document.activeElement;
+    const inInput = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA');
+    if (e.key === 'Escape') { close(); return; }
+    if ((e.key === 'f' || e.key === 'F') && !inInput) toggleFullscreen();
+  }
+  closeBtn.addEventListener('click', close);
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  document.addEventListener('keydown', onKeyDown);
+
+  // NB: do NOT call disconnectAllObservers() here — that registry holds the live
+  // charts grid's observers (the grid stays mounted behind the modal), and
+  // flushing it would kill the grid's resize handling. wmap manages its own
+  // observers internally and we tear them down via controller.destroy() on close.
+  controller = render(body);
+}
+
 function openSingleWafer(waferIndices: number[]) {
   const filtered = waferIndices.map(i => currentWafers[i]);
-  viewMode = 'map';
-  chartsBtn.textContent = '← Back to charts';
+  if (filtered.length === 0) return;
+  const stem = currentFileName.replace(/\.[^.]+$/, '');
+  const plotMode = autoPlotMode(filtered);
+  const wmapTestDefs = toWmapTestDefs(currentTestDefs);
 
-  const label = filtered.length === 1
-    ? `${currentFileName} — wafer ${filtered[0].waferId}`
-    : `${currentFileName} — ${filtered.length} wafers: ${filtered.map(w => w.waferId).join(', ')}`;
+  if (filtered.length === 1) {
+    const wafer = filtered[0];
+    openWaferModal(`${currentFileName} — wafer ${wafer.waferId}`, body => {
+      const waferMap = buildWaferMap({ results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, wafer.waferId) } });
+      const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
+      const controller = renderWaferMap(body, waferMap, {
+        statsSummary,
+        summaryPanel: { placement: 'right', defaultOpen: true },
+        showHelpButton: true,
+        downloadFilename: stem,
+        onSaveImage,
+        viewOptions: { plotMode },
+        zIndex: WAFER_MODAL_OVERLAY_Z,
+      });
+      injectMapBanner(body, `Wafer ${wafer.waferId}`);
+      return controller;
+    });
+    return;
+  }
 
-  setBusy(`Rendering ${label}…`);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    renderWaferView(filtered, currentFileName);
-    if (filtered.length === 1) injectMapBanner(container, `Wafer ${filtered[0].waferId}`);
-    setIdle(label);
-  }));
+  // Subset gallery: build lot-stats fresh — the global cachedLotStats is keyed to
+  // the FULL lot and must not be reused for a subset.
+  const label = `${currentFileName} — ${filtered.length} wafers: ${filtered.map(w => w.waferId).join(', ')}`;
+  openWaferModal(label, body => {
+    const { items, lotStatsSummary } = buildLotStatsSummary(filtered);
+    return renderWaferGallery(body, items, {
+      lotStatsSummary,
+      summaryPanel: { placement: 'right', defaultOpen: true },
+      showHelpButton: true,
+      downloadFilename: stem,
+      onSaveImage,
+      viewOptions: { plotMode },
+      zIndex: WAFER_MODAL_OVERLAY_Z,
+    });
+  });
 }
 
 function openStackedBin(waferIndices: number[], datum: ChartDatum) {
   if (datum.binCode === undefined) { openSingleWafer(waferIndices); return; }
+  const stackWafers = waferIndices.map(i => currentWafers[i]);
+  if (stackWafers.length === 0) return;
+  const stem = currentFileName.replace(/\.[^.]+$/, '');
+  const stackedIds = stackWafers.map(w => w.waferId).join(', ');
+  const label = `${currentFileName} — stacked ${datum.label} across ${stackWafers.length} wafer${stackWafers.length !== 1 ? 's' : ''}: ${stackedIds}`;
 
-  viewMode = 'map';
-  syncValueFindingsBtn();
-  chartsBtn.textContent = '← Back to charts';
-  const stackedWafers = waferIndices.map(i => currentWafers[i].waferId).join(', ');
-  const label = `${currentFileName} — stacked ${datum.label} across ${waferIndices.length} wafer${waferIndices.length !== 1 ? 's' : ''}: ${stackedWafers}`;
-
-  setBusy(`Rendering ${label}…`);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    container.innerHTML = '';
-    container.classList.remove('gallery', 'charts');
-    const stem = currentFileName.replace(/\.[^.]+$/, '');
+  openWaferModal(label, body => {
     // Stack metadata is meaningful only when every stacked wafer shares one
     // source (same lot/program). Shared-by-reference makes that an identity check.
-    const stackWafers = waferIndices.map(i => currentWafers[i]);
     const sharedSource = stackWafers.every(w => w.source === stackWafers[0].source) ? stackWafers[0].source : undefined;
     const waferMap = buildWaferMap({
       lotStack: {
         results: stackWafers.map(w => w.results),
         method: 'countBin',
-        targetBin: datum.binCode,
+        targetBin: datum.binCode!,
       },
       waferConfig: { metadata: toWmapWaferMeta(sharedSource, `${stackWafers.length} wafers`) },
     });
     const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-    renderWaferMap(container, waferMap, {
+    return renderWaferMap(body, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode: 'value' },
+      zIndex: WAFER_MODAL_OVERLAY_Z,
     });
-    setIdle(label);
-  }));
+  });
 }
 
 function openTestValueWafer(waferIndex: number, testNumber: number) {
   const wafer = currentWafers[waferIndex];
   if (!wafer) return;
-
-  viewMode = 'map';
-  syncValueFindingsBtn();
-  chartsBtn.textContent = '← Back to charts';
+  const stem = currentFileName.replace(/\.[^.]+$/, '');
   const testDef = currentTestDefs[String(testNumber)];
   const testLabel = testDef?.name ? `${testDef.name} (#${testNumber})` : `test #${testNumber}`;
   const label = `${currentFileName} — wafer ${wafer.waferId} — ${testLabel} value map`;
 
-  setBusy(`Rendering ${label}…`);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    container.innerHTML = '';
-    container.classList.remove('gallery', 'charts');
-    const stem = currentFileName.replace(/\.[^.]+$/, '');
+  openWaferModal(label, body => {
     const wmapTestDefs = toWmapTestDefs(currentTestDefs);
     const waferMap = buildWaferMap(
       { results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, wafer.waferId) } },
       { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
     );
     const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-    renderWaferMap(container, waferMap, {
+    const controller = renderWaferMap(body, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
       showHelpButton: true,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
+      zIndex: WAFER_MODAL_OVERLAY_Z,
     });
-    injectMapBanner(container, `${wafer.waferId} — ${testLabel}`);
-    setIdle(label);
-  }));
+    injectMapBanner(body, `${wafer.waferId} — ${testLabel}`);
+    return controller;
+  });
 }
 
 function renderChartsView() {
@@ -432,6 +591,7 @@ function renderChartsView() {
 
 function renderChartsViewWork(loadedMsg: string) {
   disconnectAllObservers();
+  destroyMainView(); // tear down the map view's wmap controller before the grid replaces the container
   cachedLotStats ??= buildLotStatsSummary(currentWafers);
   const { lotStatsSummary } = cachedLotStats;
 
@@ -596,6 +756,7 @@ function renderChartsViewWork(loadedMsg: string) {
     },
     barColor: datum => scheme.forValue(Math.max(0, Math.min(100, datum.percent)) / 100),
     valueLabel: datum => `${datum.percent.toFixed(1)}%`,
+    clickHint: 'click to open this wafer',
   };
 
   // Bin pareto: combined mode uses a dedicated clustered-bar card (sub-bar per
@@ -616,6 +777,9 @@ function renderChartsViewWork(loadedMsg: string) {
       },
     },
     barColor: datum => datum.binCode === undefined ? scheme.forValue(0) : binColorFn(datum.binCode),
+    // Clicking a pareto bar opens that bin stacked across the wafers that have it
+    // (openStackedBin) — not a single wafer — so the hint differs from yield.
+    clickHint: 'click to open this bin across the wafers that have it',
   };
 
   const binClusterCard = combined
@@ -758,12 +922,10 @@ function renderChartsViewWork(loadedMsg: string) {
   renderChartGrid(container, [...panels, ...binCard, boxplotCard, histogramCard, correlationCard, scatterCard], {
     onOpen: (waferIndices, datum) => {
       if (waferIndices.length === 0) return;
-      if (datum.binCode !== undefined) openStackedBin(currentWafers.map((_, i) => i), datum);
+      // Pareto bar → stacked-bin modal across ONLY the wafers that have this bin
+      // (datum.waferIndices). Yield bar → that single wafer's map modal.
+      if (datum.binCode !== undefined) openStackedBin(datum.waferIndices, datum);
       else openSingleWafer(waferIndices);
-    },
-    onOpenSelection: (waferIndices, _data) => {
-      if (waferIndices.length === 0) return;
-      openSingleWafer(waferIndices);
     },
     savePng: onSaveImage,
     getHeaderLines: (panelTitle) => makeHeaderLines(panelTitle),
@@ -784,6 +946,7 @@ function renderChartsViewWork(loadedMsg: string) {
  */
 function showLoadingState(msg: string) {
   disconnectAllObservers();
+  destroyMainView();
   container.classList.remove('gallery', 'charts');
   container.innerHTML = '';
   const placeholder = document.createElement('div');
@@ -811,6 +974,7 @@ function showEmptyState() {
   chartsBtn.textContent = 'Charts';
   chartsBtn.classList.remove('active');
   viewMode = 'map';
+  destroyMainView();
   container.classList.remove('gallery', 'charts');
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -1499,14 +1663,14 @@ helpBtn.addEventListener('click', () => {
   const fullscreenBtn = document.createElement('button');
   fullscreenBtn.className = 'help-icon-btn';
   fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.title = 'Maximize (F)';
   fullscreenBtn.setAttribute('aria-label', 'Maximize');
+  attachTooltip(fullscreenBtn, () => inner.classList.contains('maximized') ? 'Restore (F)' : 'Maximize (F)');
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'help-icon-btn';
   closeBtn.innerHTML = ICONS.close;
-  closeBtn.title = 'Close (Esc)';
   closeBtn.setAttribute('aria-label', 'Close');
+  attachTooltip(closeBtn, 'Close (Esc)');
   header.append(titleEl, fullscreenBtn, closeBtn);
 
   const body = document.createElement('div');
@@ -1527,7 +1691,6 @@ helpBtn.addEventListener('click', () => {
   const toggleFullscreen = () => {
     const maxed = inner.classList.toggle('maximized');
     fullscreenBtn.innerHTML = maxed ? ICONS.shrink : ICONS.maximize;
-    fullscreenBtn.title = maxed ? 'Restore (F)' : 'Maximize (F)';
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { close(); return; }
@@ -1538,5 +1701,17 @@ helpBtn.addEventListener('click', () => {
   closeBtn.addEventListener('click', close);
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
 });
+
+// Replace the native `title` tooltips on tsmap's top-toolbar chrome with the
+// themed, instant tooltip (see tooltip.ts) so they match the wmap map toolbar
+// rather than the OS's slow black hint. Static-text buttons are upgraded from
+// their existing `title` markup; the two with runtime-varying text (value
+// findings, log toggle) are wired with getters so the hint tracks state. Run at
+// the end of module init: the getters read state (viewMode, logPanel) that is
+// declared above, so wiring earlier would hit a temporal-dead-zone ReferenceError
+// and abort the module — killing every button handler registered after it.
+upgradeTitleTooltips(document.getElementById('toolbar') ?? document);
+attachTooltip(valueFindingsBtn, valueFindingsTip);
+attachTooltip(logToggle, logToggleTip);
 
 showEmptyState();

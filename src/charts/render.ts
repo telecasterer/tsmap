@@ -9,6 +9,7 @@ import {
   PADDING, VALUE_WIDTH,
   type ChartPanel, type RenderChartsOptions,
 } from './chartShell';
+import type { ChartDatum } from './types';
 
 // Re-exports — keep `./charts/render` as the public entry for the charts view.
 export { disconnectAllObservers } from './chartShell';
@@ -28,6 +29,7 @@ const MAX_VISIBLE_ROWS = 12;
 
 function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLElement {
   const { controls, barColor, valueLabel, selfControl } = panel;
+  const clickHint = panel.clickHint ?? 'click to open this wafer';
   let title = panel.title;
   let data = panel.data;
   // getHeaderLines reads `title` lazily so PNG exports pick up the current value
@@ -46,54 +48,44 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
   }
 
   const hint = document.createElement('div');
-  hint.textContent = 'Click a bar to open it · shift-click to select several';
+  // Capitalise the action for the standalone hint; the tooltip uses it verbatim.
+  hint.textContent = `${clickHint[0].toUpperCase()}${clickHint.slice(1)}`;
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:6px;`;
   card.insertBefore(hint, body);
 
   const scrollArea = document.createElement('div');
-  const visibleAreaHeight = PADDING * 2 + Math.min(data.length, MAX_VISIBLE_ROWS) * (ROW_HEIGHT + ROW_GAP);
+  // Visible-rows window, recomputed from current data on every draw so a
+  // self-control change (e.g. Hard→Soft bins) that changes the row count
+  // resizes the panel instead of staying pinned to the initial row count.
+  const visibleAreaHeight = () => PADDING * 2 + Math.min(data.length, MAX_VISIBLE_ROWS) * (ROW_HEIGHT + ROW_GAP);
   // flex:1 lets the scroll area fill `body` (which is flex:1 in the card). In the
   // grid the max-height caps it to the visible-rows window; in the modal the cap
   // is lifted (see draw) so it uses the full available height.
-  scrollArea.style.cssText = `overflow-y:auto;min-height:0;flex:1;max-height:${visibleAreaHeight}px;`;
+  scrollArea.style.cssText = `overflow-y:auto;min-height:0;flex:1;max-height:${visibleAreaHeight()}px;`;
   body.appendChild(scrollArea);
 
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'display:block;cursor:default;';
   scrollArea.appendChild(canvas);
 
-  const selectionBar = document.createElement('div');
-  selectionBar.style.cssText = 'display:none;align-items:center;gap:8px;margin-top:8px;';
-  const selectionLabel = document.createElement('span');
-  selectionLabel.style.cssText = `color:${cssVar('--text-secondary')};font-size:12px;`;
-  const openSelectionBtn = document.createElement('button');
-  openSelectionBtn.textContent = 'Open selected';
-  openSelectionBtn.style.cssText = `font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid ${cssVar('--accent')};background:none;color:${cssVar('--accent')};cursor:pointer;`;
-  const clearSelectionBtn = document.createElement('button');
-  clearSelectionBtn.textContent = 'Clear';
-  clearSelectionBtn.style.cssText = `font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid ${cssVar('--border-muted')};background:none;color:${cssVar('--text-muted')};cursor:pointer;`;
-  selectionBar.append(selectionLabel, openSelectionBtn, clearSelectionBtn);
-  card.appendChild(selectionBar);
+  // Hover tooltip — same pattern/styling as the boxplot/correlation tooltips.
+  card.style.position = 'relative';
+  const tooltip = document.createElement('div');
+  tooltip.style.cssText = `position:absolute;display:none;pointer-events:none;z-index:50;background:${cssVar('--bg-overlay')};border:1px solid ${cssVar('--border-subtle')};border-radius:4px;padding:4px 8px;font-size:11px;font-family:system-ui,sans-serif;color:${cssVar('--text-secondary')};white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);`;
+  card.appendChild(tooltip);
 
-  const selected = new Set<number>();
   let hovered = -1;
   const dpr = window.devicePixelRatio || 1;
   let maxValue = Math.max(1, ...data.map(d => d.value));
 
   const defaultBarColor = cssVar('--accent') || '#6af';
-  const selectedColor = cssVar('--btn-primary-bg') || '#1a5aad';
   const trackColor = cssVar('--bg-input') || '#222';
   const textColor = cssVar('--text-secondary') || '#ccc';
   const hoverBg = cssVar('--bg-hover-row') || '#1d1d1d';
 
-  function updateSelectionBar() {
-    if (selected.size >= 2) {
-      selectionBar.style.display = 'flex';
-      selectionLabel.textContent = `${selected.size} selected`;
-    } else {
-      selectionBar.style.display = 'none';
-    }
-  }
+  // The right-aligned value string for a row, shared by draw() and the tooltip.
+  const valueTextOf = (datum: ChartDatum) =>
+    valueLabel ? valueLabel(datum) : `${formatValue(datum.value)} (${datum.percent.toFixed(1)}%)`;
 
   function rowRect(index: number) {
     const y = PADDING + index * (ROW_HEIGHT + ROW_GAP);
@@ -105,7 +97,7 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
   function draw() {
     // In the modal the scroll area fills the available height; in the grid it
     // stays capped to the visible-rows window.
-    scrollArea.style.maxHeight = isInModal(card) ? 'none' : `${visibleAreaHeight}px`;
+    scrollArea.style.maxHeight = isInModal(card) ? 'none' : `${visibleAreaHeight()}px`;
     const width = card.clientWidth - 24;
     const height = PADDING * 2 + data.length * (ROW_HEIGHT + ROW_GAP);
     canvas.width = Math.max(1, Math.floor(width * dpr));
@@ -139,16 +131,9 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
       ctx.fillStyle = barColor ? barColor(datum, i) : defaultBarColor;
       ctx.fillRect(barX, y, barWidth, ROW_HEIGHT);
 
-      if (selected.has(i)) {
-        ctx.strokeStyle = selectedColor;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(barX + 1, y + 1, barWidth - 2, ROW_HEIGHT - 2);
-      }
-
       ctx.fillStyle = textColor;
       ctx.textAlign = 'right';
-      const valueText = valueLabel ? valueLabel(datum) : `${formatValue(datum.value)} (${datum.percent.toFixed(1)}%)`;
-      ctx.fillText(valueText, barX + barMaxWidth + VALUE_WIDTH, y + ROW_HEIGHT / 2);
+      ctx.fillText(valueTextOf(datum), barX + barMaxWidth + VALUE_WIDTH, y + ROW_HEIGHT / 2);
     });
   }
 
@@ -161,8 +146,6 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     data = next.data;
     maxValue = Math.max(1, ...data.map(d => d.value));
     hovered = -1;
-    selected.clear();
-    updateSelectionBar();
     if (next.title) { title = next.title; heading.textContent = title; }
     draw();
   }
@@ -172,33 +155,26 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     return index >= 0 && index < data.length ? index : -1;
   }
 
-  function waferIndicesFor(indices: Iterable<number>): number[] {
-    return Array.from(new Set(Array.from(indices).flatMap(i => data[i].waferIndices))).sort((a, b) => a - b);
-  }
-
   canvas.addEventListener('mousemove', e => {
     const rect = canvas.getBoundingClientRect();
     const row = rowAt(e.clientY - rect.top);
     if (row !== hovered) { hovered = row; canvas.style.cursor = row >= 0 ? 'pointer' : 'default'; draw(); }
+    if (row >= 0) {
+      const d = data[row];
+      const cardRect = card.getBoundingClientRect();
+      tooltip.innerHTML = `<strong>${d.label}</strong><br>${valueTextOf(d)}<br><em>${clickHint}</em>`;
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${e.clientX - cardRect.left + 14}px`;
+      tooltip.style.top = `${e.clientY - cardRect.top + 14}px`;
+    } else { tooltip.style.display = 'none'; }
   });
-  canvas.addEventListener('mouseleave', () => { if (hovered !== -1) { hovered = -1; draw(); } });
+  canvas.addEventListener('mouseleave', () => { if (hovered !== -1) { hovered = -1; draw(); } tooltip.style.display = 'none'; });
   canvas.addEventListener('click', e => {
     const rect = canvas.getBoundingClientRect();
     const row = rowAt(e.clientY - rect.top);
     if (row === -1) return;
-    if (e.shiftKey || e.ctrlKey || e.metaKey) {
-      if (selected.has(row)) selected.delete(row); else selected.add(row);
-      draw(); updateSelectionBar(); return;
-    }
-    if (selected.size > 0) { selected.clear(); draw(); updateSelectionBar(); }
     options.onOpen(data[row].waferIndices, data[row]);
   });
-  openSelectionBtn.addEventListener('click', () => {
-    if (selected.size < 2) return;
-    const indices = Array.from(selected);
-    options.onOpenSelection(waferIndicesFor(indices), indices.map(i => data[i]));
-  });
-  clearSelectionBtn.addEventListener('click', () => { selected.clear(); draw(); updateSelectionBar(); });
 
   trackObserver(new ResizeObserver(() => draw())).observe(card);
   draw();

@@ -23,6 +23,46 @@ A desktop and web application for loading and visualising semiconductor wafer ma
 | CSV | Rust | Column mapping step before render; supports wide and long (pivot) formats |
 | JSON | Rust | Flat array or nested `[{ wafer fields, results: [{die}] }]`; same mapping step as CSV |
 
+## Installing past security warnings
+
+tsmap is free and open source, but its installers are **not code-signed** — signing certificates cost money and grant no extra safety, only a vendor's stamp. As a result, your OS may warn that the app is from an "unknown publisher" or is "possibly dangerous." This is expected. The steps below let you install anyway. If you'd rather avoid installing at all, the [web version](https://telecasterer.github.io/tsmap/) runs entirely in your browser with no download.
+
+### Windows
+
+Running `tsmap-<version>-windows-x64.msi` (or the `-setup.exe` installer) triggers a blue **"Windows protected your PC"** SmartScreen dialog:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+The warning appears because the installer has no signature and no download reputation yet; it will fade as more people install the app.
+
+### macOS
+
+macOS Gatekeeper blocks unsigned apps by default with **"tsmap can't be opened because it is from an unidentified developer."** To open it:
+
+1. In Finder, locate **tsmap** in Applications.
+2. **Right-click** (or Control-click) the app and choose **Open**.
+3. Click **Open** in the dialog that appears.
+
+You only need to do this once — macOS remembers the choice.
+
+If macOS instead says the app is **"damaged and can't be opened"** (common on Apple Silicon for downloaded unsigned apps), clear the quarantine flag in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/tsmap.app
+```
+
+### Linux
+
+`.AppImage`, `.deb`, and `.rpm` builds run normally; any warning is just a browser download nag. For `.AppImage`, mark it executable first:
+
+```bash
+chmod +x tsmap-*-linux-x86_64.AppImage
+./tsmap-*-linux-x86_64.AppImage
+```
+
+To verify a download is intact, compare its checksum against the one published on the [releases page](https://github.com/telecasterer/tsmap/releases).
+
 ## Development
 
 ```bash

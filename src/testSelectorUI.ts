@@ -1,5 +1,6 @@
 import type { TestDef } from './types';
 import { ICONS } from './charts/icons';
+import { attachTooltip } from './tooltip';
 
 export interface CapacityInfo {
   /** Total dies across all files being loaded. */
@@ -404,7 +405,7 @@ export function showTestSelectorOverlay(
         'padding:3px 10px;border-radius:4px;border:1px solid var(--border-mid)',
         'background:none;color:var(--accent,#4a9eff);cursor:pointer;font-size:12px',
       ].join(';');
-      scanAllBtn.title = 'Re-scan every file and merge the full test list (use when a test only appears in a smaller file). Your current selection is kept.';
+      attachTooltip(scanAllBtn, 'Re-scan every file and merge the full test list (use when a test only appears in a smaller file). Your current selection is kept.');
       scanAllBtn.addEventListener('click', () => {
         cleanup();
         options.onScanAll!(Array.from(selected).sort((a, b) => a - b), new Map(nameOverrides));

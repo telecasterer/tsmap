@@ -7,10 +7,10 @@ At some point these will be converted into an implementation plan for wmap.
 
 | Field | Value |
 |-------|-------|
-| wmap version in use | 0.16.0 |
-| Latest wmap release | 0.16.0 — check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
-| testdata-parser version | 0.4.0 (Cargo bumped — **not yet published**; root still pins ^0.3.1 until publish) |
-| Last updated | 2026-06-25 (testdata-parser 0.4.0: removed the `rust-stdf` dependency — own the STDF record framing + endianness; **added big-endian STDF support** (FAR CPU_TYPE 1=BE/2=LE), parser ~13% faster (148 MB/s), CSV parser 3.4× faster, ATDF parser 2.8× faster + SDR→sites parity, filtered-parse WRR-metadata parity fix. 91 Rust + 168 JS tests green, WASM + native build clean. **Publish pending** — see steps below.) |
+| wmap version in use | 0.16.1 |
+| Latest wmap release | 0.16.1 — check [github.com/telecasterer/wafermap/releases](https://github.com/telecasterer/wafermap/releases) |
+| testdata-parser version | 0.4.0 — published to npm and adopted (root pins `^0.4.0`, lockfile + `node_modules` resolve 0.4.0). Crate `Cargo.toml` clean at 0.4.0. |
+| Last updated | 2026-06-26 (wmap **0.16.1** installed + adopted: issues #22/#23 fixed — first-class `zIndex` render option + safe-by-default overlay stacking, default `--wmap-z` raised `100`→`6000` (logged as Changed, not breaking). tsmap `openWaferModal` now passes `zIndex: WAFER_MODAL_OVERLAY_Z` to all four renders and the global `--wmap-z` mutation/save-restore is removed. `npm run check` clean. testdata-parser 0.4.0: removed the `rust-stdf` dependency — own the STDF record framing + endianness; **added big-endian STDF support** (FAR CPU_TYPE 1=BE/2=LE), parser ~13% faster (148 MB/s), CSV parser 3.4× faster, ATDF parser 2.8× faster + SDR→sites parity, filtered-parse WRR-metadata parity fix. 91 Rust + 168 JS tests green, WASM + native build clean. **Published to npm and adopted** (root pins `^0.4.0`).) |
 
 ## Rust Backend Notes
 
@@ -337,3 +337,97 @@ So even a prefixed shim isn't enough on macOS Tauri without opting into private 
 **Faceting is NOT promoted into wmap.** It depends on three things wmap's panel deliberately does not carry: the generic `{key,value}` metadata model (the *storage* already exists in wmap via `WaferMetadata`'s open index — but the *faceting on top* does not), a host-curated label/which-to-facet table (tsmap `src/metadata.ts` `FIELD_META`), and a charting runtime. Promoting it would force every wmap host onto tsmap's curation conventions and pull a chart engine into the renderer-agnostic, DOM-light panel. Faceting stays host-side.
 
 No code change in either repo — this entry records the boundary so future work doesn't grow faceting into the panel by drift. See the tsmap plan file "Phase 8" section for the fuller analysis.
+
+### ~~21. No render teardown — wmap's internal observers leak when its container is removed~~ (already provided — `controller.destroy()`)
+
+**Where:** wmap `renderWaferMap` / `renderWaferGallery` (`packages/renderer`). They attach internal `ResizeObserver`s (and likely other listeners) to elements inside the host-provided container, but return nothing and expose no `dispose()` / cleanup handle.
+
+**Problem:** tsmap now renders maps into a **transient modal** (charts drilldown — `openWaferModal` in `src/main.ts`). When the modal closes we `backdrop.remove()`, which detaches the wmap-rendered subtree. wmap's observers/listeners are never explicitly disconnected; they linger on the detached nodes until GC. The same latent leak exists on every `container.innerHTML = ''` swap in `renderWaferView`, but the modal makes it frequent (open/close per drilldown). tsmap can't clean this up itself because the observers live inside wmap and aren't registered in tsmap's own `trackObserver` registry (and that registry must NOT be flushed on modal close — it holds the live charts grid's observers).
+
+**Suggested fix:** have `renderWaferMap` / `renderWaferGallery` return a disposer (e.g. `{ dispose(): void }`) that disconnects every observer/listener they created, so a host embedding maps in modals/tabs can tear down cleanly on close. Alternatively, observe container detachment internally and self-disconnect. Until then the leak is benign (detached nodes are GC-eligible once the host drops its refs) but real.
+
+**Resolution — no wmap change needed; the API already exists.** The premise that the
+controllers "return nothing and expose no `dispose()`" is incorrect for the current
+library. Both `renderWaferMap` and `renderWaferGallery` already return a controller with
+a public, typed `destroy(): void` ("Remove all event listeners and DOM elements") that
+performs exactly the teardown requested:
+
+- `renderWaferMap().destroy()` (`packages/canvas-adapter/renderWaferMap.ts`) calls
+  `resizeObserver.disconnect()`, removes every canvas pointer/wheel/key/click listener,
+  removes the `window` `blur` listener and the DPR `matchMedia` `change` listener,
+  removes the document-level menu-close capture listener, closes any open modal/menu,
+  hides (never destroys) the shared singleton tooltip, and removes all DOM it appended
+  (`canvasWrap`, toolbar, summary-panel wrappers).
+- `renderWaferGallery().destroy()` (`packages/canvas-adapter/renderWaferGallery.ts`)
+  cascades `destroy()` to every card controller, disconnects the grid `ResizeObserver`,
+  removes its document/window listeners, closes the modal, and removes its DOM.
+
+**Adoption in tsmap (done 2026-06-26):** every wmap render now captures its controller and
+destroys it before its container is detached/cleared:
+- `openWaferModal` (`src/main.ts`) — `render` returns the controller; `close()` calls
+  `controller.destroy()` before `backdrop.remove()`.
+- `renderWaferView` (full-window map/gallery) — stores the controller in module-level
+  `mainViewController`; `destroyMainView()` is called before every `container.innerHTML = ''`
+  / view swap (`renderWaferView` itself, `renderChartsViewWork`, `showLoadingState`,
+  `showEmptyState`).
+This disconnects wmap's observers/listeners deterministically — no need to register them in
+tsmap's `trackObserver` registry, and the charts-grid observers are untouched. No library
+change required.
+
+### ~~22. Toolbar menus/tooltips are unreachable when wmap renders inside a host modal that isn't a `.wmap-modal-box`~~ (fixed in wmap — pending release)
+
+**Where:** wmap `packages/canvas-adapter/toolbar.js` — `menuRootFor(anchor)` (walks ancestors for a `.wmap-modal-box`, else falls back to `document.body`) and the tooltip reparenting in `renderWaferMap.js`. All menus/tooltips are positioned `position: fixed` with `z-index: var(--wmap-z, 100)` (menus) / `calc(var(--wmap-z, 100) + 1)` (tooltips).
+
+**Problem:** tsmap renders a wafer map into its **own** modal (`openWaferModal` in `src/main.ts`) — opened from a chart drilldown (pareto bar → stack map, yield bar → bin map). That modal is a plain host `<div>`, not wmap's `openModal` box, so it has neither the `wmap-modal-box` class nor a `--wmap-z` custom property. Consequences:
+
+- `menuRootFor()` finds no `.wmap-modal-box` ancestor and appends the plot-mode dropdown (and other menus) to `document.body` at `z-index: 100`.
+- tsmap's modal backdrop is `z-index: 200` and its box `z-index: 201`, so every wmap menu renders **behind** the modal. The toolbar buttons fire correctly but their menus (and tooltips) are hidden underneath — the toolbar appears completely dead to the user.
+
+This is the inverse of resolved issue #5: #5 handed stacking control to the host via `--wmap-z`, but wmap only sets that variable and the `wmap-modal-box` hook on **its own** modal. A host embedding a wmap render in a host-owned modal has no documented contract for making toolbar menus land above it.
+
+**Suggested fix (any one):**
+
+1. Document the contract: "to embed a wmap render inside your own modal, give the modal element `class="wmap-modal-box"` and set `--wmap-z` above your modal's z-index." (Cheapest; this is what tsmap now relies on.)
+2. Add a render option (e.g. `menuRoot?: HTMLElement` or `zIndex?: number`) so the host can pass the container/stacking value explicitly instead of relying on an undocumented class name.
+3. Have `menuRootFor` fall back to the wmap render container (or the toolbar's offset parent) rather than `document.body`, so menus inherit the host modal's stacking context automatically.
+
+**Workaround in tsmap (2026-06-26):** two parts in `openWaferModal` (`src/main.ts`):
+
+1. The box carries `class="wmap-modal-box"` so `menuRootFor` reparents the plot-mode dropdown *into* the box.
+2. `--wmap-z:300` is set on **`document.documentElement`** (not the box) for the modal's lifetime, restored on close.
+
+Part 2 is essential and was missed on the first attempt: setting `--wmap-z` on the box only fixes overlays wmap appends inside the box (the plot-mode menu). But several wmap overlays append to **`document.body`**, outside the box, and read `--wmap-z` from `:root` — the singleton **die tooltip** (`createTooltip` → `document.body.appendChild`), the **user-guide modal** (help button), and the **expand modal** (`openModal` → `document.body.appendChild(backdrop)`, which also *reparents the canvas into its box*, so a too-low z made the canvas appear to blank). All of these stayed at z 100 behind the tsmap modal until `--wmap-z` was raised on the root. This whole dance depends on the undocumented `wmap-modal-box` class and the `--wmap-z` variable — options 1/2 above would make it a supported contract.
+
+**Fix applied (wmap, pending release) — see issue #23 for the unified resolution.** Both the per-render `zIndex` option and the safe-by-default stacking landed together; this addresses #22 and #23 as one design fix.
+
+### ~~23. Overlay stacking has no first-class host API — z-index issues keep recurring (design recommendation)~~ (fixed in wmap — pending release)
+
+**Why this is its own entry:** stacking has bitten us repeatedly — issue #5 (toolbar at `z 9998/9999` overriding host overlays), then issue #22 (toolbar menus/tooltips/expand-modal *behind* a host modal). #5 and #22 are the two opposite failure directions of the *same* missing abstraction. This entry records the root cause and the recommended API change so the wmap implementation plan treats it as a deliberate design fix, not a third one-off patch.
+
+**Root cause — two uncoupled axes the host must align by hand.** Every wmap transient overlay (toolbar dropdowns, die tooltip, expand modal backdrop/box, user-guide modal) is positioned by two independent decisions made in different places:
+
+1. **Stacking value** — a CSS variable `--wmap-z` (default `100`), read from wherever the element sits in the cascade.
+2. **DOM attach point** — `menuRootFor()` attaches to the nearest `.wmap-modal-box` ancestor, *else* falls back to `document.body`.
+
+Because some overlays attach inside a wmap box and others escape to `document.body`, "set the stacking correctly" really means "enumerate every escape-to-body overlay and ensure the `--wmap-z` it inherits is high enough" — which is exactly the bug hit twice in #22. Two structural traps make it worse:
+
+- **The default `100` is unsafe.** It sits *below* almost any app's own modal layer (200, 1000, 9999…), and the failure mode is silent: the overlay renders *behind* the host UI with no error. An embedder gets a "dead toolbar" / "blank canvas" with nothing in the console.
+- **The host's only lever is a global, undocumented CSS variable.** Controlling stacking means mutating `--wmap-z` on `document.documentElement` (so escape-to-body overlays inherit it) and remembering to restore it — global mutation for what should be a per-render concern, keyed off internal names (`--wmap-z`, `.wmap-modal-box`) reverse-engineered from the dist.
+
+**Recommended fix (in priority order):**
+
+1. **First-class per-render stacking input.** Add `renderWaferMap(el, map, { zIndex })` (and the gallery equivalent). wmap writes that value onto *its own* overlay elements directly rather than reading an inherited `:root` variable, so the attach-point axis stops mattering — an overlay appended to `document.body` and one appended inside a box both stack at the host-specified value. This is the real fix and removes the entire "which ancestor do I inherit from" failure class.
+2. **Safe-by-default stacking.** If no `zIndex` is given, default wmap transient overlays to the top of the stacking order (a very high constant, or an explicit "wmap renders transient overlays above app content" contract) instead of `100`. Most embedders expect overlays to "just appear on top" with no configuration.
+3. **Document the embedding contract** for the interim: to embed a wmap render inside a host-owned modal, set `--wmap-z` (above the host modal's z-index) on an ancestor that *all* wmap overlays inherit from — in practice `document.documentElement`, because several overlays append to `document.body`. Name `--wmap-z` and `.wmap-modal-box` as the supported public hooks.
+
+**tsmap status:** working today via the issue #22 workaround (`--wmap-z:300` on `document.documentElement` for the modal's lifetime). That is a host-side patch over a missing API; options 1–2 here would let tsmap drop the global-variable mutation entirely and just pass a `zIndex` per render.
+
+**Fix applied (wmap, pending release):** options 1 and 2 both done; option 3 documented.
+
+1. **Per-render `zIndex`** added to `RenderOptions` (`renderWaferMap`) and `GalleryOptions` (`renderWaferGallery`). wmap applies it for the render's lifetime and restores the previous stacking on `controller.destroy()`. Implemented via `applyOverlayZ(zIndex)` in `packages/canvas-adapter/toolbar.ts` — it writes `--wmap-z` onto `document.documentElement` so the body-escaping overlays (tooltip, expand/help modal backdrops) inherit it, returning a disposer the controller calls on teardown. (wmap kept the CSS-variable mechanism rather than writing inline z-index onto every overlay element; the host-facing result is the same — one `zIndex` value per render, no manual global mutation.)
+2. **Safe-by-default stacking:** the `--wmap-z` fallback changed from `100` to `6000` (a single `DEFAULT_OVERLAY_Z` constant, surfaced as the `Z_BASE`/`Z_ABOVE`/`Z_ABOVE2` z-index strings used across `toolbar.ts`/`renderWaferMap.ts`). Overlays now appear above typical app modal layers with no configuration. Logged as a default change (CHANGELOG `### Changed`), not breaking — the only way to regress is to have *deliberately* placed a host overlay between `100` and `6000` to cover wmap's own menus, which is not a sensible config; any host that already set `--wmap-z` is unaffected.
+3. **Embedding contract documented** in `docs/api.md` §5.4 "Overlay z-index", naming `zIndex` and `--wmap-z` as the supported public hooks.
+
+**Net effect for tsmap:** the issue #22 workaround in `openWaferModal` (`--wmap-z:300` on `document.documentElement` + `class="wmap-modal-box"`) can be replaced with a single `zIndex` passed to the wmap render (set above tsmap's modal box z-index, e.g. `zIndex: 300`). The `wmap-modal-box` class hint is still useful for reparenting menus *into* the host box, but the global-variable mutation and its save/restore dance can be dropped once tsmap bumps to the release carrying this fix. With no change at all, tsmap's modal-embedded maps also stop rendering behind the modal by default (safe-by-default), though tsmap should still pass `zIndex` if its own overlays exceed `6000`.
+
+**Adopted in tsmap (2026-06-26, wmap 0.16.1):** `openWaferModal` now passes `zIndex: WAFER_MODAL_OVERLAY_Z` (= 300, a module constant clearing the modal box's z 201) to all four wmap renders (`renderWaferMap` ×3, `renderWaferGallery` ×1). The `--wmap-z` mutation on `document.documentElement` and its save/restore in `close()` are deleted — the controller's `destroy()` restores wmap's stacking. The `class="wmap-modal-box"` on the box is kept (still reparents the plot-mode menu into the box). `npm run check` clean.

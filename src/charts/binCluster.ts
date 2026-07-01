@@ -181,7 +181,8 @@ export function renderBinClusterPanel(options: BinClusterPanelOptions): HTMLElem
         const count = bin.counts[hit.group];
         const pct = bin.total > 0 ? (count / bin.total) * 100 : 0;
         const cardRect = card.getBoundingClientRect();
-        tt.innerHTML = `<strong>${bin.label}</strong> · ${groups[hit.group]}<br>${count} dies (${pct.toFixed(1)}% of bin)`;
+        const clickable = bins[hit.bin].waferIndices[hit.group].length > 0;
+        tt.innerHTML = `<strong>${bin.label}</strong> · ${groups[hit.group]}<br>${count} dies (${pct.toFixed(1)}% of bin)${clickable ? '<br><em>click to open these wafers</em>' : ''}`;
         tt.style.display = 'block';
         tt.style.left = `${e.clientX - cardRect.left + 14}px`;
         tt.style.top = `${e.clientY - cardRect.top + 14}px`;

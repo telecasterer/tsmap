@@ -342,7 +342,7 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
       if (row >= 0 && data[row].count > 0) {
         const d = data[row];
         const cardRect = card.getBoundingClientRect();
-        tt.innerHTML = `<strong>${d.label}</strong> (${d.count} dies)<br>max ${fmt(d.max)}<br>q3 ${fmt(d.q3)}<br>median ${fmt(d.median)}<br>q1 ${fmt(d.q1)}<br>min ${fmt(d.min)}`;
+        tt.innerHTML = `<strong>${d.label}</strong> (${d.count} dies)<br>max ${fmt(d.max)}<br>q3 ${fmt(d.q3)}<br>median ${fmt(d.median)}<br>q1 ${fmt(d.q1)}<br>min ${fmt(d.min)}<br><em>click to open this wafer</em>`;
         tt.style.display = 'block';
         tt.style.left = `${e.clientX - cardRect.left + 14}px`;
         tt.style.top = `${e.clientY - cardRect.top + 14}px`;

@@ -6,8 +6,8 @@
   "scripts": {
     "build:guide": "node scripts/build-user-guide.mjs",
     "predev": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
-    "prebuild": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
-    "prebuild:web": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
+    "prebuild": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js",
+    "prebuild:web": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js",
     "dev": "vite --force",
     "dev:web": "vite --force --port 5301 --host",
     "build": "tsc && vite build",

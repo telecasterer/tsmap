@@ -56,33 +56,39 @@ html = html.replace(
 // CSS variables and app classes (.btn-primary etc.) are provided by:
 //   - index.html :root block when rendered inside the app
 //   - docs/tsmap-theme.css (via zensical extra_css) on the docs site
+// Typography aligned with wmap's in-app guide (larger 14px body, 1.65 line
+// height, roomier tables with bordered cells + zebra striping, centered reading
+// column) so the two products' guides read as one — but kept THEME-AWARE via
+// --var tokens (wmap's guide is hardcoded light; tsmap follows the OS theme).
 const css = `
-.tsmap-guide { font-size: 13px; color: var(--text-light); line-height: 1.6; }
-.tsmap-guide h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; color: var(--text-primary); }
-.tsmap-guide h2 { font-size: 14px; font-weight: 600; color: var(--text-secondary); margin: 20px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border-subtle); }
-.tsmap-guide h3 { font-size: 13px; font-weight: 600; color: var(--text-tertiary); margin: 14px 0 5px; }
-.tsmap-guide h4 { font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 10px 0 4px; }
-.tsmap-guide p  { margin: 0 0 8px; color: var(--text-subdued); }
-.tsmap-guide ul, .tsmap-guide ol { padding-left: 18px; margin: 0 0 8px; color: var(--text-subdued); }
-.tsmap-guide li { margin-bottom: 3px; }
+.tsmap-guide { font-size: 14px; color: var(--text-light); line-height: 1.65; max-width: 720px; margin: 0 auto; }
+.tsmap-guide h1 { font-size: 1.35em; font-weight: 700; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 2px solid var(--border-mid); color: var(--text-primary); }
+.tsmap-guide h2 { font-size: 1.1em; font-weight: 700; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); }
+.tsmap-guide h3 { font-size: 1em; font-weight: 700; margin: 20px 0 6px; color: var(--text-tertiary); }
+.tsmap-guide h4 { font-size: 0.9em; font-weight: 600; margin: 14px 0 5px; color: var(--text-muted); }
+.tsmap-guide p  { margin: 0 0 12px; color: var(--text-subdued); }
+.tsmap-guide ul, .tsmap-guide ol { padding-left: 22px; margin: 0 0 12px; color: var(--text-subdued); }
+.tsmap-guide li { margin-bottom: 4px; }
 .tsmap-guide a  { color: var(--accent); text-decoration: none; }
 .tsmap-guide a:hover { text-decoration: underline; }
+.tsmap-guide strong { font-weight: 600; }
 .tsmap-guide code {
   font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
-  font-size: 11px; background: var(--bg-input); border: 1px solid var(--border-subtle);
+  font-size: 12px; background: var(--bg-input); border: 1px solid var(--border-subtle);
   border-radius: 3px; padding: 1px 5px; color: var(--text-tertiary);
 }
 .tsmap-guide pre {
   background: var(--bg-input); border: 1px solid var(--border-subtle);
-  border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0 0 10px;
+  border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0 0 12px;
 }
-.tsmap-guide pre code { background: none; border: none; padding: 0; font-size: 11px; }
-.tsmap-guide table { border-collapse: collapse; width: 100%; margin: 0 0 10px; font-size: 12px; }
-.tsmap-guide th { text-align: left; padding: 5px 8px; color: var(--text-tertiary); font-weight: 600; border-bottom: 1px solid var(--border-mid); }
-.tsmap-guide td { padding: 4px 8px; color: var(--text-subdued); border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
-.tsmap-guide tr:last-child td { border-bottom: none; }
-.tsmap-guide hr { border: none; border-top: 1px solid var(--border-subtle); margin: 16px 0; }
-.tsmap-guide blockquote { border-left: 3px solid var(--border-mid); margin: 0 0 8px; padding: 4px 12px; color: var(--text-muted); }
+.tsmap-guide pre code { background: none; border: none; padding: 0; font-size: 12px; }
+.tsmap-guide table { border-collapse: collapse; width: 100%; margin: 0 0 16px; font-size: 13px; }
+.tsmap-guide th { text-align: left; padding: 7px 10px; color: var(--text-tertiary); font-weight: 600; background: var(--bg-toolbar); border: 1px solid var(--border-mid); }
+.tsmap-guide td { padding: 6px 10px; color: var(--text-subdued); border: 1px solid var(--border-subtle); vertical-align: top; }
+.tsmap-guide tr:nth-child(even) td { background: var(--bg-row-border); }
+.tsmap-guide img, .tsmap-guide table { max-width: 100%; }
+.tsmap-guide hr { border: none; border-top: 1px solid var(--border-subtle); margin: 24px 0; }
+.tsmap-guide blockquote { border-left: 3px solid var(--border-mid); margin: 0 0 12px; padding: 4px 12px; color: var(--text-muted); }
 `;
 
 // ── Wrap ──────────────────────────────────────────────────────────────────────

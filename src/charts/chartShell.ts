@@ -6,6 +6,7 @@
 import type { ChartDatum, ChartKind } from './types';
 import { ICONS } from './icons';
 import { attachTooltip } from '../tooltip';
+import { openModal } from '../modal';
 
 // ── ResizeObserver lifecycle ───────────────────────────────────────────────────
 
@@ -319,143 +320,36 @@ export function cardShell(title: string, savePng?: (blob: Blob, stem: string) =>
 // ── Expand modal ──────────────────────────────────────────────────────────────
 
 /**
- * Open a card in a fullscreen resizable modal. The card element is reparented
- * into the modal; closing it returns the card to its original position.
+ * Open a card in a resizable modal. The card element is reparented into the
+ * modal body; closing returns it to its original position. Backdrop, header
+ * chrome, Esc/F, and maximize are owned by the shared `openModal` (src/modal.ts).
  */
 export function openExpandModal(card: HTMLElement, title: string) {
-  // Guard: don't open a second modal if the card is already in one
+  // Guard: don't open a second modal if the card is already in one.
   if (card.dataset.inModal === '1') return;
   card.dataset.inModal = '1';
 
-  const savedOverflow = document.body.style.overflow;
-  document.body.style.overflow = 'hidden';
-
-  const backdrop = document.createElement('div');
-  Object.assign(backdrop.style, {
-    position: 'fixed', inset: '0',
-    background: 'rgba(0,0,0,0.65)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: '200',
-    backdropFilter: 'blur(3px)',
-  });
-
-  const titleId = `chart-modal-title-${Math.random().toString(36).slice(2, 9)}`;
-
-  const box = document.createElement('div');
-  box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-modal', 'true');
-  box.setAttribute('aria-labelledby', titleId);
-  box.tabIndex = -1; // focus target on open
-  Object.assign(box.style, {
-    background: cssVar('--bg-overlay'),
-    border: `1px solid ${cssVar('--border-subtle')}`,
-    borderRadius: '10px',
-    overflow: 'hidden',
-    display: 'flex', flexDirection: 'column',
-    width: 'min(92vw, 1100px)', height: 'min(88vh, 800px)',
-    boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-    resize: 'both', minWidth: '400px', minHeight: '300px',
-    maxWidth: '100vw', maxHeight: '100vh',
-    zIndex: '201',
-  });
-
-  const header = document.createElement('div');
-  Object.assign(header.style, {
-    display: 'flex', alignItems: 'center', gap: '6px',
-    padding: '10px 14px', flexShrink: '0',
-    borderBottom: `1px solid ${cssVar('--border-subtle')}`,
-  });
-  const titleEl = document.createElement('span');
-  titleEl.id = titleId;
-  titleEl.textContent = title;
-  Object.assign(titleEl.style, { flex: '1', fontWeight: '600', fontSize: '13px', color: cssVar('--text-primary') });
-
-  const modalBtnStyle: Partial<CSSStyleDeclaration> = {
-    border: `1px solid ${cssVar('--border-mid')}`, borderRadius: '4px',
-    background: cssVar('--bg-input'), cursor: 'pointer',
-    color: cssVar('--text-muted'), padding: '0', lineHeight: '1',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    width: '24px', height: '24px', // match the card buttons (makeIconBtn) for one consistent size
-  };
-  const hoverIn = (b: HTMLElement) => { b.style.borderColor = cssVar('--accent'); b.style.color = cssVar('--accent'); };
-  const hoverOut = (b: HTMLElement) => { b.style.borderColor = cssVar('--border-mid'); b.style.color = cssVar('--text-muted'); };
-
-  // CSS maximize state declared up here so the fullscreen button's tooltip getter
-  // can read it (applyMaximize, below, flips it). Themed tooltips (attachTooltip)
-  // replace the slow native `title`; the getter keeps the hint in step with state.
-  let maximized = false;
-
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
-  Object.assign(fullscreenBtn.style, modalBtnStyle);
-  attachTooltip(fullscreenBtn, () => maximized ? 'Restore (F)' : 'Maximize (F)');
-  fullscreenBtn.addEventListener('mouseenter', () => hoverIn(fullscreenBtn));
-  fullscreenBtn.addEventListener('mouseleave', () => hoverOut(fullscreenBtn));
-
-  const closeBtn = document.createElement('button');
-  closeBtn.innerHTML = ICONS.close;
-  closeBtn.setAttribute('aria-label', 'Close');
-  Object.assign(closeBtn.style, modalBtnStyle);
-  attachTooltip(closeBtn, 'Close (Esc)');
-  closeBtn.addEventListener('mouseenter', () => hoverIn(closeBtn));
-  closeBtn.addEventListener('mouseleave', () => hoverOut(closeBtn));
-  header.append(titleEl, fullscreenBtn, closeBtn);
-
   const originalParent = card.parentElement;
   const originalNext = card.nextSibling;
-
-  // Strip the card's own border/radius while in modal — the modal box provides chrome.
   const savedCardStyle = card.getAttribute('style') ?? '';
-  card.style.cssText = card.style.cssText
-    .replace(/border:[^;]+;/g, '')
-    .replace(/border-radius:[^;]+;/g, '');
-  card.style.flex = '1';
-  card.style.minHeight = '0';
-  card.style.borderRadius = '0';
-  card.style.border = 'none';
 
-  box.append(header, card);
-  backdrop.appendChild(box);
-  document.body.appendChild(backdrop);
-  box.focus(); // move focus into the dialog so Esc/F and SR navigation work
-
-  function close() {
-    document.removeEventListener('keydown', onKeyDown);
-    delete card.dataset.inModal;
-    document.body.style.overflow = savedOverflow;
-    card.setAttribute('style', savedCardStyle);
-    if (originalParent) {
-      originalParent.insertBefore(card, originalNext);
-    }
-    backdrop.remove();
-  }
-
-  // "Fullscreen" here is a CSS maximize — the box grows to fill the viewport.
-  // We deliberately avoid the real Fullscreen API: WKWebView (macOS Tauri) has
-  // element fullscreen disabled unless `macOSPrivateApi` is enabled, and that
-  // uses Apple private API. CSS maximize behaves identically on every target.
-  const applyMaximize = () => {
-    fullscreenBtn.innerHTML = maximized ? ICONS.shrink : ICONS.maximize;
-    if (maximized) {
-      box.style.borderRadius = '0'; box.style.resize = 'none';
-      box.style.width = '100vw'; box.style.height = '100vh';
-    } else {
-      box.style.borderRadius = '10px'; box.style.resize = 'both';
-      box.style.width = 'min(92vw, 1100px)'; box.style.height = 'min(88vh, 800px)';
-    }
-  };
-  const toggleFullscreen = () => { maximized = !maximized; applyMaximize(); };
-  fullscreenBtn.addEventListener('click', toggleFullscreen);
-
-  function onKeyDown(e: KeyboardEvent) {
-    const active = document.activeElement;
-    const inInput = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA');
-    if (e.key === 'Escape') { close(); return; }
-    if ((e.key === 'f' || e.key === 'F') && !inInput) toggleFullscreen();
-  }
-
-  closeBtn.addEventListener('click', close);
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
-  document.addEventListener('keydown', onKeyDown);
+  openModal({
+    title,
+    mount: body => {
+      // Strip the card's own border/radius while in modal — the box provides chrome.
+      card.style.cssText = card.style.cssText
+        .replace(/border:[^;]+;/g, '')
+        .replace(/border-radius:[^;]+;/g, '');
+      card.style.flex = '1';
+      card.style.minHeight = '0';
+      card.style.borderRadius = '0';
+      card.style.border = 'none';
+      body.appendChild(card);
+    },
+    onClose: () => {
+      delete card.dataset.inModal;
+      card.setAttribute('style', savedCardStyle);
+      originalParent?.insertBefore(card, originalNext);
+    },
+  });
 }

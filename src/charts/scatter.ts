@@ -49,7 +49,7 @@ export function renderScatterPanel(options: ScatterPanelOptions): { card: HTMLEl
     const lbl = document.createElement('span');
     lbl.textContent = label;
     const sel = document.createElement('select');
-    sel.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:180px;';
+    sel.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:180px;';
     if (testOptions.length === 0) {
       sel.disabled = true;
       const opt = document.createElement('option');

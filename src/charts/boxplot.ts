@@ -41,7 +41,7 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
   let showTrend = options.showTrend;
 
   const select = document.createElement('select');
-  select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:240px;';
+  select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:240px;';
   if (testOptions.length === 0) {
     select.disabled = true;
     const opt = document.createElement('option');

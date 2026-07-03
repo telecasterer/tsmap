@@ -3,7 +3,7 @@
 // Skips the network call if already checked within the last 24 hours.
 
 import { execSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, lstatSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,6 +11,24 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const STAMP_FILE = join(ROOT, 'node_modules/.wmap-update-check');
 const PACKAGE = '@paulrobins/wafermap';
 const ONE_DAY = 24 * 60 * 60 * 1000;
+
+// When wmap is linked to a local checkout (`npm run wmap:link`), the installed
+// package is a symlink to ../wmap. In that mode we are DELIBERATELY developing
+// tsmap against an unpublished wmap — auto-installing npm's "latest" would
+// silently clobber the link and undo the whole batch workflow. So stand down.
+// See CLAUDE.md "Updating wmap" for the link → iterate → publish → unlink loop.
+function isLinked() {
+  try {
+    return lstatSync(join(ROOT, 'node_modules', PACKAGE)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+if (isLinked()) {
+  console.log(`wmap: linked to ../wmap (local dev) — skipping npm update check`);
+  process.exit(0);
+}
 
 function installedVersion() {
   try {

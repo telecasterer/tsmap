@@ -78,7 +78,7 @@ export function showTestSelectorOverlay(
   const overlay = document.createElement('div');
   overlay.id = 'tsmap-test-selector-overlay';
   overlay.style.cssText = [
-    'position:fixed', 'inset:0', 'z-index:10000',
+    'position:fixed', 'inset:0', 'z-index:var(--z-overlay)',
     'background:rgba(0,0,0,0.5)',
     'display:flex', 'align-items:center', 'justify-content:center',
   ].join(';');
@@ -131,7 +131,7 @@ export function showTestSelectorOverlay(
     'flex:1;min-width:160px;padding:5px 8px',
     'border:1px solid var(--border-mid);border-radius:4px',
     'background:var(--bg-input);color:var(--text-secondary)',
-    'font-size:13px;color-scheme:light dark',
+    'font-size:13px',
   ].join(';');
 
   const typeFilter = document.createElement('div');
@@ -175,7 +175,7 @@ export function showTestSelectorOverlay(
     'flex:1;padding:5px 8px',
     'border:1px solid var(--border-mid);border-radius:4px',
     'background:var(--bg-input);color:var(--text-secondary)',
-    'font-size:13px;color-scheme:light dark',
+    'font-size:13px',
   ].join(';');
 
   const applyRangeBtn = document.createElement('button');

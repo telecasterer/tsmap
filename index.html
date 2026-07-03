@@ -7,16 +7,36 @@
     <script type="module" src="/src/main.ts" defer></script>
     <script>window.addEventListener('error', e => { document.title = 'ERR: ' + e.message; console.error('module error', e); });</script>
     <style>
-      :root {
-        /* Dark theme (default) */
-        --bg-app:          #1a1a1a;
-        --bg-toolbar:      #111;
-        --bg-overlay:      #161616;
-        --bg-input:        #222;
-        --bg-hover-row:    #1d1d1d;
-        --bg-row-border:   #1e1e1e;
-        --bg-modal:        #222;
-        --bg-accent-hover: #1e2a38;
+      /* ── THEMING ──────────────────────────────────────────────────────────
+         Colours are chosen by a `data-theme` attribute on <html> (set by
+         src/theme.ts from a toolbar picker + localStorage). Four modes:
+           (no attribute) = "Auto"  → dark by default, light via the OS media
+                                       query block at the very end.
+           [data-theme="dark"]       → force dark
+           [data-theme="light"]      → force light
+           [data-theme="light-green"]→ light with a green (#8DC63F) accent
+         Each block below defines ONLY the colour tokens. The theme-independent
+         tokens (z-scale, --wmap-* chrome mappings) live in the shared `:root`
+         block further down and are never duplicated per theme. */
+
+      /* Colour token set — DARK (also the Auto default). Dark grey, not
+         near-black (VS-Code-dark range); surface hierarchy toolbar darkest →
+         app → overlay → input/modal lightest. */
+      :root,
+      :root[data-theme="dark"] {
+        /* Force native form-control chrome (the closed <select> box, inputs) to
+           match the active theme, not the OS — inherited by all controls. NB:
+           the OPEN <select> popup is native GTK chrome on Linux WebKitGTK and
+           ignores this, following the desktop theme (a platform limitation). */
+        color-scheme: dark;
+        --bg-app:          #2e2e31;
+        --bg-toolbar:      #262628;
+        --bg-overlay:      #2a2a2d;
+        --bg-input:        #37373b;
+        --bg-hover-row:    #343438;
+        --bg-row-border:   #3a3a3e;
+        --bg-modal:        #37373b;
+        --bg-accent-hover: #2b3a4f;
 
         --border-strong:   #333;
         --border-mid:      #3a3a3a;
@@ -52,8 +72,300 @@
         --error-text:      #f87;
       }
 
+      /* Colour token set — LIGHT. Shared by explicit light mode and, via the
+         media query at the end, by Auto mode on a light OS. Emitted as a mixin
+         through a placeholder: we duplicate it into the two selectors that need
+         it (explicit + auto-media) to avoid a build step. */
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg-app:          #f0f0f0;
+        --bg-toolbar:      #e4e4e4;
+        --bg-overlay:      #f5f5f5;
+        --bg-input:        #fff;
+        --bg-hover-row:    #ebebeb;
+        --bg-row-border:   #e8e8e8;
+        --bg-modal:        #fff;
+        --bg-accent-hover: #dbeafe;
+
+        --border-strong:   #ccc;
+        --border-mid:      #bbb;
+        --border-subtle:   #d8d8d8;
+        --border-muted:    #bbb;
+        --border-dim:      #aaa;
+
+        --text-primary:    #111;
+        --text-secondary:  #333;
+        --text-tertiary:   #444;
+        --text-muted:      #666;
+        --text-dim:        #888;
+        --text-faint:      #999;
+        --text-veryfaint:  #aaa;
+        --text-subdued:    #555;
+        --text-light:      #222;
+        --text-lighter:    #444;
+        --text-white:      #fff;
+
+        --accent:          #1a6bbf;
+        --btn-primary-bg:  #1a5aad;
+        --btn-primary-hover: #1450a0;
+
+        --warn-bg:         #fff8e1;
+        --warn-text:       #92400e;
+        --warn-border:     #fcd34d;
+        --warn-btn-bg:     #b45309;
+        --warn-btn-hover:  #92400e;
+        --info-bg:         #eff6ff;
+        --info-text:       #1d4ed8;
+        --info-border:     #bfdbfe;
+        --ok-text:         #166534;
+        --error-text:      #b91c1c;
+      }
+
+      /* Colour token set — LIGHT GREEN. Light surfaces with a subtle green
+         tint, #8DC63F as the accent (active/selected states, links, primary
+         buttons, focus/active chrome), and a deep navy (#192136) as the
+         secondary accent-hover. Dark #2a2a2a text on near-white for legibility. */
+      :root[data-theme="light-green"] {
+        color-scheme: light;
+        --bg-app:          #f4f8ee;   /* faintest green-grey app canvas */
+        --bg-toolbar:      #e8f0dc;   /* slightly greener toolbar */
+        --bg-overlay:      #f7fbf1;   /* panels/cards */
+        --bg-input:        #ffffff;
+        --bg-hover-row:    #eef5e2;   /* pale green hover */
+        --bg-row-border:   #e4eed4;
+        --bg-modal:        #ffffff;
+        --bg-accent-hover: #e2f0cc;   /* green-tinted selection */
+
+        --border-strong:   #c2d3a8;
+        --border-mid:      #cfe0b5;
+        --border-subtle:   #e0ead0;
+        --border-muted:    #c2d3a8;
+        --border-dim:      #b3c795;
+
+        --text-primary:    #1c2412;   /* near-black with a green-brown warmth */
+        --text-secondary:  #2a3320;
+        --text-tertiary:   #3f4a30;
+        --text-muted:      #5f6b4c;
+        --text-dim:        #7d886a;
+        --text-faint:      #97a186;
+        --text-veryfaint:  #b3bca4;
+        --text-subdued:    #4a5638;
+        --text-light:      #222a16;
+        --text-lighter:    #3f4a30;
+        --text-white:      #fff;
+
+        --accent:          #6fa62e;   /* #8DC63F darkened for AA contrast on light */
+        --btn-primary-bg:  #7ab52f;
+        --btn-primary-hover: #6fa62e;
+
+        --warn-bg:         #fff8e1;
+        --warn-text:       #92400e;
+        --warn-border:     #fcd34d;
+        --warn-btn-bg:     #b45309;
+        --warn-btn-hover:  #92400e;
+        --info-bg:         #ecf5dc;   /* green-tinted info */
+        --info-text:       #4d6b1f;
+        --info-border:     #cfe0b5;
+        --ok-text:         #4d7a1f;
+        --error-text:      #b91c1c;
+      }
+
+      /* Colour token set — NORD (dark). Cool arctic blue-grey (Polar Night
+         #2e3440 → #3b4252 → #434c5e) with a frost-cyan accent (#88c0d0) and
+         Snow-Storm text (#eceff4 → #d8dee9). Calm, low-contrast dark. */
+      :root[data-theme="nord"] {
+        color-scheme: dark;
+        --bg-app:          #2e3440;
+        --bg-toolbar:      #2b303b;
+        --bg-overlay:      #323846;
+        --bg-input:        #3b4252;
+        --bg-hover-row:    #3b4252;
+        --bg-row-border:   #434c5e;
+        --bg-modal:        #3b4252;
+        --bg-accent-hover: #3b4a58;
+
+        --border-strong:   #4c566a;
+        --border-mid:      #434c5e;
+        --border-subtle:   #3b4252;
+        --border-muted:    #4c566a;
+        --border-dim:      #616e88;
+
+        --text-primary:    #eceff4;
+        --text-secondary:  #e5e9f0;
+        --text-tertiary:   #d8dee9;
+        --text-muted:      #a6adbb;
+        --text-dim:        #7b8496;
+        --text-faint:      #616e88;
+        --text-veryfaint:  #4c566a;
+        --text-subdued:    #c0c6d2;
+        --text-light:      #e5e9f0;
+        --text-lighter:    #c0c6d2;
+        --text-white:      #fff;
+
+        --accent:          #88c0d0;
+        --btn-primary-bg:  #5e81ac;
+        --btn-primary-hover: #81a1c1;
+
+        --warn-bg:         #3b352a;
+        --warn-text:       #ebcb8b;
+        --warn-border:     #4a3f2a;
+        --warn-btn-bg:     #a3862f;
+        --warn-btn-hover:  #b8973a;
+        --info-bg:         #2b3a44;
+        --info-text:       #88c0d0;
+        --info-border:     #3b4a58;
+        --ok-text:         #a3be8c;
+        --error-text:      #bf616a;
+      }
+
+      /* Colour token set — SOLARIZED DARK (Ethan Schoonover). Warm teal-dark
+         base (#002b36 / #073642), blue-grey text (#839496 / #93a1a1), blue
+         accent (#268bd2). The classic designed palette. */
+      :root[data-theme="solarized-dark"] {
+        color-scheme: dark;
+        --bg-app:          #002b36;
+        --bg-toolbar:      #00252e;
+        --bg-overlay:      #073642;
+        --bg-input:        #073642;
+        --bg-hover-row:    #0a3d4a;
+        --bg-row-border:   #0e4653;
+        --bg-modal:        #073642;
+        --bg-accent-hover: #0a3f52;
+
+        --border-strong:   #12586b;
+        --border-mid:      #0e4653;
+        --border-subtle:   #073642;
+        --border-muted:    #12586b;
+        --border-dim:      #586e75;
+
+        --text-primary:    #fdf6e3;
+        --text-secondary:  #93a1a1;
+        --text-tertiary:   #839496;
+        --text-muted:      #657b83;
+        --text-dim:        #586e75;
+        --text-faint:      #4a5f66;
+        --text-veryfaint:  #3b4d52;
+        --text-subdued:    #839496;
+        --text-light:      #eee8d5;
+        --text-lighter:    #93a1a1;
+        --text-white:      #fdf6e3;
+
+        --accent:          #268bd2;
+        --btn-primary-bg:  #268bd2;
+        --btn-primary-hover: #2aa198;
+
+        --warn-bg:         #33321a;
+        --warn-text:       #b58900;
+        --warn-border:     #4a4520;
+        --warn-btn-bg:     #b58900;
+        --warn-btn-hover:  #c99a10;
+        --info-bg:         #003847;
+        --info-text:       #268bd2;
+        --info-border:     #0e4653;
+        --ok-text:         #859900;
+        --error-text:      #dc322f;
+      }
+
+      /* Colour token set — SOLARIZED LIGHT. Cream base (#fdf6e3 / #eee8d5),
+         same blue-grey text family, blue accent (#268bd2). Pairs with the dark. */
+      :root[data-theme="solarized-light"] {
+        color-scheme: light;
+        --bg-app:          #fdf6e3;
+        --bg-toolbar:      #f2ecd8;
+        --bg-overlay:      #fdf6e3;
+        --bg-input:        #fffcf0;
+        --bg-hover-row:    #eee8d5;
+        --bg-row-border:   #e6dfc8;
+        --bg-modal:        #fffcf0;
+        --bg-accent-hover: #e3ecdf;
+
+        --border-strong:   #d3cbb0;
+        --border-mid:      #ded7bd;
+        --border-subtle:   #eee8d5;
+        --border-muted:    #d3cbb0;
+        --border-dim:      #b6ad92;
+
+        --text-primary:    #073642;
+        --text-secondary:  #586e75;
+        --text-tertiary:   #657b83;
+        --text-muted:      #839496;
+        --text-dim:        #93a1a1;
+        --text-faint:      #a7b2ad;
+        --text-veryfaint:  #bcc4bd;
+        --text-subdued:    #657b83;
+        --text-light:      #073642;
+        --text-lighter:    #586e75;
+        --text-white:      #fff;
+
+        --accent:          #268bd2;
+        --btn-primary-bg:  #268bd2;
+        --btn-primary-hover: #2076b5;
+
+        --warn-bg:         #faf3d8;
+        --warn-text:       #93700a;
+        --warn-border:     #e6d99a;
+        --warn-btn-bg:     #b58900;
+        --warn-btn-hover:  #93700a;
+        --info-bg:         #e8f0f6;
+        --info-text:       #1a6ba8;
+        --info-border:     #c4dbec;
+        --ok-text:         #5a7300;
+        --error-text:      #cb2b28;
+      }
+
+      /* Colour token set — HIGH CONTRAST (light). Pure white surfaces, near-black
+         text, a strong saturated blue accent. For bright rooms / projectors /
+         accessibility — maximum legibility, not subtlety. */
+      :root[data-theme="high-contrast"] {
+        color-scheme: light;
+        --bg-app:          #ffffff;
+        --bg-toolbar:      #f2f2f2;
+        --bg-overlay:      #ffffff;
+        --bg-input:        #ffffff;
+        --bg-hover-row:    #eaeaea;
+        --bg-row-border:   #d0d0d0;
+        --bg-modal:        #ffffff;
+        --bg-accent-hover: #d6e4ff;
+
+        --border-strong:   #666;
+        --border-mid:      #999;
+        --border-subtle:   #bbb;
+        --border-muted:    #888;
+        --border-dim:      #666;
+
+        --text-primary:    #000000;
+        --text-secondary:  #111;
+        --text-tertiary:   #222;
+        --text-muted:      #444;
+        --text-dim:        #555;
+        --text-faint:      #666;
+        --text-veryfaint:  #888;
+        --text-subdued:    #333;
+        --text-light:      #000;
+        --text-lighter:    #222;
+        --text-white:      #fff;
+
+        --accent:          #0050c8;
+        --btn-primary-bg:  #0050c8;
+        --btn-primary-hover: #003ea0;
+
+        --warn-bg:         #fff4d6;
+        --warn-text:       #7a4b00;
+        --warn-border:     #e0b84d;
+        --warn-btn-bg:     #8a5300;
+        --warn-btn-hover:  #7a4b00;
+        --info-bg:         #e0edff;
+        --info-text:       #0050c8;
+        --info-border:     #9cc0ff;
+        --ok-text:         #0a6b1e;
+        --error-text:      #c50000;
+      }
+
+      /* AUTO mode on a light OS: only when no explicit theme is set. Mirrors the
+         light token set above (kept in sync by hand — small, rarely changes). */
       @media (prefers-color-scheme: light) {
-        :root {
+        :root:not([data-theme]) {
+          color-scheme: light;
           --bg-app:          #f0f0f0;
           --bg-toolbar:      #e4e4e4;
           --bg-overlay:      #f5f5f5;
@@ -98,7 +410,63 @@
         }
       }
 
+      /* ── Theme-independent tokens (defined once, apply to every theme) ──── */
+      :root {
+        /* Stacking order. tsmap's overlays layer against wmap's map-toolbar
+           overlays (--wmap-z, default 6000, +2). Single source of truth; every
+           overlay references a tier (CSS var() / JS cssVar) — no bare numbers.
+             --z-overlay  pre-render form overlays (below wmap's band)
+             --z-modal    app modals over a rendered map (clears 6000–6002)
+             --z-tooltip  shared hover tooltip (above modals)
+           See WMAP_ISSUES.md #22/#23. */
+        --z-overlay:  200;
+        --z-modal:    7000;
+        --z-tooltip:  7100;
+
+        /* wmap chrome theming (WMAP_ISSUES #25): wmap reads its toolbar / panel /
+           canvas colours from these --wmap-* tokens. Mapping them to tsmap's own
+           --var tokens makes the embedded wafer map follow whatever theme is
+           active — the values below resolve against the active colour block
+           above, so no per-theme --wmap-* duplication is needed. */
+        --wmap-canvas-bg:   var(--bg-app);
+        --wmap-surface:     var(--bg-overlay);
+        --wmap-panel-bg:    var(--bg-app);
+        --wmap-border:      var(--border-mid);
+        --wmap-text:        var(--text-secondary);
+        --wmap-text-muted:  var(--text-muted);
+        --wmap-icon:        var(--text-tertiary);
+        /* Hover + active affordances use the theme ACCENT (green in Light green,
+           blue in dark/light), matching tsmap's own toolbar buttons — this is
+           what makes the accent actually show in the embedded map chrome, not
+           just on the rare active icon. */
+        --wmap-icon-hover:  var(--accent);
+        --wmap-icon-active: var(--accent);
+        --wmap-bg-hover:    var(--bg-accent-hover);
+        --wmap-bg-active:   var(--bg-accent-hover);
+        --wmap-menu-hover:  var(--bg-accent-hover);
+        --wmap-menu-active: var(--bg-accent-hover);
+        --wmap-separator:   var(--border-subtle);
+        --wmap-warn-bg:     var(--warn-bg);
+        --wmap-warn-border: var(--warn-border);
+        --wmap-warn-text:   var(--warn-text);
+        --wmap-info-bg:     var(--info-bg);
+        --wmap-info-text:   var(--info-text);
+        /* Selected-card outline follows the theme accent (was a fixed orange
+           that fought the green/Solarized palettes). */
+        --wmap-selected:    var(--accent);
+      }
+
       * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      /* Checkbox/radio fill follows the theme accent (otherwise the browser
+         renders its default blue regardless of theme). The `color-scheme` on the
+         theme :root blocks themes the CLOSED <select> box and inputs; the OPEN
+         <select> popup is native GTK chrome on the Linux WebView and follows the
+         desktop theme (uncontrollable by CSS) — same as the OS file dialog. */
+      input[type="checkbox"], input[type="radio"] {
+        accent-color: var(--accent);
+      }
+
       html, body {
         width: 100%; height: 100%;
         background: var(--bg-app); color: var(--text-primary);
@@ -172,7 +540,7 @@
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
-        position: fixed; inset: 0; z-index: 200;
+        position: fixed; inset: 0; z-index: var(--z-overlay);
         background: var(--bg-overlay); display: flex; flex-direction: column;
         overflow: hidden;
       }
@@ -194,7 +562,7 @@
         background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary);
         padding: 2px 4px; border-radius: 3px; font-size: 12px; width: 100%;
         -webkit-appearance: none; appearance: none;
-        color-scheme: light dark;
+       
       }
       .mapping-table select option {
         background: var(--bg-input); color: var(--text-secondary);
@@ -202,7 +570,7 @@
       .test-name-input {
         background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary);
         padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 180px;
-        color-scheme: light dark;
+       
       }
       .split-cell { white-space: nowrap; }
       .split-label { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-muted); font-size: 12px; }
@@ -215,7 +583,7 @@
       .mapping-validation { font-size: 12px; color: var(--error-text); }
       .mapping-validation:empty { display: none; }
       .pass-bin-group { display: flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; color: var(--text-muted); }
-      .pass-bin-group input { background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary); padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 80px; color-scheme: light dark; }
+      .pass-bin-group input { background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary); padding: 2px 6px; border-radius: 3px; font-size: 12px; width: 80px; }
       .btn-primary { background: var(--btn-primary-bg); border: none; color: var(--text-white); padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
       .btn-primary:hover { background: var(--btn-primary-hover); }
       .btn-secondary { background: none; border: 1px solid var(--border-muted); color: var(--text-muted); padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
@@ -223,7 +591,7 @@
 
       /* Rename overlay — reuses mapping-panel styles */
       #tsmap-rename-overlay {
-        position: fixed; inset: 0; z-index: 200;
+        position: fixed; inset: 0; z-index: var(--z-overlay);
         background: var(--bg-overlay); display: flex; flex-direction: column;
         overflow: hidden;
       }
@@ -232,7 +600,7 @@
       .rename-input {
         background: var(--bg-input); border: 1px solid var(--border-mid); color: var(--text-secondary);
         padding: 3px 8px; border-radius: 3px; font-size: 13px; width: 200px;
-        color-scheme: light dark;
+       
       }
       .rename-count { color: var(--text-faint); font-size: 12px; padding-left: 12px; }
 
@@ -247,9 +615,10 @@
       .btn-warn { background: var(--warn-btn-bg) !important; }
       .btn-warn:hover { background: var(--warn-btn-hover) !important; }
 
-      /* Long-format modal */
+      /* Long-format modal + user-guide modal (both use this backdrop).
+         --z-modal clears wmap's overlay band (see the scale in :root). */
       .tsmap-modal-backdrop {
-        position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200;
+        position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: var(--z-modal);
         display: flex; align-items: center; justify-content: center;
       }
       .tsmap-modal {
@@ -269,33 +638,12 @@
         display: flex; align-items: center; justify-content: center;
       }
       #help-btn:hover { color: var(--accent); }
-      .help-modal {
-        background: var(--bg-modal); border: 1px solid var(--border-mid);
-        border-radius: 6px; width: 600px; max-width: 92vw;
-        max-height: 82vh; color: var(--text-light);
-        display: flex; flex-direction: column; overflow: hidden;
-      }
-      /* CSS maximize (not the real Fullscreen API — disabled in macOS WKWebView
-         without Apple private API). The modal box fills the backdrop's viewport. */
-      .help-modal.maximized { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
-      .help-header {
-        display: flex; align-items: center; gap: 6px;
-        padding: 10px 14px; flex-shrink: 0;
-        border-bottom: 1px solid var(--border-subtle);
-      }
-      .help-title { flex: 1; font-weight: 600; font-size: 13px; color: var(--text-primary); }
-      .help-icon-btn {
-        border: 1px solid var(--border-mid); border-radius: 4px;
-        background: var(--bg-input); cursor: pointer; color: var(--text-muted);
-        padding: 0; line-height: 1; display: flex; align-items: center; justify-content: center;
-        width: 24px; height: 24px;
-      }
-      .help-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+      /* The user-guide modal's box/header/buttons are provided by the shared
+         openModal (src/modal.ts); only the scrollable guide content is styled
+         here. .help-body is mounted into the shared modal body. */
+      /* Just the scroll container + padding — the guide content (.tsmap-guide)
+         owns its own centered reading-column width (see build-user-guide.mjs). */
       .help-body { padding: 24px; overflow-y: auto; flex: 1; min-height: 0; }
-      /* Cap the readable content width so the guide (prose + mockups) doesn't
-         stretch edge-to-edge when the modal is fullscreen. No-op in the 600px
-         modal; only bites in fullscreen. */
-      .help-body > * { max-width: 760px; margin-left: auto; margin-right: auto; }
 
       /* ── Log panel ─────────────────────────────────────────────── */
       #log-bar {
@@ -349,7 +697,7 @@
         <span>or drop a file anywhere</span>
         <span id="busy-spinner"></span>
         <span id="file-label"></span>
-        <button id="help-btn" style="margin-left:auto" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+        <button id="help-btn" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
       </div>
       <div id="map-container"></div>
       <div id="log-bar">

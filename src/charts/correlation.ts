@@ -83,7 +83,7 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
   matrixLimitInput.min = String(MATRIX_LIMIT_MIN);
   matrixLimitInput.max = String(MATRIX_LIMIT_MAX);
   matrixLimitInput.value = String(limit);
-  matrixLimitInput.style.cssText = 'width:52px;font-size:12px;padding:2px 4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-mid);border-radius:3px;color-scheme:light dark;';
+  matrixLimitInput.style.cssText = 'width:52px;font-size:12px;padding:2px 4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-mid);border-radius:3px;';
   matrixLimitInput.addEventListener('change', () => {
     const v = Math.max(MATRIX_LIMIT_MIN, Math.min(MATRIX_LIMIT_MAX, parseInt(matrixLimitInput.value, 10) || initialLimit));
     matrixLimitInput.value = String(v);
@@ -98,7 +98,7 @@ export function renderCorrelationPanel(options: CorrelationPanelOptions): HTMLEl
     groupLabel.textContent = 'Group:';
     groupLabel.style.cssText = `color:${cssVar('--text-muted')};font-size:12px;display:flex;align-items:center;gap:4px;`;
     const groupSelect = document.createElement('select');
-    groupSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:160px;';
+    groupSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:160px;';
     for (const g of groupKeys) {
       const opt = document.createElement('option');
       opt.value = g;

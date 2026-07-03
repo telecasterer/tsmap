@@ -27,10 +27,10 @@ function getTooltip(): HTMLElement {
       lineHeight: '1.55',
       maxWidth: '280px',
       whiteSpace: 'pre-wrap',
-      // Above every tsmap overlay (modals z 200/201, test-selector z 10000) and
-      // wmap's default overlay base (6000) so the hint is never clipped behind the
-      // chrome it annotates. Highest z in the app — nothing should sit over a tooltip.
-      zIndex: '2147483647',
+      // --z-tooltip is the top tier of the app's stacking scale (see index.html
+      // :root): above every tsmap overlay and modal, and above wmap's overlay
+      // band, so the hint is never clipped behind the chrome it annotates.
+      zIndex: 'var(--z-tooltip)',
       display: 'none',
       fontFamily: 'system-ui, sans-serif',
       boxShadow: '0 3px 10px rgba(0,0,0,0.45)',

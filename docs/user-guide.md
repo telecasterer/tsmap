@@ -76,8 +76,13 @@ browser download nag. For the AppImage, mark it executable first:
   <span style="width:1px;height:16px;background:var(--border-mid);flex-shrink:0;"></span>
   <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Charts</span>
   <span style="margin-left:auto;"></span>
+  <span style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--border-mid);border-radius:4px;color:var(--text-secondary);font-size:12px;padding:2px 8px;height:24px;">Auto (system) <span style="font-size:10px;color:var(--text-muted);">&#9662;</span></span>
   <span style="background:none;color:var(--text-muted);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
 </div>
+
+The **colour theme** picker sits at the right end of the toolbar, next to the help button. Choose
+Auto to follow your system's light/dark setting, or pick a theme explicitly — Light, Light green,
+Solarized Light, High contrast, Dark, Nord, Solarized Dark. Your choice is remembered.
 
 ### Open file
 

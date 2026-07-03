@@ -88,7 +88,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
 
   // Test selector
   const testSelect = document.createElement('select');
-  testSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:200px;';
+  testSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:200px;';
   if (testOptions.length === 0) {
     testSelect.disabled = true;
     const opt = document.createElement('option');
@@ -112,7 +112,7 @@ export function renderHistogramPanel(options: HistogramPanelOptions): HTMLElemen
 
   // Wafer selector
   const waferSelect = document.createElement('select');
-  waferSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;max-width:160px;';
+  waferSelect.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:160px;';
   const lotOpt = document.createElement('option');
   lotOpt.value = HISTOGRAM_LOT_VALUE;
   lotOpt.textContent = 'All wafers';

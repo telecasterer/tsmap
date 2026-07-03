@@ -15,8 +15,12 @@ import { USER_GUIDE_HTML } from './userGuideHtml';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
-import { ICONS } from './charts/icons';
 import { attachTooltip, upgradeTitleTooltips } from './tooltip';
+import { openModal } from './modal';
+import { initTheme, onThemeChange, getTheme, setTheme, THEME_GROUPS, type Theme } from './theme';
+import { makeMenuSelect } from './menuSelect';
+import { ICONS } from './charts/icons';
+import { userGuidePrintHtml } from './userGuidePrint';
 import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, renderBinClusterPanel, disconnectAllObservers } from './charts/render';
 import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
@@ -335,7 +339,7 @@ function renderWaferView(wafers: WaferData[], label: string) {
 
 function makeSelect(optionLabels: Array<[string, string]>, current: string, onChange: (v: string) => void): HTMLSelectElement {
   const select = document.createElement('select');
-  select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;color-scheme:light dark;';
+  select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;';
   for (const [value, text] of optionLabels) {
     const opt = document.createElement('option');
     opt.value = value;
@@ -347,122 +351,39 @@ function makeSelect(optionLabels: Array<[string, string]>, current: string, onCh
   return select;
 }
 
-// Base z-index for wmap's transient overlays (menus, tooltip, expand/help modals)
-// when a map is rendered inside the wafer drilldown modal. The modal box is z 201;
-// wmap layers its overlays from this value upward (base, +1, +2), so it must clear
-// 201. Passed as the `zIndex` render option (wmap 0.16.1+) to every render in
-// openWaferModal — replaces the old global `--wmap-z` mutation. See WMAP_ISSUES.md #22/#23.
-const WAFER_MODAL_OVERLAY_Z = 300;
+// z-index for wmap's transient overlays (menus, tooltip, its own expand/help
+// modals) when a map is rendered inside the wafer drilldown modal. The drilldown
+// backdrop sits at --z-modal (7000); wmap layers its overlays from this value
+// upward (base, +1, +2), so it must clear the modal. Passed as the `zIndex`
+// render option (wmap 0.16.1+) to every render in openWaferModal. See
+// WMAP_ISSUES.md #22/#23. Kept above --z-modal (7000) and below --z-tooltip (7100).
+const WAFER_MODAL_OVERLAY_Z = 7010;
 
 /**
- * Open a wafer-map drilldown as a MODAL over the charts view. The charts grid
- * stays mounted untouched behind it, so closing the modal (Esc / close button /
- * backdrop click) returns the user to exactly where they were — same scroll,
- * same selectors. Modelled on `openExpandModal` (chartShell.ts): fixed backdrop,
- * dialog box with a title + maximize + close header, body-scroll lock. The
- * difference: the box body is a sized flex container that `render` draws a wmap
- * map into. Never touches `viewMode` — drilldown is not navigation.
+ * Open a wafer-map drilldown as a MODAL over the charts view, via the shared
+ * `openModal` (src/modal.ts). The charts grid stays mounted untouched behind it,
+ * so closing (Esc / close / backdrop) returns the user to exactly where they
+ * were — same scroll, same selectors. Never touches `viewMode` — drilldown is
+ * not navigation.
  *
  * `render` returns the wmap controller it created; on close we call its
  * `destroy()` to disconnect wmap's internal ResizeObserver / pointer / window /
- * document listeners deterministically, then remove the modal DOM. Both
+ * document listeners deterministically before the modal DOM is detached. Both
  * `renderWaferMap` (WaferMapController) and `renderWaferGallery` (GalleryController)
  * expose `destroy(): void` — see WMAP_ISSUES.md #21.
+ *
+ * NB: we deliberately do NOT call `disconnectAllObservers()` on close — that
+ * registry holds the live charts grid's observers (the grid stays mounted behind
+ * the modal); flushing it would kill the grid's resize handling. wmap owns its
+ * observers and we tear them down via `controller.destroy()`.
  */
 function openWaferModal(title: string, render: (body: HTMLElement) => { destroy(): void }) {
-  const savedOverflow = document.body.style.overflow;
-  document.body.style.overflow = 'hidden';
-
-  const backdrop = document.createElement('div');
-  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(3px);';
-
-  const box = document.createElement('div');
-  box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-modal', 'true');
-  box.setAttribute('aria-label', title);
-  box.tabIndex = -1;
-  // `wmap-modal-box`: wmap's toolbar reparents its plot-mode dropdown into the
-  // nearest `.wmap-modal-box` ancestor (menuRootFor), so the menu lands inside
-  // this box rather than at document.body. Overlay stacking above this modal is
-  // handled per-render via the `zIndex` option (WAFER_MODAL_OVERLAY_Z), not a
-  // global `--wmap-z` mutation. See WMAP_ISSUES.md #22/#23.
-  box.className = 'wmap-modal-box';
-  box.style.cssText = 'background:var(--bg-overlay);border:1px solid var(--border-subtle);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;width:min(92vw,1100px);height:min(88vh,800px);box-shadow:0 24px 64px rgba(0,0,0,0.5);resize:both;min-width:400px;min-height:300px;max-width:100vw;max-height:100vh;z-index:201;';
-
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px;flex-shrink:0;border-bottom:1px solid var(--border-subtle);';
-  const titleEl = document.createElement('span');
-  titleEl.textContent = title;
-  titleEl.style.cssText = 'flex:1;font-weight:600;font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-
-  // Declared before the fullscreen button so its tooltip getter can read it
-  // (attachTooltip resolves the text once at attach time — avoids a TDZ throw).
-  let maximized = false;
-
-  const btnStyle = 'border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);cursor:pointer;color:var(--text-muted);padding:0;line-height:1;display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex-shrink:0;';
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.setAttribute('aria-label', 'Maximize');
-  fullscreenBtn.style.cssText = btnStyle;
-  attachTooltip(fullscreenBtn, () => maximized ? 'Restore (F)' : 'Maximize (F)');
-  const closeBtn = document.createElement('button');
-  closeBtn.innerHTML = ICONS.close;
-  closeBtn.setAttribute('aria-label', 'Close');
-  closeBtn.style.cssText = btnStyle;
-  attachTooltip(closeBtn, 'Close (Esc)');
-  header.append(titleEl, fullscreenBtn, closeBtn);
-
-  // Body: position:relative so injectMapBanner's absolute banner anchors here;
-  // flex:1/min-height:0 (never height:100%) so the wmap canvas sizes correctly
-  // in WebView2 — see CLAUDE.md cross-platform CSS rules.
-  const body = document.createElement('div');
-  body.style.cssText = 'flex:1;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden;';
-
-  box.append(header, body);
-  backdrop.appendChild(box);
-  document.body.appendChild(backdrop);
-  box.focus();
-
-  // Set by render() below; destroyed on close to disconnect wmap's observers/listeners.
   let controller: { destroy(): void } | undefined;
-
-  function close() {
-    document.removeEventListener('keydown', onKeyDown);
-    document.body.style.overflow = savedOverflow;
-    controller?.destroy(); // disconnect wmap's observers/listeners (incl. zIndex restore) before detaching DOM
-    backdrop.remove();
-  }
-
-  // CSS maximize, same rationale as openExpandModal (avoid the real Fullscreen
-  // API, disabled in macOS WKWebView without private API).
-  const applyMaximize = () => {
-    fullscreenBtn.innerHTML = maximized ? ICONS.shrink : ICONS.maximize;
-    if (maximized) {
-      box.style.borderRadius = '0'; box.style.resize = 'none';
-      box.style.width = '100vw'; box.style.height = '100vh';
-    } else {
-      box.style.borderRadius = '10px'; box.style.resize = 'both';
-      box.style.width = 'min(92vw,1100px)'; box.style.height = 'min(88vh,800px)';
-    }
-  };
-  const toggleFullscreen = () => { maximized = !maximized; applyMaximize(); };
-  fullscreenBtn.addEventListener('click', toggleFullscreen);
-
-  function onKeyDown(e: KeyboardEvent) {
-    const active = document.activeElement;
-    const inInput = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA');
-    if (e.key === 'Escape') { close(); return; }
-    if ((e.key === 'f' || e.key === 'F') && !inInput) toggleFullscreen();
-  }
-  closeBtn.addEventListener('click', close);
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
-  document.addEventListener('keydown', onKeyDown);
-
-  // NB: do NOT call disconnectAllObservers() here — that registry holds the live
-  // charts grid's observers (the grid stays mounted behind the modal), and
-  // flushing it would kill the grid's resize handling. wmap manages its own
-  // observers internally and we tear them down via controller.destroy() on close.
-  controller = render(body);
+  openModal({
+    title,
+    mount: body => { controller = render(body); },
+    onClose: () => controller?.destroy(),
+  });
 }
 
 function openSingleWafer(waferIndices: number[]) {
@@ -1644,62 +1565,28 @@ filterTestsBtn.addEventListener('click', async () => {
 
 
 helpBtn.addEventListener('click', () => {
-  const modal = document.createElement('div');
-  modal.className = 'tsmap-modal-backdrop';
-  const inner = document.createElement('div');
-  inner.className = 'help-modal';
-  inner.setAttribute('role', 'dialog');
-  inner.setAttribute('aria-modal', 'true');
-  inner.setAttribute('aria-label', 'Help');
-  inner.tabIndex = -1;
-
-  // Top header: title + fullscreen + close, matching the charts expand modal chrome.
-  const header = document.createElement('div');
-  header.className = 'help-header';
-  const titleEl = document.createElement('span');
-  titleEl.className = 'help-title';
-  titleEl.textContent = 'User guide';
-
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.className = 'help-icon-btn';
-  fullscreenBtn.innerHTML = ICONS.maximize;
-  fullscreenBtn.setAttribute('aria-label', 'Maximize');
-  attachTooltip(fullscreenBtn, () => inner.classList.contains('maximized') ? 'Restore (F)' : 'Maximize (F)');
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'help-icon-btn';
-  closeBtn.innerHTML = ICONS.close;
-  closeBtn.setAttribute('aria-label', 'Close');
-  attachTooltip(closeBtn, 'Close (Esc)');
-  header.append(titleEl, fullscreenBtn, closeBtn);
-
-  const body = document.createElement('div');
-  body.className = 'help-body';
-  body.innerHTML = USER_GUIDE_HTML;
-
-  inner.append(header, body);
-  modal.appendChild(inner);
-  document.body.appendChild(modal);
-  inner.focus();
-
-  const close = () => {
-    document.removeEventListener('keydown', onKeyDown);
-    modal.remove();
-  };
-  // CSS maximize — see the charts expand modal for why we avoid the real
-  // Fullscreen API (WKWebView on macOS Tauri disables it without private API).
-  const toggleFullscreen = () => {
-    const maxed = inner.classList.toggle('maximized');
-    fullscreenBtn.innerHTML = maxed ? ICONS.shrink : ICONS.maximize;
-  };
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { close(); return; }
-    if ((e.key === 'f' || e.key === 'F')) toggleFullscreen();
-  };
-  document.addEventListener('keydown', onKeyDown);
-  fullscreenBtn.addEventListener('click', toggleFullscreen);
-  closeBtn.addEventListener('click', close);
-  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  // Shared modal (src/modal.ts) owns backdrop / header chrome / Esc-F / maximize.
+  // The guide content is a scrollable `.help-body` mounted into the modal body;
+  // its styles (padding, overflow, readable-width cap) live in index.html.
+  openModal({
+    title: 'User guide',
+    sizing: 'content',
+    headerActions: [{
+      // Opens the guide as a standalone light-themed page in the system browser,
+      // where the user can Print or Save-as-PDF. Reuses platform.openReport (the
+      // same plumbing as the wmap report buttons) so it works on Tauri (all OSes)
+      // and web alike. See userGuidePrint.ts.
+      icon: ICONS.printer,
+      label: 'Print or save as PDF (opens in your browser)',
+      onClick: () => platform.openReport(userGuidePrintHtml(__APP_VERSION__)),
+    }],
+    mount: body => {
+      const guide = document.createElement('div');
+      guide.className = 'help-body';
+      guide.innerHTML = USER_GUIDE_HTML;
+      body.appendChild(guide);
+    },
+  });
 });
 
 // Replace the native `title` tooltips on tsmap's top-toolbar chrome with the
@@ -1713,5 +1600,38 @@ helpBtn.addEventListener('click', () => {
 upgradeTitleTooltips(document.getElementById('toolbar') ?? document);
 attachTooltip(valueFindingsBtn, valueFindingsTip);
 attachTooltip(logToggle, logToggleTip);
+
+// ── Theme picker ──────────────────────────────────────────────────────────
+// Apply the persisted theme, add the toolbar dropdown, and re-render the
+// current view on change so the wmap canvas re-resolves its colours (canvas
+// colours are read from CSS at draw time, not live-bound — a CSS var flip alone
+// won't repaint the wafer). Empty state is pure CSS and needs no re-render.
+initTheme();
+
+function refreshCurrentView(): void {
+  if (currentWafers.length === 0) return; // empty state: CSS-only, nothing to redraw
+  if (viewMode === 'charts') renderChartsView();
+  else renderWaferView(currentWafers, currentFileName);
+}
+
+// Grouped theme picker. Uses the custom menuSelect (not a native <select>):
+// with 8 themes it sits top-right where the native GTK popup clips off-screen
+// on the Linux WebView, and that popup ignores the theme's color-scheme. The
+// custom menu flips/scrolls to fit and is fully themed. See menuSelect.ts.
+const themeSelect = makeMenuSelect(
+  THEME_GROUPS.map(g => ({ group: g.group, options: g.themes.map(t => ({ value: t.value, label: t.label })) })),
+  getTheme(),
+  v => setTheme(v as Theme),
+  { ariaLabel: 'Colour theme' },
+);
+themeSelect.id = 'theme-select';
+attachTooltip(themeSelect, 'Colour theme (Auto follows your system)');
+// Pin the theme picker + help button to the right end of the toolbar: the theme
+// picker carries `margin-left:auto` so it starts the right-aligned group.
+themeSelect.style.marginLeft = 'auto';
+helpBtn.style.marginLeft = '';
+helpBtn.before(themeSelect);
+
+onThemeChange(refreshCurrentView);
 
 showEmptyState();

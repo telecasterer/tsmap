@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@paulrobins/testdata-parser": "^0.4.0",
-    "@paulrobins/wafermap": "^0.16.1",
+    "@paulrobins/wafermap": "^0.17.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",

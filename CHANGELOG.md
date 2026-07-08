@@ -2,6 +2,87 @@
 
 ## [Unreleased]
 
+## [0.1.17] — 2026-07-08
+
+### Added
+
+- **Wafer splits** — assign a process-corner/experiment label to wafers via a new **Splits…** dialog (bulk select with checkbox + shift-click, CSV save/load, auto-restore on later reloads of the same lot). Splits are stored as an ordinary per-wafer metadata field, so every existing grouped chart (yield, boxplot, histogram, correlation, scatter) picks them up with zero changes.
+- **In-place group drill-down for Yield and Boxplot** — clicking a grouped bar/box now redraws the same panel one level down to that group's individual wafers, with a **← Back** button to return, instead of always opening a wafer-map modal. Only a genuine wafer-level bar opens the modal.
+- **In-app user guide images** — the `?` guide modal shows real screenshots again, loaded from GitHub Pages. A reachability probe (HEAD request against a permanent probe image, with a timeout) runs once per guide open and gates whether images load at all; falls back to a text-only guide with an online-guide link when offline, and each image gets its own `onerror` fallback for the case where general connectivity is fine but one specific image hasn't been published yet. Status is logged to the log panel.
+
+### Changed
+
+- **wmap bumped to 0.18.0** — gallery card detach gets an automatic in-page floating-window fallback when `window.open()` is blocked (fixes a real regression under Tauri), plus a `showExpandButton` option to suppress the redundant expand button/`E` key when wmap is already rendered inside a tsmap modal.
+- Screenshot/doc-generation pipeline overhaul (`scripts/capture-screenshots.mjs`, `scripts/capture-definitions.mjs`); user guide screenshots regenerated.
+- CI: GitHub Actions dependency version bumps in the Pages deploy workflow.
+
+### Fixed
+
+- **Wafer-splits auto-restore collided across unrelated files** — the restore fingerprint was keyed on wafer ID alone, so two different lots that happened to share a generic wafer-ID convention (`W01`, `W02`, …) would silently inherit each other's split assignments. Now keyed on lot ID + part type + wafer ID (the physical wafer's identity, not the file), so a lot split across several files (e.g. one per test temperature) still restores correctly while unrelated lots no longer collide.
+- **Web build hung when the native file picker was cancelled** — closing the Open/Add file dialog via Cancel, Esc, or its own close button left the toolbar stuck on "Waiting for file selection…" forever, since `<input type="file">`'s `change` event never fires on cancel. Now listens for the `cancel` event to reset the UI.
+- Pre-push lint error (`prefer-const`) that was blocking pushes.
+
+## [0.1.16] — 2026-07-03
+
+### Added
+
+- **8-theme colour picker** (Auto, Light, Light green, Solarized Light, High contrast, Dark, Nord, Solarized Dark) via a new themed dropdown (`menuSelect.ts`) that avoids native `<select>` misbehaviour on Linux WebKitGTK.
+- Print/save-as-PDF action on the user guide modal.
+
+### Changed
+
+- Consolidated the three hand-rolled modals (chart expand, wafer drilldown, user guide) into one shared `modal.ts` implementation.
+- **wmap bumped to 0.17.0** — adds `--wmap-*` custom properties for chrome and canvas theming; all 8 app themes now apply to the embedded wafer view with no per-theme duplication (closes WMAP_ISSUES.md #25).
+- Hardened the wmap link workflow: a release guard (`check-wmap-published.js`) fails a shippable build if wmap is still npm-linked or its published range isn't resolvable; `vite.config.ts` allow-lists the linked `../wmap` dir for the dev server.
+- `actions/checkout` / `actions/setup-node` bumped to v5 in all workflows.
+- Added `packages/parsers/README.md` documenting the testdata-parser WASM API.
+
+### Fixed
+
+- CI lint failure (`'controller' is never reassigned, use 'const'`) in `openWaferModal`, resolved as part of the modal consolidation above.
+
+## [0.1.15] — 2026-07-01
+
+### Added
+
+- Shared themed hover tooltip (`tooltip.ts`) replacing native `title` tooltips across tsmap's own chrome (toolbar, chart-card and modal-header buttons, test selector).
+
+### Changed
+
+- **Chart bar drilldown is now a modal over the charts grid instead of a view switch** — clicking a bar opens `openWaferModal()` over the still-mounted grid; closing (Esc / close / backdrop) returns to the exact scroll position and selectors. The old bar multi-select ("shift-click to select several" + "Open selected") was removed in favour of single-click-to-open.
+- **wmap bumped to 0.16.1** — first-class `zIndex` render option, replacing the previous global `--wmap-z` mutation workaround.
+
+## [0.1.14] — 2026-06-25
+
+### Added
+
+- Test selector **"scan all N files"** toggle to widen the first-pass scan beyond the largest file, preserving selection across the re-scan.
+- **"Value findings" toolbar toggle** to re-run wmap's regional test-value analysis in place on demand (disabled in the charts view, where it doesn't apply).
+
+### Changed
+
+- **Parser performance overhaul (testdata-parser 0.4.0)** — STDF now owns its own record framing/endianness/cold-record decoding (drops the `rust-stdf` dependency) with added big-endian support, ~13% faster (131→148 MB/s on the 341 MB fixture); CSV ~3.4× faster (16→55 MB/s); ATDF ~2.8× faster (22→60 MB/s) via positional field access; JSON gets a wide-format fast path.
+- Adopted wmap 0.16.0's `enableTestValueAnalysis: false` default (regional test-value findings now opt-in) for a ~3.9× lot-pipeline speedup — see the new toggle above to restore them on demand.
+- Window sizing: 80% of the monitor, centered, computed in Rust before first paint (no flash), 640×480 minimum.
+- Missing facet values now fold into an explicit "(none)" group instead of being silently dropped from grouped charts.
+- Relabelled the CSV "split" control to "Subdivide file by this column".
+
+### Fixed
+
+- Per-wafer metadata fields were silently dropped during multi-file merge, killing WIR/WRR facets — fixed via a single `toWaferData()` constructor used at every merge site.
+
+## [0.1.13] — 2026-06-22
+
+### Added
+
+- RHEL 8 build + renamed release assets.
+- **Lot/metadata faceting across all charts** — wafers now carry provenance (lot, program, tester, node, part type, sublot), surfaced via a "Group by" toolbar control that re-expresses every chart per group (yield, bin pareto, boxplot, histogram, correlation, scatter each do what suits their kind). wmap bumped to 0.15.0 to feed this metadata into map/gallery tooltips.
+- **Generic, format-agnostic metadata extraction** (testdata-parser 0.3.1) — every non-empty STDF/ATDF MIR/WIR/WRR field is now emitted as a raw key/value pair and surfaced as a facet; CSV/JSON mapped metadata columns get the same treatment, closing the format-parity gap. New "Test site" CSV/JSON mapping role matches STDF/ATDF per-die site data.
+
+### Fixed
+
+- Correlation matrix no longer renders empty for a low-variation group — falls back to showing the tests with blank cells and a "No significant correlations found" note.
+
 ## [0.1.12] — 2026-06-21
 
 ### Added

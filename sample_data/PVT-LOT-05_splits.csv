@@ -1,0 +1,16 @@
+# tsmap wafer splits
+# Process-corner assignment for PVT-LOT-05.stdf
+waferId,split
+W01,TT
+W02,FF
+W03,TT
+W04,SS
+W05,TT
+W06,FS
+W07,TT
+W08,SF
+W09,TT
+W10,FF
+W11,SS
+W12,FS
+W13,SF

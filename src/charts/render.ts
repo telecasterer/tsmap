@@ -5,7 +5,7 @@
 // importers (main.ts) keep a single import site.
 
 import {
-  cardShell, cssVar, formatValue, trackObserver, isInModal, makeSegmented,
+  cardShell, cssVar, formatValue, trackObserver, isInModal, makeSegmented, makeBackButton,
   PADDING, VALUE_WIDTH,
   type ChartPanel, type RenderChartsOptions,
 } from './chartShell';
@@ -47,11 +47,26 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     for (const control of controls) controlsRow.appendChild(control);
   }
 
+  const { drill } = panel;
+  let drillActive = drill ? drill.activeGroup !== null : false;
+  let backBtn: HTMLElement | null = null;
+  if (drillActive && drill) {
+    backBtn = makeBackButton(() => onDrillBack());
+    controlsRow.appendChild(backBtn);
+  }
+
   const hint = document.createElement('div');
-  // Capitalise the action for the standalone hint; the tooltip uses it verbatim.
-  hint.textContent = `${clickHint[0].toUpperCase()}${clickHint.slice(1)}`;
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:6px;`;
   card.insertBefore(hint, body);
+
+  // Capitalise the action for the standalone hint; the tooltip uses it verbatim.
+  // Mentions the group-drill affordance only in overview (drill available, not
+  // yet active) — re-run on every drill open/close so it never goes stale.
+  function syncHint() {
+    const text = drill && !drillActive ? `${clickHint}, or click a ${drill.groupLabelText} to see it by wafer` : clickHint;
+    hint.textContent = `${text[0].toUpperCase()}${text.slice(1)}`;
+  }
+  syncHint();
 
   const scrollArea = document.createElement('div');
   // Visible-rows window, recomputed from current data on every draw so a
@@ -150,6 +165,39 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     draw();
   }
 
+  // Drill-down handlers: same in-place contract as onSelfControlChange, plus
+  // toggling the back button in controlsRow (never a grid rebuild).
+  function onDrillOpen(datum: ChartDatum) {
+    if (!drill) return;
+    const next = drill.onOpenGroup(datum);
+    data = next.data;
+    title = next.title;
+    heading.textContent = title;
+    maxValue = Math.max(1, ...data.map(d => d.value));
+    hovered = -1;
+    if (!drillActive) {
+      drillActive = true;
+      backBtn = makeBackButton(() => onDrillBack());
+      controlsRow.appendChild(backBtn);
+    }
+    syncHint();
+    draw();
+  }
+  function onDrillBack() {
+    if (!drill) return;
+    const next = drill.onBack();
+    data = next.data;
+    title = next.title;
+    heading.textContent = title;
+    maxValue = Math.max(1, ...data.map(d => d.value));
+    hovered = -1;
+    drillActive = false;
+    backBtn?.remove();
+    backBtn = null;
+    syncHint();
+    draw();
+  }
+
   function rowAt(offsetY: number): number {
     const index = Math.floor((offsetY - PADDING + ROW_GAP / 2) / (ROW_HEIGHT + ROW_GAP));
     return index >= 0 && index < data.length ? index : -1;
@@ -162,7 +210,10 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     if (row >= 0) {
       const d = data[row];
       const cardRect = card.getBoundingClientRect();
-      tooltip.innerHTML = `<strong>${d.label}</strong><br>${valueTextOf(d)}<br><em>${clickHint}</em>`;
+      const hint = drill && !drillActive && d.waferIndices.length > 1
+        ? `click to see this ${drill.groupLabelText} by wafer`
+        : clickHint;
+      tooltip.innerHTML = `<strong>${d.label}</strong><br>${valueTextOf(d)}<br><em>${hint}</em>`;
       tooltip.style.display = 'block';
       tooltip.style.left = `${e.clientX - cardRect.left + 14}px`;
       tooltip.style.top = `${e.clientY - cardRect.top + 14}px`;
@@ -173,7 +224,12 @@ function renderPanel(panel: ChartPanel, options: RenderChartsOptions): HTMLEleme
     const rect = canvas.getBoundingClientRect();
     const row = rowAt(e.clientY - rect.top);
     if (row === -1) return;
-    options.onOpen(data[row].waferIndices, data[row]);
+    const datum = data[row];
+    if (drill && !drillActive && datum.waferIndices.length > 1) {
+      onDrillOpen(datum);
+      return;
+    }
+    options.onOpen(datum.waferIndices, datum);
   });
 
   trackObserver(new ResizeObserver(() => draw())).observe(card);

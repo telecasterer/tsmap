@@ -51,6 +51,13 @@ export interface OpenModalOptions {
    * Each gets the shared button styling, hover treatment, and a themed tooltip.
    */
   headerActions?: HeaderAction[];
+  /**
+   * Body overflow. Default 'hidden' — a single embedded wmap render manages its
+   * own internal layout/scrolling, so the body must not scroll independently.
+   * Pass 'auto' for content that can outgrow the box (e.g. a wafer gallery,
+   * which packs cards to fit rather than scrolling itself).
+   */
+  bodyOverflow?: 'hidden' | 'auto';
 }
 
 export interface HeaderAction {
@@ -85,7 +92,7 @@ const btnStyle: Partial<CSSStyleDeclaration> = {
  * keyboard, and lifecycle behaviour; callers supply only content and teardown.
  */
 export function openModal(options: OpenModalOptions): ModalHandle {
-  const { title, mount, onClose, sizing = 'resizable' } = options;
+  const { title, mount, onClose, sizing = 'resizable', bodyOverflow = 'hidden' } = options;
   const resizable = sizing === 'resizable';
 
   const savedOverflow = document.body.style.overflow;
@@ -171,10 +178,22 @@ export function openModal(options: OpenModalOptions): ModalHandle {
   // Body: position:relative anchors any absolute child (e.g. map banner);
   // flex:1/min-height:0 (never height:100%) sizes correctly in WebView2 — see
   // CLAUDE.md cross-platform CSS rules.
+  //
+  // display is 'flex' (column) for the single-map case, whose content (the
+  // wmap canvas wrap) is itself a flex:1 child that needs to fill the body.
+  // For 'auto' overflow (the wafer gallery) it must be plain 'block' instead:
+  // a flex-column ancestor whose height is bounded gives EVERY flex child that
+  // sets its own `overflow` an automatic minimum size of 0 (CSS flexbox spec),
+  // so wmap's toolbar bar (which sets `overflow-x: auto` for horizontal
+  // scrolling on narrow widths) collapses to near-zero height under flex-shrink
+  // pressure from the much taller gallery grid sibling — the toolbar visually
+  // vanishes leaving only the bin-legend row beneath it. `display: block` takes
+  // the body out of flex layout entirely, so wmap's children lay out and
+  // scroll as normal block content instead of competing for flex space.
   const body = document.createElement('div');
   Object.assign(body.style, {
     flex: '1', minHeight: '0', position: 'relative',
-    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    display: bodyOverflow === 'auto' ? 'block' : 'flex', flexDirection: 'column', overflow: bodyOverflow,
   } as Partial<CSSStyleDeclaration>);
 
   box.append(header, body);

@@ -46,6 +46,8 @@ export interface Platform {
   jsonHeaders(file: FileHandle): Promise<HeadersResult>;
   savePng(blob: Blob, stem: string): Promise<void>;
   openReport(html: string): void;
+  /** Opens an external URL in the system browser (Tauri) / a new tab (web). */
+  openExternal(url: string): void;
   confirm(message: string): Promise<boolean>;
   stdfTestNames(file: FileHandle): Promise<ScanResult>;
   atdfTestNames(file: FileHandle): Promise<ScanResult>;
@@ -62,6 +64,7 @@ function makeTauriPlatform(): Platform {
   const getInvoke = () => import('@tauri-apps/api/core').then(m => m.invoke);
   const getDialog = () => import('@tauri-apps/plugin-dialog');
   const getFs = () => import('@tauri-apps/plugin-fs');
+  const getOpener = () => import('@tauri-apps/plugin-opener');
 
   return {
     async pickFiles() {
@@ -157,6 +160,10 @@ function makeTauriPlatform(): Platform {
 
     openReport(html) {
       getInvoke().then(invoke => invoke('write_temp_html', { html }));
+    },
+
+    openExternal(url) {
+      getOpener().then(({ openUrl }) => openUrl(url));
     },
 
     async confirm(message) {
@@ -406,6 +413,10 @@ function makeWebPlatform(): Platform {
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+
+    openExternal(url) {
+      window.open(url, '_blank', 'noopener');
     },
 
     async confirm(message) {

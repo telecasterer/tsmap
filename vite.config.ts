@@ -66,8 +66,10 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and the Cargo workspace's
+      // `target/` build output (large, high-churn, and irrelevant to the
+      // frontend — watching it can exhaust the OS inotify watcher limit).
+      ignored: ["**/src-tauri/**", "**/target/**"],
     },
     // 4. when wmap is linked, allow the dev server to serve its out-of-root
     //    files (default allow list is the project root only). No-op unlinked.

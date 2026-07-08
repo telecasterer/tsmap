@@ -11,6 +11,13 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
+// Images referenced in the markdown are not bundled with the app — the app has
+// no local copy of docs/images/*.png. Instead they're rewritten to absolute
+// GitHub Pages URLs and loaded at runtime (see src/guideImages.ts), which
+// probes reachability first and falls back to text-only when offline. This
+// must match zensical.toml's site_url.
+const GH_PAGES_BASE = 'https://telecasterer.github.io/tsmap/';
+
 // ── Slugify heading text to stable anchor IDs (same algorithm as wmap) ────────
 function slugify(text) {
   return text
@@ -21,7 +28,7 @@ function slugify(text) {
     .replace(/^-|-$/g, '');
 }
 
-// ── Custom renderer: heading IDs, strip images ────────────────────────────────
+// ── Custom renderer: heading IDs, remote-loaded images ────────────────────────
 const renderer = new Renderer();
 
 renderer.heading = ({ text, depth }) => {
@@ -29,10 +36,16 @@ renderer.heading = ({ text, depth }) => {
   return `<h${depth} id="${id}">${text}</h${depth}>\n`;
 };
 
-// Screenshots are not inlined — they are too large and don't render well inside
-// the constrained modal. The guide uses HTML mockups instead for UI elements
-// (see §2, §3, §4 in user-guide.md); chart sections have no visual replacements.
-renderer.image = () => '';
+// Images aren't bundled with the app, so they're pointed at the published
+// GitHub Pages copy instead. Emitted as `data-src` (not `src`) so nothing
+// fetches until the runtime reachability probe in src/guideImages.ts decides
+// to promote it — setting `src` eagerly here would fire the request the
+// moment the HTML is inserted into the DOM, before the probe can run.
+renderer.image = ({ href, text }) => {
+  const url = /^https?:\/\//.test(href) ? href : GH_PAGES_BASE + href;
+  const alt = text ? ` alt="${text}"` : '';
+  return `<img data-src="${url}"${alt}>`;
+};
 
 marked.setOptions({ renderer });
 
@@ -89,6 +102,12 @@ const css = `
 .tsmap-guide img, .tsmap-guide table { max-width: 100%; }
 .tsmap-guide hr { border: none; border-top: 1px solid var(--border-subtle); margin: 24px 0; }
 .tsmap-guide blockquote { border-left: 3px solid var(--border-mid); margin: 0 0 12px; padding: 4px 12px; color: var(--text-muted); }
+.tsmap-guide-offline-note {
+  margin: 0 0 18px; padding: 8px 12px; font-size: 13px; color: var(--text-muted);
+  background: var(--bg-toolbar); border: 1px solid var(--border-subtle); border-radius: 4px;
+}
+.tsmap-guide-offline-note a { color: var(--accent); cursor: pointer; }
+.tsmap-guide-offline-note a:hover { text-decoration: underline; }
 `;
 
 // ── Wrap ──────────────────────────────────────────────────────────────────────

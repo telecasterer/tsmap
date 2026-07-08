@@ -415,11 +415,17 @@
         /* Stacking order. tsmap's overlays layer against wmap's map-toolbar
            overlays (--wmap-z, default 6000, +2). Single source of truth; every
            overlay references a tier (CSS var() / JS cssVar) — no bare numbers.
-             --z-overlay  pre-render form overlays (below wmap's band)
-             --z-modal    app modals over a rendered map (clears 6000–6002)
+             --z-modal    every full-screen tsmap overlay/modal (clears 6000–6002)
              --z-tooltip  shared hover tooltip (above modals)
-           See WMAP_ISSUES.md #22/#23. */
-        --z-overlay:  200;
+           There used to be a lower --z-overlay tier for "pre-render-only" form
+           overlays (mapping, rename, test selector) on the theory that nothing
+           else could be rendered yet. That was wrong three times over: "Add
+           files" reuses the SAME mapping/rename/test-selector overlays to
+           append to an ALREADY-rendered gallery, so they'd render invisibly
+           behind wmap's own toolbar. There is no such thing as a page-level
+           overlay in this app that is structurally guaranteed to never appear
+           over a rendered map — always use --z-modal for a new one. See
+           WMAP_ISSUES.md #22/#23. */
         --z-modal:    7000;
         --z-tooltip:  7100;
 
@@ -508,12 +514,12 @@
       }
       #charts-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #charts-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
-      #filter-tests-btn, #value-findings-btn {
+      #filter-tests-btn, #value-findings-btn, #splits-btn {
         background: none; border: 1px solid var(--border-dim); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
         white-space: nowrap;
       }
-      #filter-tests-btn:hover, #value-findings-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #filter-tests-btn:hover, #value-findings-btn:not(:disabled):hover, #splits-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       /* The checkbox glyph carries the on/off state so the button reads as a toggle, not a nav link. */
       #value-findings-btn .vf-box::before { content: '\2610'; margin-right: 5px; }      /* ☐ off */
       #value-findings-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
@@ -540,7 +546,7 @@
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
-        position: fixed; inset: 0; z-index: var(--z-overlay);
+        position: fixed; inset: 0; z-index: var(--z-modal);
         background: var(--bg-overlay); display: flex; flex-direction: column;
         overflow: hidden;
       }
@@ -591,7 +597,7 @@
 
       /* Rename overlay — reuses mapping-panel styles */
       #tsmap-rename-overlay {
-        position: fixed; inset: 0; z-index: var(--z-overlay);
+        position: fixed; inset: 0; z-index: var(--z-modal);
         background: var(--bg-overlay); display: flex; flex-direction: column;
         overflow: hidden;
       }
@@ -692,6 +698,7 @@
         <button id="add-btn" disabled title="Append more files to the current view">Add files</button>
         <button id="charts-btn" style="display:none" title="Switch between the map and charts views">Charts</button>
         <button id="filter-tests-btn" style="display:none" title="Change which tests are imported, then re-parse">Filter tests…</button>
+        <button id="splits-btn" style="display:none" title="Define and assign wafer splits (process corners, experiment groups, etc.)">Splits…</button>
         <button id="value-findings-btn" role="switch" style="display:none" aria-checked="false"><span class="vf-box"></span>Value findings</button>
         <button id="reset-btn" style="display:none" title="Unload all files and reset">Clear</button>
         <span>or drop a file anywhere</span>

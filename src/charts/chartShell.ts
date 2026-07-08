@@ -52,6 +52,23 @@ export interface ChartPanel {
     /** Returns fresh data (and optionally a new title) for the chosen value. */
     onChange: (value: string) => { data: ChartDatum[]; title?: string };
   };
+  /**
+   * In-place drill-down for a grouped/aggregate row (one pooling more than one
+   * wafer). When present and `activeGroup` is null, clicking such a row calls
+   * `onOpenGroup`, which returns the detail data/title to redraw in place (same
+   * card, no modal, no grid rebuild — mirrors `selfControl`'s contract) and
+   * shows a back control; clicking it calls `onBack`, which returns the
+   * overview data/title. Single-wafer rows (grouping off, or already inside a
+   * detail view) are unaffected and still reach the grid-level `onOpen`.
+   */
+  drill?: {
+    activeGroup: string | null;
+    onOpenGroup: (datum: ChartDatum) => { data: ChartDatum[]; title: string };
+    onBack: () => { data: ChartDatum[]; title: string };
+    /** The active facet's human label (e.g. "lot", "temperature"), used in the
+     * overview click hint/tooltip ("click to see this <label> by wafer"). */
+    groupLabelText: string;
+  };
 }
 
 export interface RenderChartsOptions {
@@ -267,14 +284,29 @@ export function makeIconBtn(svg: string, title: string): HTMLButtonElement {
   return btn;
 }
 
-export function makeExpandBtn(card: HTMLElement, title: string): HTMLElement {
+/** Small "← Back" text button for leaving a drill-down detail view, styled to match the segmented/self controls it sits beside in `controlsRow`. */
+export function makeBackButton(onBack: () => void): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.textContent = '← Back';
+  btn.style.cssText = `font-size:12px;padding:3px 10px;border:1px solid ${cssVar('--border-mid')};border-radius:4px;background:${cssVar('--bg-input')};color:${cssVar('--text-secondary')};cursor:pointer;`;
+  btn.addEventListener('mouseenter', () => { btn.style.borderColor = cssVar('--accent'); btn.style.color = cssVar('--accent'); });
+  btn.addEventListener('mouseleave', () => { btn.style.borderColor = cssVar('--border-mid'); btn.style.color = cssVar('--text-secondary'); });
+  btn.addEventListener('click', onBack);
+  return btn;
+}
+
+/** `title` may be a getter so panels whose heading changes after construction
+ * (e.g. drill-down in/out) open the expand modal with the current title,
+ * not the one captured at card-build time. */
+export function makeExpandBtn(card: HTMLElement, title: string | (() => string)): HTMLElement {
+  const currentTitle = () => (typeof title === 'function' ? title() : title);
   const btn = makeIconBtn(ICONS.expand, 'Expand (E)');
-  btn.addEventListener('click', e => { e.stopPropagation(); openExpandModal(card, title); });
+  btn.addEventListener('click', e => { e.stopPropagation(); openExpandModal(card, currentTitle()); });
   card.addEventListener('keydown', e => {
     if (e.key === 'e' || e.key === 'E') {
       const active = document.activeElement;
       if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) return;
-      openExpandModal(card, title);
+      openExpandModal(card, currentTitle());
     }
   });
   return btn;
@@ -294,7 +326,10 @@ export function cardShell(title: string, savePng?: (blob: Blob, stem: string) =>
 
   const saveBtn = makeIconBtn(ICONS.download, 'Save as PNG');
   headingRow.appendChild(saveBtn);
-  const expandBtn = makeExpandBtn(card, title);
+  // Read the live heading text, not the title captured at construction — a
+  // panel that updates heading.textContent in place (e.g. drill-down) should
+  // open the expand modal with its current title.
+  const expandBtn = makeExpandBtn(card, () => heading.textContent ?? title);
   headingRow.appendChild(expandBtn);
   card.appendChild(headingRow);
 

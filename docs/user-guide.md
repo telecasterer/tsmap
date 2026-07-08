@@ -98,10 +98,26 @@ the file picker and is supported on both desktop and browser.
 ### Adding files to an existing lot
 
 Once a file is loaded, the **Add files** button becomes active. Use it to append additional
-wafers to the current gallery. After parsing, you will see a confirmation overlay that
-summarises the incoming wafers and warns about structural mismatches (different die count,
-different hard bin set, duplicate wafer IDs). Click **Add N wafers** to confirm, or
-**Cancel** to keep the current data unchanged.
+wafers to the current gallery — it goes through the same column mapping / test selector /
+rename steps as a fresh load, then shows a confirmation dialog before merging into the
+current gallery:
+
+<div class="tsmap-mockup" style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:6px;padding:20px;max-width:420px;margin:8px 0 12px;font-size:13px;color:var(--text-light);">
+  <div style="font-size:15px;font-weight:600;margin-bottom:10px;">Add 5 wafers to gallery</div>
+  <p style="margin-bottom:16px;color:var(--text-subdued);">Current gallery: <strong>13</strong> wafers &nbsp;+&nbsp; Adding: <strong>5</strong> wafers &nbsp;=&nbsp; <strong>18</strong> total</p>
+  <div style="display:flex;gap:8px;padding:6px 10px;border-radius:4px;background:var(--warn-bg);color:var(--warn-text);border:1px solid var(--warn-border);font-size:12px;margin-bottom:18px;">
+    <span>⚠</span><span>Die count differs from the existing gallery (avg 221 vs 10,482) — check this is the same product.</span>
+  </div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;">
+    <span style="padding:5px 14px;border-radius:4px;border:1px solid var(--border-muted);color:var(--text-muted);font-size:13px;">Cancel</span>
+    <button class="btn-primary btn-warn" style="pointer-events:none;">Add anyway</button>
+  </div>
+</div>
+
+The dialog summarises the incoming wafers and warns about structural mismatches (different
+die count, different hard bin set, duplicate wafer IDs). With no mismatches, the button
+reads **Add to gallery**; if there's a warning to acknowledge, it reads **Add anyway**.
+Click **Cancel** to keep the current data unchanged.
 
 ### Clearing data
 
@@ -119,10 +135,33 @@ After selecting files, what happens depends on the format:
 
 ### 2.1 Wafer rename overlay
 
-When loading multiple files (or a zip containing multiple files), tsmap shows a rename
-overlay listing each wafer with an editable label. The labels are pre-filled from the
-file name or the wafer ID in the data. Edit any label that needs changing, then click
-**Continue →**.
+<div class="tsmap-mockup" style="border:1px solid var(--border-mid);border-radius:5px;overflow:hidden;margin:8px 0 12px;background:var(--bg-overlay);">
+  <div class="mapping-header">
+    <span class="mapping-title">Wafer labels</span>
+    <span class="mapping-file-info">5 wafers from 2 files</span>
+  </div>
+  <table class="mapping-table" style="margin:0;">
+    <thead><tr><th>Source file</th><th></th><th>Wafer label</th><th>Dies</th></tr></thead>
+    <tbody>
+      <tr><td class="rename-file">lot_a.stdf</td><td class="rename-arrow">→</td><td><input class="rename-input" value="LOT-A · W01" style="pointer-events:none;" readonly></td><td class="rename-count">2,873 dies</td></tr>
+      <tr><td class="rename-file">lot_a.stdf</td><td class="rename-arrow">→</td><td><input class="rename-input" value="LOT-A · W02" style="pointer-events:none;" readonly></td><td class="rename-count">2,873 dies</td></tr>
+      <tr><td class="rename-file">lot_b.stdf</td><td class="rename-arrow">→</td><td><input class="rename-input" value="LOT-B · W01" style="pointer-events:none;" readonly></td><td class="rename-count">2,873 dies</td></tr>
+    </tbody>
+  </table>
+  <div class="mapping-footer">
+    <button class="btn-secondary" style="pointer-events:none;">Cancel</button>
+    <span></span>
+    <button class="btn-primary" style="pointer-events:none;">Continue →</button>
+  </div>
+</div>
+
+When loading multiple files (or a zip containing multiple files, or a single file whose
+only wafer has a generic ID like `W01`), tsmap shows a rename overlay listing each wafer
+with an editable label. Labels are pre-filled from whatever identifies the wafer in the
+data — a distinctive wafer ID is used as-is; a generic one (`W01`) is combined with the
+lot ID (`LOT-A · W01`) so wafers stay distinct within and across lots without you needing
+to edit anything; with neither, it falls back to the file name. Edit any label that needs
+changing, then click **Continue →**.
 
 ---
 
@@ -130,20 +169,21 @@ file name or the wafer ID in the data. Edit any label that needs changing, then 
 
 <div class="tsmap-mockup" style="border:1px solid var(--border-mid);border-radius:5px;overflow:hidden;margin:8px 0 12px;background:var(--bg-overlay);">
   <div class="mapping-header">
-    <div><span class="mapping-title">Map columns</span> <span class="mapping-file-info">— example.csv</span></div>
-    <button class="btn-secondary" style="pointer-events:none;">Cancel</button>
+    <span class="mapping-title">Column mapping</span>
+    <span class="mapping-file-info">1,768 rows · 5 columns</span>
   </div>
   <table class="mapping-table" style="margin:0;">
-    <thead><tr><th>Column</th><th></th><th>Role</th><th>Test name</th></tr></thead>
+    <thead><tr><th>Column</th><th></th><th>Role</th><th>Test name</th><th>Subdivide file</th></tr></thead>
     <tbody>
-      <tr><td class="col-name">x</td><td class="col-arrow">→</td><td><select class="mapping-table select" style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>X position</option></select></td><td></td></tr>
-      <tr><td class="col-name">y</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Y position</option></select></td><td></td></tr>
-      <tr><td class="col-name">hbin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Hard bin</option></select></td><td></td></tr>
-      <tr><td class="col-name">vt_lin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test value</option></select></td><td><input class="test-name-input" value="Vt_lin" style="pointer-events:none;" readonly></td></tr>
-      <tr><td class="col-name">site</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test site</option></select></td><td></td></tr>
+      <tr><td class="col-name">x</td><td class="col-arrow">→</td><td><select class="mapping-table select" style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>X position</option></select></td><td></td><td></td></tr>
+      <tr><td class="col-name">y</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Y position</option></select></td><td></td><td></td></tr>
+      <tr><td class="col-name">hbin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Hard bin</option></select></td><td></td><td></td></tr>
+      <tr><td class="col-name">vt_lin</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test value</option></select></td><td><input class="test-name-input" value="Vt_lin" style="pointer-events:none;" readonly></td><td></td></tr>
+      <tr><td class="col-name">site</td><td class="col-arrow">→</td><td><select style="background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-secondary);padding:2px 4px;border-radius:3px;font-size:12px;color-scheme:light dark;"><option>Test site</option></select></td><td></td><td></td></tr>
     </tbody>
   </table>
   <div class="mapping-footer">
+    <button class="btn-secondary" style="pointer-events:none;">Cancel</button>
     <div class="pass-bin-group">Pass bin(s): <input value="1" style="pointer-events:none;" readonly></div>
     <button class="btn-primary" style="pointer-events:none;">Continue →</button>
   </div>
@@ -227,6 +267,14 @@ overlay re-appears with fresh auto-detection.
       <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);font-size:12px;background:none;color:var(--text-secondary);">Functional</span>
     </div>
   </div>
+  <div style="display:flex;gap:8px;align-items:center;padding:0 20px 8px;">
+    <span style="flex:1;padding:5px 8px;border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);color:var(--text-muted);font-size:13px;">e.g. test_005-test_050 or 1000-1099</span>
+    <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;white-space:nowrap;">Select range</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;padding:0 20px 10px;">
+    <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:12px;">Select all</span>
+    <span style="padding:4px 10px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:12px;">Select none</span>
+  </div>
   <div style="border-top:1px solid var(--border-subtle);font-size:13px;">
     <div style="display:flex;align-items:center;gap:8px;padding:6px 20px;border-bottom:1px solid var(--bg-row-border);">
       <input type="checkbox" checked style="flex-shrink:0;">
@@ -257,7 +305,7 @@ overlay re-appears with fresh auto-detection.
       <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Save list</span>
       <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Load list</span>
       <span style="padding:6px 16px;border-radius:4px;border:1px solid var(--border-mid);background:none;color:var(--text-secondary);font-size:13px;">Cancel</span>
-      <button class="btn-primary" style="pointer-events:none;">Import →</button>
+      <button class="btn-primary" style="pointer-events:none;">Import 2 tests →</button>
     </div>
   </div>
 </div>
@@ -334,7 +382,7 @@ The footer shows how many tests are selected and estimates the memory footprint
   <div style="color:#f87171;">Very large selection — risk of running out of memory</div>
 </div>
 
-If you select no tests, only bin data is imported (bin map is still fully usable).
+If you select no tests, tsmap asks you to confirm ("No tests selected — only bin data will be loaded. Continue?") before importing — the bin map is still fully usable with no tests selected.
 
 ### After load: re-filtering
 
@@ -386,11 +434,108 @@ map's summary panel).
 
 ---
 
-## 6. Charts view
+## 6. Wafer splits
 
-Click **Charts** in the toolbar to switch to the charts view. Click **← Back to maps** (or
-the maps button) to return. Charts and maps share the same parsed data — switching between
-them does not re-parse.
+A **split** is a name you assign to a wafer that isn't in the file at all — most commonly a
+process corner (`TT`, `FF`, `SS`, `FS`, `SF`), but it can be anything: an experiment
+condition, a test-temperature group, anything you want to compare wafers by that your
+tester didn't record. Once assigned, splits behave exactly like any other metadata field
+in the [Charts view's Group by dropdown](#grouping-charts-by-lot-metadata-or-split) — split-vs-split
+yield, boxplots, histograms, correlation, and scatter all work immediately with no extra
+setup — and they can optionally be shown right on the wafer map/gallery labels too.
+
+Once a file is loaded, click **Splits…** in the toolbar to open the assignment dialog:
+
+<div class="tsmap-mockup" style="background:var(--bg-modal);border:1px solid var(--border-mid);border-radius:8px;overflow:hidden;margin:8px 0 12px;font-size:13px;color:var(--text-light);">
+  <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-subtle);">
+    <span style="flex:1;font-weight:600;font-size:14px;">Wafer splits (13 wafers)</span>
+    <span style="color:var(--text-muted);display:flex;align-items:center;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
+  </div>
+  <div style="padding:14px;">
+    <div style="padding:5px 8px;border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);color:var(--text-muted);font-size:13px;margin-bottom:10px;">Filter by wafer ID or source file…</div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);margin-bottom:10px;"><input type="checkbox" checked style="pointer-events:none;">Show split in wafer map labels</label>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;">Select all</span>
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;">Select none</span>
+    </div>
+    <div style="border:1px solid var(--border-mid);border-radius:4px;font-family:ui-monospace,'Cascadia Code',monospace;font-size:12px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border-mid);"><input type="checkbox" checked style="pointer-events:none;"><span style="flex:1;">W02</span><span style="color:var(--text-dim);flex:1;">PVT-LOT-05.stdf</span><span style="color:var(--accent);">FF</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border-mid);"><input type="checkbox" checked style="pointer-events:none;"><span style="flex:1;">W10</span><span style="color:var(--text-dim);flex:1;">PVT-LOT-05.stdf</span><span style="color:var(--accent);">FF</span></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 10px;"><input type="checkbox" style="pointer-events:none;"><span style="flex:1;">W01</span><span style="color:var(--text-dim);flex:1;">PVT-LOT-05.stdf</span><span style="color:var(--text-muted);">—</span></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <div style="flex:1;padding:5px 8px;border:1px solid var(--border-mid);border-radius:4px;background:var(--bg-input);color:var(--text-muted);font-size:13px;">Split name (e.g. TT, FF, FS)…</div>
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;white-space:nowrap;">Assign to selected</span>
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;white-space:nowrap;">Clear split</span>
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;white-space:nowrap;">Clear all</span>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px;">
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;">Save splits…</span>
+      <span style="padding:5px 12px;border-radius:4px;border:1px solid var(--border-mid);color:var(--text-secondary);font-size:13px;">Load splits…</span>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-size:12px;color:var(--text-dim);">Changes apply immediately.</span>
+      <button class="btn-primary" style="pointer-events:none;">Done</button>
+    </div>
+  </div>
+</div>
+
+![Splits dialog after loading a corner-lot split definition](images/splits-modal-loaded.png)
+
+### 6.1 Assigning splits
+
+Tick the checkbox next to one or more wafers — click to toggle, Shift-click to select a
+range, same as the test selector — type a split name (or click one of the chips below the
+input to reuse an existing name, avoiding accidental near-duplicates like `TT` vs `tt`),
+and click **Assign to selected**. **Clear split** removes the assignment from just the
+checked rows; **Clear all** removes every wafer's assignment at once (after a confirmation,
+since it's not scoped to your current selection). Every action applies immediately — there
+is no separate save step, and **Done** just closes the window.
+
+### 6.2 Showing splits on the wafer map
+
+The **"Show split in wafer map labels"** checkbox (on by default) appends the split, as
+`W02 · FF`, wherever a wafer's ID is shown outside the Charts view — gallery card headers,
+the single-wafer view, the summary panel's Wafer Id row, and drilldown modal titles. Turn
+it off to see plain wafer IDs again; the underlying assignments are unchanged either way.
+
+![Gallery with split suffixes after loading PVT-LOT-05_splits.csv](images/gallery-splits.png)
+
+### 6.3 Saving and loading split definitions (CSV)
+
+**Save splits…** writes every wafer's current assignment to a CSV file; **Load splits…**
+reads one back and applies it by matching wafer IDs — wafers in the file that aren't in
+your currently-loaded set are silently skipped, and a log message reports how many rows
+matched. This is the way to prepare a split definition ahead of time (e.g. from a fab's lot
+traveler) and apply it after loading the STDF, or to share a known-good corner mapping with
+a colleague. The format is a simple two-column CSV:
+
+    # tsmap wafer splits
+    # Saved: 2026-07-08T10:40:00.000Z
+    waferId,split
+    W01,TT
+    W02,FF
+    W03,TT
+
+- Lines starting with `#` are comments and are ignored on load.
+- The header row (`waferId,split`) is optional — tsmap recognises and skips it either way.
+- A wafer listed with an empty split value is treated as explicitly unassigned.
+
+### 6.4 Restoring splits automatically
+
+tsmap remembers split assignments per exact set of wafer IDs, so re-opening the *same* file
+later restores them without reloading the CSV. This restore is never silent: if any
+assignment is found for the wafers you just loaded, tsmap logs a message and automatically
+opens the Splits dialog so you can see exactly what was restored, edit it, or clear it —
+rather than silently changing chart groupings and map labels behind your back.
+
+---
+
+## 7. Charts view
+
+Click **Charts** in the toolbar to switch to the charts view — the button relabels itself
+**Maps**; click it again to return. Charts and maps share the same parsed data — switching
+between them does not re-parse.
 
 The charts view is a two-column grid of panels. Each panel is independent: changing a
 dropdown in one panel does not affect others, except that clicking a cell in the correlation
@@ -402,15 +547,25 @@ maximized to fill the window (F key) and closes with Esc.
 
 ![Charts overview — all six panels](images/charts-overview.png)
 
-### Grouping charts by lot or metadata
+### Chart colour scheme
 
-When more than one distinct value is present for a metadata field — for example you have
-loaded **several lots**, test programs, temperatures, or dates — a **Group by** dropdown
-appears in the charts toolbar (next to the colour-scheme selector). It lists every field
-that actually varies across the loaded wafers, with the number of distinct values.
+The **Chart colour scheme** dropdown at the top of the page controls the palette used for
+bars, boxes, histogram buckets, and the correlation matrix (Default, Viridis, Greyscale,
+Accessible/Cividis, Plasma, Inferno, Traffic, Thermal, Jet — the same named schemes wmap
+offers for wafer maps). It's independent of the app's light/dark theme and of the bin
+colours used for hard/soft bin legends — this only affects value-encoded chart colouring.
+Your choice is remembered.
+
+### Grouping charts by lot, metadata, or split
+
+When more than one distinct value is present for a groupable field — for example you have
+loaded **several lots**, test programs, temperatures, dates, or have [assigned wafer
+splits](#6-wafer-splits) — a **Group by** dropdown appears next to the colour-scheme
+selector. It lists every field that actually varies across the loaded wafers, with the
+number of distinct values.
 
 Selecting a field re-expresses every chart **per group** (one series/aggregate per lot,
-program, temperature, …). Each chart does what makes sense for its kind:
+program, split, …). Each chart does what makes sense for its kind:
 
 | Chart | Grouped by a field |
 | --- | --- |
@@ -423,7 +578,18 @@ program, temperature, …). Each chart does what makes sense for its kind:
 
 Choose **None** to return to the plain per-wafer/whole-lot view.
 
-Two deliberate choices are worth noting:
+![Charts grouped by Split, showing a corner lot's TT/FF/SS/FS/SF corners](images/charts-grouped-by-split.png)
+
+**Yield and Boxplot drill in-place, not into a modal.** With a group active, clicking a
+group's bar or box doesn't open a wafer map — it redraws the *same* panel one level down,
+showing that group's individual wafers, with a **← Back** button (next to the sort
+controls) to return to the group overview. Only a wafer-level bar/box (whether reached this
+way, or directly when nothing is grouped) opens the wafer map modal. The hint line under
+the panel title and the hover tooltip both say which action a click will take.
+
+![Yield panel drilled into a single Split, with the ← Back button and per-wafer bars](images/yield-group-drilldown.png)
+
+Two more deliberate choices are worth noting:
 
 - **Correlation is never pooled across groups.** Combining lots into one matrix is
   misleading — between-lot mean shifts can manufacture or hide correlations that do not
@@ -433,14 +599,15 @@ Two deliberate choices are worth noting:
 - **Only the largest 12 groups** are shown individually; any beyond that are folded into a
   single "… N more" group, so a load with many lots stays readable.
 
-> Grouping is driven by metadata attached to each wafer at load time. STDF and ATDF
-> contribute every field present in their MIR record — lot, sublot, part type, program,
-> test temperature, test date, tester, node, operator, and more; CSV and JSON contribute
-> the lot column plus any columns you mapped as metadata. Only fields that actually *vary*
-> across the loaded wafers appear in the dropdown, so if everything shares one value (a
-> single uniform lot) the **Group by** control is hidden.
+> Grouping is driven by metadata attached to each wafer at load time, plus any [wafer
+> splits](#6-wafer-splits) you've assigned. STDF and ATDF contribute every field present in
+> their MIR record — lot, sublot, part type, program, test temperature, test date, tester,
+> node, operator, and more; CSV and JSON contribute the lot column plus any columns you
+> mapped as metadata. Only fields that actually *vary* across the loaded wafers appear in
+> the dropdown, so if everything shares one value (a single uniform lot with no splits
+> assigned) the **Group by** control is hidden.
 
-### 6.1 Yield by wafer
+### 7.1 Yield by wafer
 
 ![Yield by wafer](images/chart-yield.png)
 
@@ -451,7 +618,7 @@ Horizontal bar chart showing pass yield per wafer across the lot.
   button, or click outside it) to return to the charts page exactly where you left it.
 - **Grouped:** one bar per group showing the group's pooled, die-weighted yield.
 
-### 6.2 Bin pareto
+### 7.2 Bin pareto
 
 ![Bin pareto](images/chart-pareto.png)
 
@@ -466,7 +633,7 @@ Failure count by bin across the entire lot, sorted from most to least frequent.
   legend. Hover a sub-bar for its count and share of the bin; click it to open that group's
   wafers in a modal.
 
-### 6.3 Test value distribution (boxplot)
+### 7.3 Test value distribution (boxplot)
 
 ![Boxplot panel](images/boxplot.png)
 
@@ -485,7 +652,7 @@ Per-wafer five-number summary for one parametric test: minimum, Q1, median, Q3, 
 - Hover a row to see the full five-number summary in a tooltip.
 - **Grouped:** one box per group, pooling all of that group's dies into a single summary.
 
-### 6.4 Value histogram
+### 7.4 Value histogram
 
 ![Histogram panel](images/histogram.png)
 
@@ -501,7 +668,7 @@ Distribution of test values bucketed across the measurement range.
   dim the others (click again to clear). Hover a bucket to see every group's count there.
   The single-wafer selector is hidden while grouped.
 
-### 6.5 Test correlation matrix
+### 7.5 Test correlation matrix
 
 ![Correlation matrix](images/correlation.png)
 
@@ -524,7 +691,7 @@ among the displayed tests, and notes any weak pairs that were hidden.
   selected group only (never pooled across groups). A group with too little variation shows
   a populated grid with blank cells and "No significant correlations found".
 
-### 6.6 Test correlation scatter
+### 7.6 Test correlation scatter
 
 ![Scatter plot with bin legend](images/scatter.png)
 
@@ -543,7 +710,7 @@ Die-level scatter plot for two parametric tests.
 
 ---
 
-## 7. Exporting charts
+## 8. Exporting charts
 
 Every chart panel has a **camera** button that saves the current view as a PNG at the
 displayed resolution. To get a clean full-resolution render, use the expand (corner-arrows)
@@ -561,7 +728,7 @@ details.
 
 ---
 
-## 8. The log panel
+## 9. The log panel
 
 A collapsible log panel sits at the bottom of the window. It shows timestamped messages
 from the parser and renderer: file load events, parse warnings, and any errors.
@@ -589,7 +756,7 @@ applied. If soft bin data is not meaningful for your product, this warning can b
 
 ---
 
-## 9. Desktop vs browser differences
+## 10. Desktop vs browser differences
 
 | Feature | Desktop | Browser |
 |---------|---------|---------|

@@ -200,33 +200,38 @@ export function buildTestBoxplotData(wafers: WaferData[], testNumber: number): B
 /**
  * Combined boxplot: one box per group, pooling every die of the group's wafers
  * into a single five-number summary for `testNumber`. `waferIndex` is set to -1
- * (a group is not a single wafer); `label` is the group key.
+ * (a group is not a single wafer); `waferIndices` carries every wafer pooled
+ * into the group (drives drill-down to a per-wafer detail view); `label` is
+ * the group key.
  */
 export function buildTestBoxplotDataCombined(
   wafers: WaferData[],
   testNumber: number,
   groupBy: (wafer: WaferData) => string | undefined,
 ): BoxplotDatum[] {
-  const groups = new Map<string, number[]>();
+  const groups = new Map<string, { values: number[]; waferIndices: number[] }>();
   const order: string[] = [];
-  for (const wafer of wafers) {
+  wafers.forEach((wafer, waferIndex) => {
     const key = groupBy(wafer);
-    if (key === undefined) continue;
-    let vals = groups.get(key);
-    if (!vals) { vals = []; groups.set(key, vals); order.push(key); }
+    if (key === undefined) return;
+    let g = groups.get(key);
+    if (!g) { g = { values: [], waferIndices: [] }; groups.set(key, g); order.push(key); }
+    g.waferIndices.push(waferIndex);
     for (const die of wafer.results) {
       const v = die.testValues?.[testNumber];
-      if (v !== undefined && Number.isFinite(v)) vals.push(v);
+      if (v !== undefined && Number.isFinite(v)) g.values.push(v);
     }
-  }
+  });
 
   return order.map(key => {
-    const values = groups.get(key)!.sort((a, b) => a - b);
+    const g = groups.get(key)!;
+    const values = g.values.sort((a, b) => a - b);
     if (values.length === 0) {
-      return { waferIndex: -1, label: key, min: NaN, q1: NaN, median: NaN, q3: NaN, max: NaN, count: 0 };
+      return { waferIndex: -1, waferIndices: g.waferIndices, label: key, min: NaN, q1: NaN, median: NaN, q3: NaN, max: NaN, count: 0 };
     }
     return {
       waferIndex: -1,
+      waferIndices: g.waferIndices,
       label: key,
       min: values[0],
       q1: quantile(values, 0.25),

@@ -63,11 +63,29 @@
  *     Click the first finding whose text contains the given string.
  *
  *   ['expandChartCard', N]
- *     Click the ⛶ Expand button on the Nth .chart-card (0-based index).
+ *     Click the Expand icon button on the Nth .chart-card (0-based index).
  *     Leaves the modal open for screenshotting.
  *
  *   ['expandLogPanel']
  *     Click the log toggle button to open the log panel.
+ *
+ *   ['openSplitsDialog']
+ *     Click the "Splits…" toolbar button and wait for the dialog.
+ *
+ *   ['closeSplitsDialog']
+ *     Click "Done" in the splits dialog.
+ *
+ *   ['loadSplitsFile', '/abs/path/to/splits.csv']
+ *     Click "Load splits…" in the splits dialog and pick the given file via
+ *     Playwright's filechooser interception.
+ *
+ *   ['setGroupBy', 'Split']
+ *     Select an option (by visible-label prefix) in the charts view's
+ *     "Group by" dropdown.
+ *
+ *   ['clickChartRow', cardIdx, rowIdx]
+ *     Click a specific row (0-based) inside the Nth .chart-card's canvas —
+ *     for the yield/boxplot in-place group drilldown.
  *
  *   ['showCursorOn', '#selector', offsetX, offsetY]
  *     Inject a fake SVG cursor centred on the element (optional pixel nudge).
@@ -91,10 +109,11 @@ import { extname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { CAPTURES } from './capture-definitions.mjs';
 
-const ROOT     = resolve(fileURLToPath(import.meta.url), '../../');
-const DIST     = join(ROOT, 'dist');
-const TESTDATA = join(ROOT, 'testdata');
-const OUT      = join(ROOT, 'docs', 'images');
+const ROOT       = resolve(fileURLToPath(import.meta.url), '../../');
+const DIST       = join(ROOT, 'dist');
+const TESTDATA   = join(ROOT, 'testdata');
+const SAMPLEDATA = join(ROOT, 'sample_data');
+const OUT        = join(ROOT, 'docs', 'images');
 
 // ─── MIME types ───────────────────────────────────────────────────────────────
 
@@ -118,8 +137,10 @@ const MIME = {
 };
 
 // ─── Static server ────────────────────────────────────────────────────────────
-// Serves dist/ at /  and  testdata/ at /testdata/
-// Using /testdata/ lets the page fetch files without streaming bytes through CDP.
+// Serves dist/ at /, testdata/ (gitignored, generated fixtures) at /testdata/,
+// and sample_data/ (committed fixtures, e.g. the corner-lot splits demo) at
+// /sample_data/. Using these routes lets the page fetch files without streaming
+// bytes through CDP.
 
 function startServer() {
   return new Promise((res) => {
@@ -130,6 +151,8 @@ function startServer() {
       let fsPath;
       if (urlPath.startsWith('/testdata/')) {
         fsPath = join(TESTDATA, urlPath.slice('/testdata/'.length));
+      } else if (urlPath.startsWith('/sample_data/')) {
+        fsPath = join(SAMPLEDATA, urlPath.slice('/sample_data/'.length));
       } else {
         fsPath = join(DIST, urlPath);
       }
@@ -178,7 +201,8 @@ async function removeCursor(page) {
 async function injectFile(page, filePath, baseUrl) {
   if (!existsSync(filePath)) throw new Error(`Demo data file not found: ${filePath}`);
   const fileName = filePath.split('/').pop();
-  const fetchUrl = `${baseUrl}/testdata/${fileName}`;
+  const urlPrefix = filePath.startsWith(SAMPLEDATA) ? '/sample_data/' : '/testdata/';
+  const fetchUrl = `${baseUrl}${urlPrefix}${fileName}`;
 
   // Wait until the app's drop listener is registered (open-btn is present and the
   // page script has run). The listener is added synchronously in main.ts on DOMContentLoaded,
@@ -380,12 +404,20 @@ async function runSetup(page, steps, baseUrl) {
       }
 
       case 'expandChartCard': {
-        // Click the ⛶ Expand button on the Nth .chart-card (0-based)
+        // Click the Expand icon button on the Nth .chart-card (0-based). The
+        // button is an SVG icon (chartShell.ts makeIconBtn), not a text glyph —
+        // it carries no textContent, so match on its aria-label instead (set to
+        // the tooltip title, "Expand (E)"). A previous version of this matched
+        // on textContent === '⛶', which never matched post-SVG-icon-refactor and
+        // silently no-opped every capture using this step (chart-yield.png,
+        // chart-pareto.png, boxplot.png, histogram.png, correlation.png,
+        // scatter.png were all byte-identical screenshots of the unexpanded grid
+        // as a result — found and fixed 2026-07-08).
         const idx = args[0] ?? 0;
         await page.evaluate((n) => {
           const cards = [...document.querySelectorAll('.chart-card')];
           if (!cards[n]) return;
-          const btn = [...cards[n].querySelectorAll('button')].find(b => b.textContent?.trim() === '⛶');
+          const btn = cards[n].querySelector('button[aria-label^="Expand"]');
           if (btn) btn.click();
         }, idx);
         // Wait for modal backdrop to appear
@@ -437,6 +469,76 @@ async function runSetup(page, steps, baseUrl) {
       case 'clickFindingByText':
         await clickFindingByText(page, args[0], args[1] ?? '#map-container');
         break;
+
+      case 'openSplitsDialog': {
+        await page.click('#splits-btn');
+        await waitForSelector(page, 'div[role="dialog"]');
+        await page.waitForTimeout(300);
+        break;
+      }
+
+      case 'closeSplitsDialog': {
+        await page.evaluate(() => {
+          const btns = [...document.querySelectorAll('div[role="dialog"] button')];
+          const b = btns.find(b => b.textContent?.trim() === 'Done');
+          if (b) b.click();
+        });
+        await page.waitForTimeout(400);
+        break;
+      }
+
+      case 'loadSplitsFile': {
+        // Splits are loaded via a real file picker (platform.pickTextFile), so
+        // this must arm Playwright's filechooser listener before the click,
+        // same pattern as a real user gesture — page.evaluate()-driven clicks
+        // are not reliably treated as one.
+        const filePath = args[0];
+        const [chooser] = await Promise.all([
+          page.waitForEvent('filechooser'),
+          page.locator('div[role="dialog"] button', { hasText: 'Load splits…' }).click(),
+        ]);
+        await chooser.setFiles(filePath);
+        await page.waitForTimeout(500);
+        break;
+      }
+
+      case 'setGroupBy': {
+        // The "Group by" <select> has no id/aria-label (main.ts makeSelect) —
+        // find it via its preceding "Group by:" label span, a stable sibling
+        // relationship set up at construction (groupByControls.push(label, select)).
+        const label = args[0];
+        await page.evaluate((optionLabel) => {
+          const spans = [...document.querySelectorAll('span')];
+          const groupBySpan = spans.find(s => s.textContent?.trim() === 'Group by:');
+          if (!groupBySpan) return;
+          const select = groupBySpan.nextElementSibling;
+          if (!select || select.tagName !== 'SELECT') return;
+          const opt = [...select.options].find(o => o.textContent?.trim().startsWith(optionLabel));
+          if (opt) { select.value = opt.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+        }, label);
+        await page.waitForTimeout(600);
+        break;
+      }
+
+      case 'clickChartRow': {
+        // Click a specific row inside the Nth .chart-card's canvas — used for
+        // the yield/boxplot in-place group drilldown (row geometry matches
+        // chartShell.ts PADDING=12 and render.ts ROW_HEIGHT=24/ROW_GAP=5).
+        const cardIdx = args[0] ?? 0;
+        const rowIdx = args[1] ?? 0;
+        const cards = await page.$$('.chart-card');
+        if (!cards[cardIdx]) break;
+        const canvas = await cards[cardIdx].$('canvas');
+        if (!canvas) break;
+        const box = await canvas.boundingBox();
+        if (!box) break;
+        const PADDING = 12, ROW_HEIGHT = 24, ROW_GAP = 5;
+        const y = box.y + PADDING + rowIdx * (ROW_HEIGHT + ROW_GAP) + ROW_HEIGHT / 2;
+        const x = box.x + box.width / 2;
+        await page.mouse.click(x, y);
+        await page.waitForTimeout(500);
+        break;
+      }
 
       case 'expandLogPanel':
         await page.click('#log-toggle');

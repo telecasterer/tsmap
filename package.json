@@ -1,7 +1,7 @@
 {
   "name": "tsmap",
   "private": true,
-  "version": "0.1.16",
+  "version": "0.1.17",
   "type": "module",
   "scripts": {
     "build:guide": "node scripts/build-user-guide.mjs",
@@ -27,12 +27,13 @@
     "install-bin": "ln -sf $PWD/target/release/tsmap ~/.local/bin/tsmap",
     "wmap:link": "npm link @paulrobins/wafermap && echo '\\n  ✓ linked to ../wmap — run `npm run build` in ../wmap after each change so dist/ refreshes. Unlink before releasing: npm run wmap:unlink'",
     "wmap:unlink": "npm unlink @paulrobins/wafermap && npm install @paulrobins/wafermap && echo '\\n  ✓ unlinked — restored published wmap from npm'",
+    "screenshots:data": "python3 scripts/generate_test_suite.py",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "screenshots:only": "node scripts/capture-screenshots.mjs --only"
   },
   "dependencies": {
     "@paulrobins/testdata-parser": "^0.4.0",
-    "@paulrobins/wafermap": "^0.17.0",
+    "@paulrobins/wafermap": "^0.18.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",

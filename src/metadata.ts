@@ -57,6 +57,7 @@ interface FieldMeta {
 // them. Edit this table freely — no parser change needed.
 const FIELD_META: Record<string, FieldMeta> = {
   // High-value faceting axes, shown first.
+  splitLabel: { label: 'Split',       facet: true },
   lotId:      { label: 'Lot',         facet: true },
   sublotId:   { label: 'Sublot',      facet: true },
   partType:   { label: 'Part type',   facet: true },

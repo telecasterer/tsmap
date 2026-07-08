@@ -4,7 +4,7 @@
 
 import { getColorScheme } from '@paulrobins/wafermap/renderer';
 import type { BoxplotDatum, TestOption } from './types';
-import { cardShell, cssVar, formatValue, trackObserver, isInModal, PADDING, VALUE_WIDTH } from './chartShell';
+import { cardShell, cssVar, formatValue, trackObserver, isInModal, makeBackButton, PADDING, VALUE_WIDTH } from './chartShell';
 
 const BOX_ROW_HEIGHT = 24;
 const BOX_ROW_GAP = 5;
@@ -29,16 +29,37 @@ export interface BoxplotPanelOptions {
   onOpen: (waferIndex: number) => void;
   savePng?: (blob: Blob, stem: string) => void;
   getHeaderLines?: () => { title: string; subtitle: string };
+  /**
+   * In-place drill-down: when set, a group row (one with `waferIndices` — see
+   * `BoxplotDatum`) switches `getData` to `getDrillData(groupLabel, testNumber)`
+   * and shows a back button; clicking it calls `onDrillChange(null)` and
+   * reverts to the overview `getData`. `null` means overview.
+   */
+  drillGroup?: string | null;
+  getDrillData?: (groupLabel: string, testNumber: number) => BoxplotDatum[];
+  onDrillChange?: (groupLabel: string | null) => void;
+  drillTitle?: (groupLabel: string) => string;
+  /** The active facet's human label (e.g. "lot", "temperature"), used in the
+   * overview click hint ("or a <label>'s box to see it by wafer"). Defaults
+   * to 'group' when grouping is available but the caller doesn't supply one. */
+  groupLabelText?: string;
 }
 
 export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
-  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onToggleShowTrend, onOpen } = options;
-  const { card, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
+  const { title, testOptions, colorScheme, getData, getTestMeta, onStateChange, onToggleLogScale, onToggleAxisIncludesLimits, onToggleShowTrend, onOpen, getDrillData, onDrillChange, drillTitle, groupLabelText = 'group' } = options;
+  const { card, heading, controlsRow, body } = cardShell(title, options.savePng, options.getHeaderLines);
 
   let activeTest = options.selectedTestNumber ?? testOptions[0]?.testNumber ?? null;
   let logScale = options.logScale;
   let axisIncludesLimits = options.axisIncludesLimits;
   let showTrend = options.showTrend;
+  let drillGroup = options.drillGroup ?? null;
+  let backBtn: HTMLElement | null = null;
+
+  function currentData(): BoxplotDatum[] {
+    if (drillGroup !== null && getDrillData && activeTest !== null) return getDrillData(drillGroup, activeTest);
+    return activeTest !== null ? getData(activeTest) : [];
+  }
 
   const select = document.createElement('select');
   select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;max-width:240px;';
@@ -106,9 +127,30 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
   controlsRow.appendChild(trendLabel);
 
   const hint = document.createElement('div');
-  hint.textContent = 'Click a wafer\'s box to open it · box = Q1–Q3, line = median, whiskers = min/max';
   hint.style.cssText = `color:${cssVar('--text-muted')};font-size:11px;margin-bottom:6px;`;
   card.insertBefore(hint, body);
+
+  // Sync the back button + hint text + heading to the current drillGroup state.
+  // Called on construction and after every drill open/close (never a grid rebuild).
+  function syncDrillChrome() {
+    hint.textContent = drillGroup !== null
+      ? 'Click a wafer\'s box to open it · box = Q1–Q3, line = median, whiskers = min/max'
+      : `Click a wafer's box to open it, or a ${groupLabelText}'s box to see it by wafer · box = Q1–Q3, line = median, whiskers = min/max`;
+    if (drillGroup !== null && !backBtn) {
+      backBtn = makeBackButton(() => {
+        drillGroup = null;
+        onDrillChange?.(null);
+        syncDrillChrome();
+        rebuildBody();
+      });
+      controlsRow.appendChild(backBtn);
+    } else if (drillGroup === null && backBtn) {
+      backBtn.remove();
+      backBtn = null;
+    }
+    heading.textContent = drillGroup !== null && drillTitle ? drillTitle(drillGroup) : title;
+  }
+  syncDrillChrome();
 
   function rebuildBody() {
     body.innerHTML = '';
@@ -120,7 +162,7 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
       return;
     }
 
-    const data = getData(activeTest);
+    const data = currentData();
     const { unit, limitLow, limitHigh } = getTestMeta(activeTest);
 
     if (data.every(d => d.count === 0)) {
@@ -342,7 +384,9 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
       if (row >= 0 && data[row].count > 0) {
         const d = data[row];
         const cardRect = card.getBoundingClientRect();
-        tt.innerHTML = `<strong>${d.label}</strong> (${d.count} dies)<br>max ${fmt(d.max)}<br>q3 ${fmt(d.q3)}<br>median ${fmt(d.median)}<br>q1 ${fmt(d.q1)}<br>min ${fmt(d.min)}<br><em>click to open this wafer</em>`;
+        const isGroup = drillGroup === null && d.waferIndices !== undefined && d.waferIndices.length > 1;
+        const clickLine = isGroup ? `click to see this ${groupLabelText} by wafer` : 'click to open this wafer';
+        tt.innerHTML = `<strong>${d.label}</strong> (${d.count} dies)<br>max ${fmt(d.max)}<br>q3 ${fmt(d.q3)}<br>median ${fmt(d.median)}<br>q1 ${fmt(d.q1)}<br>min ${fmt(d.min)}<br><em>${clickLine}</em>`;
         tt.style.display = 'block';
         tt.style.left = `${e.clientX - cardRect.left + 14}px`;
         tt.style.top = `${e.clientY - cardRect.top + 14}px`;
@@ -353,7 +397,18 @@ export function renderBoxplotPanel(options: BoxplotPanelOptions): HTMLElement {
       const rect = canvas.getBoundingClientRect();
       const row = rowAt(e.clientY - rect.top);
       if (row === -1 || data[row].count === 0) return;
-      onOpen(data[row].waferIndex);
+      const d = data[row];
+      if (drillGroup === null && d.waferIndices !== undefined && d.waferIndices.length > 1 && getDrillData) {
+        drillGroup = d.label;
+        onDrillChange?.(drillGroup);
+        syncDrillChrome();
+        rebuildBody();
+        return;
+      }
+      // A group of exactly one wafer skips the detail hop and opens that wafer
+      // directly — waferIndex is the -1 sentinel for a group row, so use
+      // waferIndices[0] (the real global index) instead when present.
+      onOpen(d.waferIndices?.[0] ?? d.waferIndex);
     });
 
     trackObserver(new ResizeObserver(() => draw())).observe(card);

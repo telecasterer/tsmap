@@ -258,6 +258,10 @@ describe('buildTestBoxplotDataCombined', () => {
     expect(a.median).toBe(3);
     expect(a.max).toBe(5);
     expect(a.waferIndex).toBe(-1); // a group is not a single wafer
+    expect(a.waferIndices).toEqual([0, 1]); // W0 and W1 pooled into group A (drill-down membership)
+
+    const b = out.find(d => d.label === 'B')!;
+    expect(b.waferIndices).toEqual([2]);
   });
 });
 

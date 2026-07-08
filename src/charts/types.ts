@@ -20,7 +20,10 @@ export interface ChartSelection {
 
 /** Five-number summary of one wafer's values for a single test — drives a box-plot row. */
 export interface BoxplotDatum {
+  /** -1 for a group row (combined mode); the wafer's index otherwise. */
   waferIndex: number;
+  /** Set only on a group row (combined mode) — every wafer index pooled into it. */
+  waferIndices?: number[];
   label: string;
   min: number;
   q1: number;

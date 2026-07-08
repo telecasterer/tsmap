@@ -75,10 +75,15 @@ export function showTestSelectorOverlay(
 
   // ── Overlay shell ─────────────────────────────────────────────────────────
 
+  // z-modal: this overlay is shown both pre-render (initial load) and
+  // post-render ("Filter tests…" re-invokes it over an already-rendered
+  // wafer map/gallery) — it must clear wmap's own toolbar band (--wmap-z,
+  // default 6000) in the post-render case, same as any other app modal
+  // opened over a rendered map. See the z-index note in CLAUDE.md.
   const overlay = document.createElement('div');
   overlay.id = 'tsmap-test-selector-overlay';
   overlay.style.cssText = [
-    'position:fixed', 'inset:0', 'z-index:var(--z-overlay)',
+    'position:fixed', 'inset:0', 'z-index:var(--z-modal)',
     'background:rgba(0,0,0,0.5)',
     'display:flex', 'align-items:center', 'justify-content:center',
   ].join(';');

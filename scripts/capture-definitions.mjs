@@ -26,15 +26,21 @@ import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '../../');
-// TD() returns an absolute path — the capture runner maps /testdata/<name> on the server.
+// TD() returns an absolute path — the capture runner maps /testdata/<name> on the
+// server. testdata/ is gitignored, generated fixtures (`npm run screenshots:data`).
 const TD   = (f) => `${ROOT}/testdata/${f}`;
+// SD() is the same for sample_data/ — small, git-committed fixtures (Rust parser
+// tests also read from here). Used for anything the generic testdata/ suite
+// doesn't cover, e.g. the corner-lot wafer-splits demo.
+const SD   = (f) => `${ROOT}/sample_data/${f}`;
 
 // ─── Shared helpers used in screenshotFn entries ──────────────────────────────
 // screenshotFn receives (page, outFile, baseUrl) — baseUrl is the static server origin.
 
 async function injectFileAndWaitForSelector(page, filePath, selector, baseUrl, timeout = 20000) {
   const name     = filePath.split('/').pop();
-  const fetchUrl = `${baseUrl}/testdata/${name}`;
+  const urlPrefix = filePath.startsWith(`${ROOT}/sample_data/`) ? '/sample_data/' : '/testdata/';
+  const fetchUrl = `${baseUrl}${urlPrefix}${name}`;
 
   await page.waitForFunction(() => !!document.getElementById('open-btn'), { timeout: 10000 });
   await page.evaluate(async ([url, n]) => {
@@ -98,116 +104,15 @@ async function pinToolbar(page) {
 
 export const CAPTURES = [
 
-  // ── §2 Empty state ────────────────────────────────────────────────────────
-  {
-    file: 'empty-state',
-    group: 'loading',
-    description: 'App before any file is loaded — empty state with icon and prompt',
-  },
-
-  // ── §2 Gallery overview after load ────────────────────────────────────────
-  {
-    file: 'overview',
-    group: 'loading',
-    description: 'App with small.stdf loaded — 3-wafer gallery, toolbar visible',
-    setup: [
-      ['loadFile', TD('small.stdf')],
-      ['waitForOverlay', '#tsmap-test-selector-overlay'],
-      ['dismissSelectorSelectNone'],
-      ['wait', 400],
-      ['hoverMapCard', 0],
-    ],
-  },
-
-  // ── §3 Column mapping: wide-format CSV ────────────────────────────────────
-  {
-    file: 'column-mapping',
-    group: 'loading',
-    description: 'CSV column mapping overlay (wide format) — small.csv',
-    selector: '#tsmap-mapping-overlay',
-    setup: [
-      ['loadFile', TD('small.csv')],
-      ['waitForOverlay', '#tsmap-mapping-overlay'],
-      ['wait', 200],
-    ],
-  },
-
-  // ── §3 Column mapping: long-format CSV ────────────────────────────────────
-  {
-    file: 'column-mapping-long',
-    group: 'loading',
-    description: 'CSV column mapping overlay showing long-format roles — correlated_long.csv',
-    selector: '#tsmap-mapping-overlay',
-    setup: [
-      ['loadFile', TD('correlated_long.csv')],
-      ['waitForOverlay', '#tsmap-mapping-overlay'],
-      ['wait', 200],
-    ],
-  },
-
-  // ── §4 Test selector: full overlay ────────────────────────────────────────
-  {
-    file: 'test-selector',
-    group: 'loading',
-    description: 'Test selector overlay — many_tests.stdf (250 tests, >200 threshold)',
-    selector: '#tsmap-test-selector-overlay',
-    setup: [
-      ['loadFile', TD('many_tests.stdf')],
-      ['waitForOverlay', '#tsmap-test-selector-overlay'],
-      ['wait', 400],
-    ],
-  },
-
-  // ── §4 Test selector: search active ───────────────────────────────────────
-  {
-    file: 'test-selector-search',
-    group: 'loading',
-    description: 'Test selector with search text filtering the list',
-    screenshotFn: async (page, outFile, baseUrl) => {
-      await injectFileAndWaitForSelector(page, TD('many_tests.stdf'), '#tsmap-test-selector-overlay', baseUrl);
-      await page.waitForTimeout(400);
-      const searchInput = await page.$('#tsmap-test-selector-overlay input[type="text"]');
-      if (searchInput) { await searchInput.click(); await page.keyboard.type('test_01'); }
-      await page.waitForTimeout(400);
-      const el = await page.$('#tsmap-test-selector-overlay');
-      await el.screenshot({ path: outFile });
-    },
-  },
-
-  // ── §4 Test selector: range input in use ──────────────────────────────────
-  {
-    file: 'test-selector-range',
-    group: 'loading',
-    description: 'Test selector with a numeric range typed in the range input',
-    screenshotFn: async (page, outFile, baseUrl) => {
-      await injectFileAndWaitForSelector(page, TD('many_tests.stdf'), '#tsmap-test-selector-overlay', baseUrl);
-      await page.waitForTimeout(400);
-      const inputs = await page.$$('#tsmap-test-selector-overlay input[type="text"]');
-      if (inputs[1]) { await inputs[1].click(); await page.keyboard.type('1000-1049'); }
-      await page.waitForTimeout(300);
-      const el = await page.$('#tsmap-test-selector-overlay');
-      await el.screenshot({ path: outFile });
-    },
-  },
-
-  // ── §5 Wafer rename overlay ────────────────────────────────────────────────
-  {
-    file: 'rename-overlay',
-    group: 'loading',
-    description: 'Wafer rename overlay — shown after small.stdf load (W01/W02/W03 auto-IDs)',
-    screenshotFn: async (page, outFile, baseUrl) => {
-      await injectFileAndWaitForSelector(page, TD('small.stdf'), '#tsmap-test-selector-overlay', baseUrl);
-      await page.waitForTimeout(400);
-      await dismissSelector(page);
-      const renameEl = await page.$('#tsmap-rename-overlay');
-      if (renameEl) {
-        await page.waitForTimeout(200);
-        await renameEl.screenshot({ path: outFile });
-      } else {
-        await page.screenshot({ path: outFile, fullPage: false });
-      }
-    },
-  },
+  // NOTE: §2 (empty state, adding files/append-confirm), §2.1 (wafer rename),
+  // §3 (column mapping), §4 (test selector), and §9 (log panel) all use live
+  // HTML mockups in docs/user-guide.md instead of screenshots (see CLAUDE.md
+  // "Keeping the guide in sync with the app") — screenshots are stripped from
+  // the in-app modal build entirely, so a mockup is the only way those sections
+  // get any visual in-app. Capture definitions for those states were removed
+  // 2026-07-08 rather than left to rot unreferenced; if a mockup ever needs a
+  // docs-site-only companion screenshot, add it back deliberately alongside a
+  // markdown ![]() reference, not as a standing unused target.
 
   // ── §5.1 Single wafer map — hard bin, summary panel open ─────────────────
   // Use correlated.stdf (W01..W05 IDs don't trigger rename overlay)
@@ -291,13 +196,18 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6 Charts overview — all 6 panels visible ─────────────────────────────
+  // ── §7 Charts overview — all 6 panels visible ─────────────────────────────
   {
     file: 'charts-overview',
     group: 'charts',
     description: 'Charts view — correlated.stdf, full 6-panel grid',
-    viewport: { width: 1280, height: 1800 },
-    fullPage: true,
+    // #map-container.charts scrolls internally (overflow-y: auto), not the
+    // document — Playwright's fullPage:true only extends a real document
+    // scroll, so it silently no-ops here. Use a fixed viewport tall enough to
+    // fit all 6 panels without scrolling instead (found empirically: a taller
+    // wafer count needs more — see the splits-group definitions below, which
+    // use 2300 for a 13-wafer lot).
+    viewport: { width: 1600, height: 2000 },
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -307,11 +217,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.1 Yield by wafer — expand modal ───────────────────────────────────
+  // ── §7.1 Yield by wafer — expand modal ───────────────────────────────────
   {
     file: 'chart-yield',
     group: 'charts',
     description: 'Yield by wafer — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -321,11 +232,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.2 Bin pareto — expand modal ───────────────────────────────────────
+  // ── §7.2 Bin pareto — expand modal ───────────────────────────────────────
   {
     file: 'chart-pareto',
     group: 'charts',
     description: 'Bin pareto — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -335,11 +247,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.3 Boxplot — expand modal ──────────────────────────────────────────
+  // ── §7.3 Boxplot — expand modal ──────────────────────────────────────────
   {
     file: 'boxplot',
     group: 'charts',
     description: 'Test value distribution boxplot — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -349,11 +262,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.4 Histogram — expand modal ────────────────────────────────────────
+  // ── §7.4 Histogram — expand modal ────────────────────────────────────────
   {
     file: 'histogram',
     group: 'charts',
     description: 'Value histogram — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -363,11 +277,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.5 Correlation matrix — expand modal ───────────────────────────────
+  // ── §7.5 Correlation matrix — expand modal ───────────────────────────────
   {
     file: 'correlation',
     group: 'charts',
     description: 'Test correlation matrix — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -377,11 +292,12 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §6.6 Scatter — expand modal ──────────────────────────────────────────
+  // ── §7.6 Scatter — expand modal ──────────────────────────────────────────
   {
     file: 'scatter',
     group: 'charts',
     description: 'Scatter plot — expanded modal, correlated.stdf',
+    selector: '.wmap-modal-box',
     setup: [
       ['loadFile', TD('correlated.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
@@ -391,18 +307,90 @@ export const CAPTURES = [
     ],
   },
 
-  // ── §8 Log panel ──────────────────────────────────────────────────────────
+  // ── §6 Wafer splits ────────────────────────────────────────────────────────
+  // Uses sample_data/PVT-LOT-05.stdf (a 13-wafer PVT corner lot generated by
+  // scripts/generate_stdf_corner_lot.py) + its companion _splits.csv — the
+  // testdata/ suite has no split-relevant fixture, and this one is small and
+  // git-committed already (see SD() above).
+
   {
-    file: 'log-panel',
-    group: 'ui',
-    description: 'Log panel expanded — showing parse info messages from small.stdf',
-    selector: '#log-bar',
+    file: 'splits-modal',
+    group: 'splits',
+    description: 'Splits dialog just opened — no assignments yet',
+    viewport: { width: 1600, height: 1000 },
+    selector: 'div[role="dialog"]',
     setup: [
-      ['loadFile', TD('small.stdf')],
+      ['loadFile', SD('PVT-LOT-05.stdf')],
       ['waitForOverlay', '#tsmap-test-selector-overlay'],
-      ['dismissSelectorSelectNone'],
-      ['expandLogPanel'],
-      ['wait', 200],
+      ['dismissSelector'],
+      ['openSplitsDialog'],
+    ],
+  },
+
+  {
+    file: 'splits-modal-loaded',
+    group: 'splits',
+    description: 'Splits dialog after loading PVT-LOT-05_splits.csv — TT/FF/SS/FS/SF assigned',
+    viewport: { width: 1600, height: 1000 },
+    selector: 'div[role="dialog"]',
+    setup: [
+      ['loadFile', SD('PVT-LOT-05.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['openSplitsDialog'],
+      ['loadSplitsFile', SD('PVT-LOT-05_splits.csv')],
+    ],
+  },
+
+  {
+    file: 'gallery-splits',
+    group: 'splits',
+    description: 'Gallery with split suffixes shown on every card (" · TT" etc.)',
+    viewport: { width: 1600, height: 1300 },
+    setup: [
+      ['loadFile', SD('PVT-LOT-05.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['openSplitsDialog'],
+      ['loadSplitsFile', SD('PVT-LOT-05_splits.csv')],
+      ['closeSplitsDialog'],
+      ['wait', 500],
+    ],
+  },
+
+  {
+    file: 'charts-grouped-by-split',
+    group: 'splits',
+    description: 'Charts view grouped by Split — all 6 panels, TT/FF/SS/FS/SF corners',
+    viewport: { width: 1600, height: 2300 },
+    setup: [
+      ['loadFile', SD('PVT-LOT-05.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['openSplitsDialog'],
+      ['loadSplitsFile', SD('PVT-LOT-05_splits.csv')],
+      ['closeSplitsDialog'],
+      ['openCharts'],
+      ['setGroupBy', 'Split'],
+      ['scroll', 0, 0],
+    ],
+  },
+
+  {
+    file: 'yield-group-drilldown',
+    group: 'splits',
+    description: 'Yield panel drilled into a single Split — per-wafer bars + ← Back',
+    viewport: { width: 1600, height: 1000 },
+    setup: [
+      ['loadFile', SD('PVT-LOT-05.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['openSplitsDialog'],
+      ['loadSplitsFile', SD('PVT-LOT-05_splits.csv')],
+      ['closeSplitsDialog'],
+      ['openCharts'],
+      ['setGroupBy', 'Split'],
+      ['clickChartRow', 0, 0],
     ],
   },
 

@@ -1,9 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { getSplitLabel, setSplitLabel, clearAllSplits, listSplitValues, parseSplitsCsv, formatSplitsCsv, waferDisplayLabel, SPLIT_FIELD_KEY } from './splits';
+import { getSplitLabel, setSplitLabel, clearAllSplits, listSplitValues, parseSplitsCsv, formatSplitsCsv, waferDisplayLabel, splitsFingerprint, SPLIT_FIELD_KEY } from './splits';
 import type { WaferData } from './types';
 
 function wafer(id: string, fields?: Array<{ key: string; value: string }>): WaferData {
   return { waferId: id, results: [], fields };
+}
+
+/** A wafer stamped with lot-level provenance (source.fields), as real
+ * STDF/ATDF loads produce — distinct from `wafer()`'s per-wafer-only fields,
+ * since splitsFingerprint reads lotId/partType via facetValueOf, which
+ * prefers source.fields. */
+function waferWithLot(id: string, sourceFile: string, lotId?: string, partType?: string): WaferData {
+  const fields = [
+    ...(lotId !== undefined ? [{ key: 'lotId', value: lotId }] : []),
+    ...(partType !== undefined ? [{ key: 'partType', value: partType }] : []),
+  ];
+  return { waferId: id, results: [], source: { sourceFile, fields } };
 }
 
 describe('getSplitLabel / setSplitLabel', () => {
@@ -110,6 +122,44 @@ describe('listSplitValues', () => {
     const wafers = [wafer('W1'), wafer('W2')];
     setSplitLabel(wafers[1], 'TT');
     expect(listSplitValues(wafers)).toEqual(['TT']);
+  });
+});
+
+describe('splitsFingerprint', () => {
+  it('is identical for the same lot reloaded from a differently named/sized file', () => {
+    const first = [
+      waferWithLot('W01', 'lot_25c.stdf', 'LOT1', 'CHIP-A'),
+      waferWithLot('W02', 'lot_25c.stdf', 'LOT1', 'CHIP-A'),
+    ];
+    const second = [
+      waferWithLot('W01', 'lot_85c.stdf', 'LOT1', 'CHIP-A'),
+      waferWithLot('W02', 'lot_85c.stdf', 'LOT1', 'CHIP-A'),
+    ];
+    expect(splitsFingerprint(first)).toBe(splitsFingerprint(second));
+  });
+
+  it('differs for two unrelated lots that happen to reuse the same wafer IDs', () => {
+    const lotA = [waferWithLot('W01', 'a.stdf', 'LOT-A'), waferWithLot('W02', 'a.stdf', 'LOT-A')];
+    const lotB = [waferWithLot('W01', 'b.stdf', 'LOT-B'), waferWithLot('W02', 'b.stdf', 'LOT-B')];
+    expect(splitsFingerprint(lotA)).not.toBe(splitsFingerprint(lotB));
+  });
+
+  it('differs when part type differs but lot ID and wafer ID match', () => {
+    const a = [waferWithLot('W01', 'x.stdf', 'LOT1', 'CHIP-A')];
+    const b = [waferWithLot('W01', 'x.stdf', 'LOT1', 'CHIP-B')];
+    expect(splitsFingerprint(a)).not.toBe(splitsFingerprint(b));
+  });
+
+  it('falls back to wafer ID alone without throwing when no lot metadata is present', () => {
+    const wafers = [wafer('W01'), wafer('W02')];
+    expect(() => splitsFingerprint(wafers)).not.toThrow();
+    expect(splitsFingerprint(wafers)).toBe(splitsFingerprint([wafer('W02'), wafer('W01')]));
+  });
+
+  it('is independent of wafer order', () => {
+    const a = [waferWithLot('W01', 'x.stdf', 'LOT1'), waferWithLot('W02', 'x.stdf', 'LOT1')];
+    const b = [waferWithLot('W02', 'x.stdf', 'LOT1'), waferWithLot('W01', 'x.stdf', 'LOT1')];
+    expect(splitsFingerprint(a)).toBe(splitsFingerprint(b));
   });
 });
 

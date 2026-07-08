@@ -27,7 +27,7 @@ import type { ChartPanel } from './charts/render';
 import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
 import { buildFacetTable, facetValueOf, NONE_VALUE } from './metadata';
 import { showSplitsModal } from './splitsUI';
-import { getSplitLabel, setSplitLabel, waferDisplayLabel } from './splits';
+import { getSplitLabel, setSplitLabel, waferDisplayLabel, splitsFingerprint } from './splits';
 import type { BinType, BoxplotDatum, ChartDatum, YieldSortBy } from './charts/types';
 import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
 
@@ -281,15 +281,12 @@ function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof b
 // ── Wafer split persistence ──────────────────────────────────────────────────
 // Splits are just a per-wafer metadata field (see splits.ts) that CSV
 // save/load already round-trips explicitly. This is a convenience layer on
-// top: re-opening the SAME set of wafers restores prior in-app assignments
-// without the user re-loading a CSV every time. Keyed by a fingerprint of the
-// loaded wafer ID set so a different lot never inherits stale assignments.
+// top: re-opening the SAME lot restores prior in-app assignments without the
+// user re-loading a CSV every time. Keyed by splitsFingerprint (splits.ts) —
+// lot ID + wafer ID, not the source file — so a different lot never inherits
+// stale assignments.
 
 const SPLITS_LS_KEY = 'tsmap:wafer-splits';
-
-function splitsFingerprint(wafers: WaferData[]): string {
-  return wafers.map(w => w.waferId).slice().sort().join('\x00');
-}
 
 /** Applies any saved splits for this exact wafer set and reports whether it
  * applied anything — callers must surface that (never apply silently), since
@@ -1761,7 +1758,7 @@ helpBtn.addEventListener('click', () => {
       // Images are loaded from GitHub Pages, not bundled — probe reachability
       // before promoting them (see guideImages.ts) so offline users get a
       // clean text-only guide instead of broken-image icons.
-      applyGuideImagePolicy(guide, url => platform.openExternal(url));
+      applyGuideImagePolicy(guide, url => platform.openExternal(url), log);
     },
   });
 });

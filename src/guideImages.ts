@@ -39,6 +39,7 @@ async function probeGuideReachability(timeoutMs = 1500): Promise<boolean> {
 export async function applyGuideImagePolicy(
   root: HTMLElement,
   openExternal: (url: string) => void,
+  onLog: (level: 'info' | 'warn' | 'error', message: string) => void,
 ): Promise<void> {
   const images = Array.from(root.querySelectorAll<HTMLImageElement>('img[data-src]'));
   if (images.length === 0) return;
@@ -46,6 +47,7 @@ export async function applyGuideImagePolicy(
   const reachable = await probeGuideReachability();
 
   if (!reachable) {
+    onLog('info', 'User guide: could not reach telecasterer.github.io — showing text-only guide.');
     for (const img of images) img.remove();
     const note = document.createElement('div');
     note.className = 'tsmap-guide-offline-note';
@@ -61,8 +63,12 @@ export async function applyGuideImagePolicy(
     return;
   }
 
+  onLog('info', `User guide: loading ${images.length} image${images.length !== 1 ? 's' : ''} from telecasterer.github.io.`);
   for (const img of images) {
-    img.onerror = () => img.remove();
+    img.onerror = () => {
+      img.remove();
+      onLog('warn', `User guide: image failed to load — ${img.dataset.src}`);
+    };
     img.src = img.dataset.src!;
   }
 }

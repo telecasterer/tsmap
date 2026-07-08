@@ -6,6 +6,7 @@
 // enumerating known values, and CSV round-trip.
 
 import type { WaferData } from './types';
+import { facetValueOf } from './metadata';
 
 export const SPLIT_FIELD_KEY = 'splitLabel';
 
@@ -45,6 +46,22 @@ export function setSplitLabel(wafer: WaferData, label: string | undefined): void
  * modal — distinct from clearing just the currently-selected rows). */
 export function clearAllSplits(wafers: WaferData[]): void {
   for (const w of wafers) setSplitLabel(w, undefined);
+}
+
+/** Identity key for a wafer set, used to auto-restore split assignments when
+ * re-opening the same lot later (see `loadSavedSplits`/`saveSplits` in
+ * main.ts). Keyed on lot ID + part type + wafer ID — the physical wafer's
+ * identity — rather than the source file, since a single lot is often split
+ * across several files (e.g. one per test temperature) that should all
+ * restore the same assignments despite different file names/sizes. Falls
+ * back to wafer ID alone when no lot metadata is present (CSV/JSON with
+ * nothing mapped) — the same weaker guarantee as before, but only for
+ * sources with no lot identity to key on in the first place. */
+export function splitsFingerprint(wafers: WaferData[]): string {
+  return wafers
+    .map(w => `${facetValueOf(w, 'lotId') ?? ''}${facetValueOf(w, 'partType') ?? ''}${w.waferId}`)
+    .sort()
+    .join(' ');
 }
 
 /** Distinct split values currently in use, first-seen order — for populating

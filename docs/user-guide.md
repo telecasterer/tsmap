@@ -523,8 +523,10 @@ a colleague. The format is a simple two-column CSV:
 
 ### 6.4 Restoring splits automatically
 
-tsmap remembers split assignments per exact set of wafer IDs, so re-opening the *same* file
-later restores them without reloading the CSV. This restore is never silent: if any
+tsmap remembers split assignments per lot ID + wafer ID (plus part type, if present) — the
+physical wafer's identity, not the file it arrived in — so re-opening the *same lot* later
+restores them without reloading the CSV, even if that lot is split across several files
+(for example, one file per test temperature). This restore is never silent: if any
 assignment is found for the wafers you just loaded, tsmap logs a message and automatically
 opens the Splits dialog so you can see exactly what was restored, edit it, or clear it —
 rather than silently changing chart groupings and map labels behind your back.

@@ -35,11 +35,7 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
     'background:none;color:var(--text-secondary);cursor:pointer;font-size:13px',
   ].join(';');
 
-  // Assigned via the `openModal` return value below — only read inside event
-  // handlers, which can never fire before that assignment completes.
-  let modalHandle: ReturnType<typeof openModal>;
-
-  modalHandle = openModal({
+  const modalHandle = openModal({
     title: `Wafer splits (${wafers.length} wafer${wafers.length !== 1 ? 's' : ''})`,
     sizing: 'content',
     bodyOverflow: 'hidden',

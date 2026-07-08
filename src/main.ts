@@ -1496,12 +1496,15 @@ if (isTauri) {
   // so the browser treats it as a user gesture (async calls block the picker).
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
   let appendOnPick = false;
+  // Captured in the click handler, BEFORE setBusy overwrites fileLabel — by
+  // the time `change`/`cancel` fire, fileLabel already reads the busy message,
+  // so reading it there would restore the wrong text.
+  let prevLabelOnPick = '';
 
   fileInput.addEventListener('change', async () => {
-    const prevLabel = fileLabel.textContent ?? '';
     const rawFiles = Array.from(fileInput.files ?? []);
     fileInput.value = '';  // reset so same file can be re-picked
-    if (rawFiles.length === 0) { setIdle(prevLabel); return; }
+    if (rawFiles.length === 0) { setIdle(prevLabelOnPick); return; }
     busy = false;
     const files = await Promise.all(rawFiles.map(async f => ({
       name: f.name,
@@ -1510,9 +1513,17 @@ if (isTauri) {
     handleFiles(files, appendOnPick);
   });
 
+  // Unlike `change`, the native file input fires no event at all when the
+  // dialog is dismissed without picking a file (Cancel / Esc / the dialog's
+  // own close button) — without this listener, `busy` stays true forever and
+  // the toolbar is stuck showing "Waiting for file selection…". `cancel`
+  // (Chrome 113+, Firefox 121+, Safari 16.4+) fires in exactly that case.
+  fileInput.addEventListener('cancel', () => setIdle(prevLabelOnPick));
+
   openBtn.addEventListener('click', () => {
     if (busy) return;
     appendOnPick = false;
+    prevLabelOnPick = fileLabel.textContent ?? '';
     setBusy('Waiting for file selection…');
     fileInput.click();
   });
@@ -1520,6 +1531,7 @@ if (isTauri) {
   addBtn.addEventListener('click', () => {
     if (busy) return;
     appendOnPick = true;
+    prevLabelOnPick = fileLabel.textContent ?? '';
     setBusy('Waiting for file selection…');
     fileInput.click();
   });

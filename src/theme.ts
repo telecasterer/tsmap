@@ -82,10 +82,15 @@ export function initTheme(): void {
   setTheme(getTheme());
   // In 'auto', an OS light/dark flip changes colours with no attribute change —
   // notify listeners so the canvas re-resolves. (wmap also listens internally,
-  // but tsmap's own charts/tooltip read cssVar at build time and need the nudge.)
+  // but tsmap's own modal/menuSelect chrome reads cssVar at build time and need the nudge.)
   if (typeof matchMedia === 'function') {
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (getTheme() === 'auto') for (const fn of listeners) fn();
     });
   }
+}
+
+/** Read a CSS custom property's current resolved value (e.g. `cssVar('--accent')`). */
+export function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }

@@ -20,7 +20,7 @@ desktop application on Linux, macOS, and Windows, and as a browser app at
 [telecasterer.github.io/tsmap/app/](https://telecasterer.github.io/tsmap/app/).
 
 This guide covers the full workflow: opening files, column mapping, test filtering, reading
-maps, and using the charts view.
+maps, and using the Analysis tab.
 
 ## 1. Supported file formats
 
@@ -72,9 +72,8 @@ browser download nag. For the AppImage, mark it executable first:
 <div class="tsmap-mockup" style="display:flex;align-items:center;gap:12px;padding:6px 12px;background:var(--bg-toolbar);border:1px solid var(--border-strong);border-radius:5px;font-size:13px;margin:8px 0 12px;">
   <span style="background:none;border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-size:12px;padding:3px 10px;">Open file</span>
   <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Add files</span>
+  <span style="display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.64-6.36"/><path d="M3 4v5h5"/><path d="M12 7v5l4 2"/></svg> Recent</span>
   <span style="background:none;border:1px solid var(--border-muted);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Clear</span>
-  <span style="width:1px;height:16px;background:var(--border-mid);flex-shrink:0;"></span>
-  <span style="background:none;border:1px solid var(--border-dim);border-radius:4px;color:var(--text-muted);font-size:12px;padding:3px 10px;opacity:.4;">Charts</span>
   <span style="margin-left:auto;"></span>
   <span style="display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--border-mid);border-radius:4px;color:var(--text-secondary);font-size:12px;padding:2px 8px;height:24px;">Auto (system) <span style="font-size:10px;color:var(--text-muted);">&#9662;</span></span>
   <span style="background:none;color:var(--text-muted);display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span>
@@ -90,10 +89,28 @@ Click **Open file** in the toolbar to open a file picker. You can select one fil
 multiple files at once. On the desktop the picker opens a native OS dialog; in the browser
 it opens the browser file dialog.
 
+### Loading sample data
+
+The empty state has a **Load sample data** button that loads a bundled synthetic lot — 13
+wafers across 5 process corners — through the normal load flow (test selector included), so
+you can see tsmap working before opening your own files. Available on both desktop and
+browser. Its process-corner [splits](#6-wafer-splits) apply automatically, so the loaded
+lot is ready to explore with **Group by → Split** right away.
+
 ### Drag and drop
 
 Drop one or more files anywhere in the window. This is equivalent to selecting them through
 the file picker and is supported on both desktop and browser.
+
+### Recent files
+
+*Desktop only.* The **Recent** button lists the last 8 file sets you've opened, each showing
+when it was last loaded (`Today 14:32`, `Yesterday 09:05`, or a date for older entries).
+Click an entry to reopen it — this replaces the current view the same way **Open file**
+does, so it's not a way to append. Click the **×** next to an entry to remove it from the
+list. Recent is available whenever you have history, whether or not a file is currently
+loaded — not just from the empty state. Not shown in the browser version, since reopening
+requires a native file path that browser file pickers don't provide.
 
 ### Adding files to an existing lot
 
@@ -338,6 +355,15 @@ of all 500 reduces the in-memory dataset by roughly 25×.
 Each test row shows the test number (in dim monospace), the test name, and — where defined
 in the file — the units and spec limits.
 
+### Renaming a test
+
+Click into a test's name to edit it directly — the field looks like plain text until you
+hover or focus it. Press **Enter** or click away to commit the new name; press **Esc** to
+discard the edit and restore the previous name. Renaming only changes the display name —
+nothing in the underlying data file changes — and the new name appears everywhere that test
+is shown: the selector, the map tooltip, and chart axis labels. Renames persist across
+**Filter tests…** re-opens and are included when you **Save list**.
+
 ### Test lists (Save / Load)
 
 The **Save list** and **Load list** buttons let you persist a selection and reuse it across
@@ -423,14 +449,14 @@ a specific *test value*, or fail spec more often there than elsewhere ("the edge
 
 - the panel's per-test Min/Mean/Max statistics (always shown),
 - test-value maps or stacked value maps,
-- the Charts page (boxplots, histograms, scatter, correlation — all independent).
+- the [Analysis tab](#7-analysis-tab) (boxplots, histograms, scatter, correlation — all independent).
 
 Because this regional value pass scales with regions × tests × dies, it is **off by default**
 to keep loads fast. The toggle appears once a file with test values is loaded; switch it on
 and the maps re-render with the extra findings in the panel — the wafer's data is already in
 memory, so this recomputes in place with no reload. Switch it off to remove them. It resets to
-off each time you load a new file, and is disabled in the Charts view (it only affects the
-map's summary panel).
+off each time you load a new file, and is disabled while the Analysis tab is open (it only
+affects the map's summary panel).
 
 ---
 
@@ -440,7 +466,7 @@ A **split** is a name you assign to a wafer that isn't in the file at all — mo
 process corner (`TT`, `FF`, `SS`, `FS`, `SF`), but it can be anything: an experiment
 condition, a test-temperature group, anything you want to compare wafers by that your
 tester didn't record. Once assigned, splits behave exactly like any other metadata field
-in the [Charts view's Group by dropdown](#grouping-charts-by-lot-metadata-or-split) — split-vs-split
+in the [Analysis tab's Group by dropdown](#grouping-by-lot-metadata-or-split) — split-vs-split
 yield, boxplots, histograms, correlation, and scatter all work immediately with no extra
 setup — and they can optionally be shown right on the wafer map/gallery labels too.
 
@@ -495,9 +521,9 @@ is no separate save step, and **Done** just closes the window.
 ### 6.2 Showing splits on the wafer map
 
 The **"Show split in wafer map labels"** checkbox (on by default) appends the split, as
-`W02 · FF`, wherever a wafer's ID is shown outside the Charts view — gallery card headers,
-the single-wafer view, the summary panel's Wafer Id row, and drilldown modal titles. Turn
-it off to see plain wafer IDs again; the underlying assignments are unchanged either way.
+`W02 · FF`, wherever a wafer's ID is shown — gallery card headers, the single-wafer view,
+the summary panel's Wafer Id row, and drilldown modal titles. Turn it off to see plain
+wafer IDs again; the underlying assignments are unchanged either way.
 
 ![Gallery with split suffixes after loading PVT-LOT-05_splits.csv](images/gallery-splits.png)
 
@@ -533,73 +559,75 @@ rather than silently changing chart groupings and map labels behind your back.
 
 ---
 
-## 7. Charts view
+## 7. Analysis tab
 
-Click **Charts** in the toolbar to switch to the charts view — the button relabels itself
-**Maps**; click it again to return. Charts and maps share the same parsed data — switching
-between them does not re-parse.
-
-The charts view is a two-column grid of panels. Each panel is independent: changing a
-dropdown in one panel does not affect others, except that clicking a cell in the correlation
-matrix updates the scatter plot's X and Y test selectors.
+Click **Analysis** in the map toolbar to switch from the wafer map/gallery to a grid of
+statistical panels; click it again to return. Both the single-wafer view and the gallery
+have their own **Analysis** button, so charts are available no matter how many wafers are
+loaded — a single-wafer load simply has nothing to group by, so every panel shows that one
+wafer's own data. The map and the Analysis tab share the same parsed, in-memory data —
+switching between them never re-parses.
 
 Every panel has a **Save PNG** (camera icon) button and an **Expand** (corner-arrows icon)
-button in its header — the same icons wmap uses for these actions. The expand modal can be
-maximized to fill the window (F key) and closes with Esc.
+button in its header. The expand modal can be maximized to fill the window (F key) and
+closes with Esc.
 
-![Charts overview — all six panels](images/charts-overview.png)
+![Analysis tab overview — all panels](images/charts-overview.png)
 
-### Chart colour scheme
+The chart colour palette (bars, boxes, histogram buckets, correlation matrix) follows the
+same colour scheme picker used by the wafer map itself — it isn't a separate chart-only
+setting.
 
-The **Chart colour scheme** dropdown at the top of the page controls the palette used for
-bars, boxes, histogram buckets, and the correlation matrix (Default, Viridis, Greyscale,
-Accessible/Cividis, Plasma, Inferno, Traffic, Thermal, Jet — the same named schemes wmap
-offers for wafer maps). It's independent of the app's light/dark theme and of the bin
-colours used for hard/soft bin legends — this only affects value-encoded chart colouring.
-Your choice is remembered.
-
-### Grouping charts by lot, metadata, or split
+### Grouping by lot, metadata, or split
 
 When more than one distinct value is present for a groupable field — for example you have
 loaded **several lots**, test programs, temperatures, dates, or have [assigned wafer
-splits](#6-wafer-splits) — a **Group by** dropdown appears next to the colour-scheme
-selector. It lists every field that actually varies across the loaded wafers, with the
-number of distinct values.
+splits](#6-wafer-splits) — a **Group by** dropdown appears at the top of the tab. It lists
+every field that actually varies across the loaded wafers, with the number of distinct
+values. (With a single wafer loaded there is nothing to vary, so this control doesn't
+appear.)
 
-Selecting a field re-expresses every chart **per group** (one series/aggregate per lot,
-program, split, …). Each chart does what makes sense for its kind:
+Selecting a field re-expresses the yield, bin, boxplot, histogram, and scatter panels
+**per group** (one series/aggregate per lot, program, split, …). Each panel does what makes
+sense for its kind:
 
-| Chart | Grouped by a field |
+| Panel | Grouped by a field |
 | --- | --- |
 | Yield by wafer | One bar per group — the group's pooled (die-weighted) yield |
-| Bin pareto | Clustered bars — within each bin, one sub-bar per group, with a legend |
+| Hard bin pareto | Replaced by a clustered bin panel — within each bin, one sub-bar per group, with a legend |
+| Process capability | A **Group:** selector restricts the panel to one group at a time |
 | Boxplot | One box per group, pooling all that group's dies |
 | Histogram | Overlaid colour-coded distributions, one per group, with a clickable legend |
-| Correlation matrix | A **Group** selector picks one group; the matrix is computed for that group alone |
+| Correlation matrix | A **Group:** selector picks one group; the matrix is computed for that group alone |
 | Scatter | Points coloured by group (instead of by hard bin), with a click-to-filter legend |
 
 Choose **None** to return to the plain per-wafer/whole-lot view.
 
-![Charts grouped by Split, showing a corner lot's TT/FF/SS/FS/SF corners](images/charts-grouped-by-split.png)
+![Analysis tab grouped by Split, showing a corner lot's TT/FF/SS/FS/SF corners](images/charts-grouped-by-split.png)
 
 **Yield and Boxplot drill in-place, not into a modal.** With a group active, clicking a
 group's bar or box doesn't open a wafer map — it redraws the *same* panel one level down,
-showing that group's individual wafers, with a **← Back** button (next to the sort
-controls) to return to the group overview. Only a wafer-level bar/box (whether reached this
-way, or directly when nothing is grouped) opens the wafer map modal. The hint line under
-the panel title and the hover tooltip both say which action a click will take.
+showing that group's individual wafers, with a **← Back** button to return to the group
+overview. Only a wafer-level bar/box (whether reached this way, or directly when nothing is
+grouped) opens the wafer detail modal. The hint line under the panel title and the hover
+tooltip both say which action a click will take. **Hard/clustered bin pareto bars are not
+clickable** — they summarise counts across wafers, not a single wafer's data.
 
 ![Yield panel drilled into a single Split, with the ← Back button and per-wafer bars](images/yield-group-drilldown.png)
 
 Two more deliberate choices are worth noting:
 
-- **Correlation is never pooled across groups.** Combining lots into one matrix is
-  misleading — between-lot mean shifts can manufacture or hide correlations that do not
-  exist within any single lot. So the matrix always shows one group at a time. If a group
-  has too little variation to compute meaningful correlations, the matrix still renders but
-  its cells are blank and the summary reads "No significant correlations found".
-- **Only the largest 12 groups** are shown individually; any beyond that are folded into a
-  single "… N more" group, so a load with many lots stays readable.
+- **Correlation is never pooled across the chosen group.** Combining lots into one matrix
+  is misleading — between-lot mean shifts can manufacture or hide correlations that do not
+  exist within any single lot. So once you select a **Group by** field, the matrix shows
+  one group at a time, picked via the panel's own **Group:** selector. If a group has too
+  little variation to compute meaningful correlations, the matrix still renders but its
+  cells are blank and the summary reads "No significant correlations found".
+- **Scatter has the same blind spot when ungrouped.** With no **Group by** active, points
+  are coloured by hard bin only, so a load with several lots or part types plots as one
+  undifferentiated cloud — a trend you see there could be a between-group artefact rather
+  than a real relationship. Once a **Group by** field is active, scatter colours every point
+  by group instead (see the table above) — visually separating the groups is itself the fix.
 
 > Grouping is driven by metadata attached to each wafer at load time, plus any [wafer
 > splits](#6-wafer-splits) you've assigned. STDF and ATDF contribute every field present in
@@ -607,7 +635,7 @@ Two more deliberate choices are worth noting:
 > node, operator, and more; CSV and JSON contribute the lot column plus any columns you
 > mapped as metadata. Only fields that actually *vary* across the loaded wafers appear in
 > the dropdown, so if everything shares one value (a single uniform lot with no splits
-> assigned) the **Group by** control is hidden.
+> assigned, or only one wafer loaded) the **Group by** control is hidden.
 
 ### 7.1 Yield by wafer
 
@@ -615,62 +643,67 @@ Two more deliberate choices are worth noting:
 
 Horizontal bar chart showing pass yield per wafer across the lot.
 
-- **Sort** dropdown — Sort bars by yield (descending) or by wafer ID order.
+- **Sort** control — Sort bars by yield (descending) or by wafer/group label.
 - Click a bar to open that wafer's map in a pop-up modal. Close the modal (Esc, the close
-  button, or click outside it) to return to the charts page exactly where you left it.
-- **Grouped:** one bar per group showing the group's pooled, die-weighted yield.
+  button, or click outside it) to return to the Analysis tab exactly where you left it.
+- **Grouped:** one bar per group showing the group's pooled, die-weighted yield; clicking a
+  group's bar drills in-place into its wafers (see above).
 
-### 7.2 Bin pareto
+### 7.2 Hard bin pareto
 
 ![Bin pareto](images/chart-pareto.png)
 
 Failure count by bin across the entire lot, sorted from most to least frequent.
 
-- **Bins** dropdown — Switch between Hard bins and Soft bins.
+- **Bins** control — Switch between Hard bins and Soft bins (ungrouped only).
 - Pass bin appears first and is labelled separately; all other bins are sorted by fail
   count descending.
-- Click a bar to open a stacked-bin map — that bin counted across the wafers that contain it
-  — in a pop-up modal. Close the modal to return to the charts page.
-- **Grouped:** clustered bars — within each bin, one colour-coded sub-bar per group, with a
-  legend. Hover a sub-bar for its count and share of the bin; click it to open that group's
-  wafers in a modal.
+- **Grouped:** replaced by a clustered-bar panel — within each bin, one colour-coded
+  sub-bar per group, with a legend. Hover a sub-bar for its count and share of the bin.
+  Bars are not clickable in either mode.
 
-### 7.3 Test value distribution (boxplot)
+### 7.3 Process capability
+
+Cp/Cpk (short-term) and Pp/Ppk (long-term) capability indices for every parametric test
+that has both an LSL and a USL defined, normalised so LSL=0/USL=1 and sorted worst-Ppk-first.
+Only appears when at least one test in the file has both spec limits set.
+
+- Click a test's box to drive the boxplot and histogram panels below to that same test.
+- **Grouped:** a **Group:** selector restricts the panel to one group's dies at a time.
+
+### 7.4 Test value distribution (boxplot)
 
 ![Boxplot panel](images/boxplot.png)
 
 Per-wafer five-number summary for one parametric test: minimum, Q1, median, Q3, maximum.
 
-- **Test** dropdown — Select which parametric test to plot.
+- **Test** dropdown — Select which parametric test to plot (or click a capability box above).
 - **Log scale** checkbox — Switch the value axis to log scale (useful for leakage currents,
   resistance, etc.).
 - **Axis includes limits** checkbox — Expand the axis to show the LSL and USL spec limits
   if they are defined in the file.
-- **Trend line** checkbox — Connect the per-wafer medians with a line to reveal drift
-  across wafers in lot order (breaks across wafers with no data for the test).
 - Spec limits appear as dashed vertical lines on the plot.
 - Click a wafer's box to open that wafer's test value map in a pop-up modal. Close the modal
-  to return to the charts page.
+  to return to the Analysis tab.
 - Hover a row to see the full five-number summary in a tooltip.
-- **Grouped:** one box per group, pooling all of that group's dies into a single summary.
+- **Grouped:** one box per group, pooling all of that group's dies; clicking a group's box
+  drills in-place into its wafers (see above).
 
-### 7.4 Value histogram
+### 7.5 Value histogram
 
 ![Histogram panel](images/histogram.png)
 
 Distribution of test values bucketed across the measurement range.
 
 - **Test** dropdown — Select which parametric test to show.
-- **Wafer** dropdown — Show data from all wafers combined, or pick one wafer by ID.
 - **Axis includes limits** checkbox — Expand the axis to include spec limits.
 - Spec limits (LSL/USL) appear as dashed vertical lines if defined.
 - A count (Y) axis with gridlines shows the per-bucket die count.
 - **Grouped:** overlaid colour-coded distributions, one per group, sharing the same buckets
   and a numbered Y axis. A legend lists the groups; click one to bring it to the front and
   dim the others (click again to clear). Hover a bucket to see every group's count there.
-  The single-wafer selector is hidden while grouped.
 
-### 7.5 Test correlation matrix
+### 7.6 Test correlation matrix
 
 ![Correlation matrix](images/correlation.png)
 
@@ -684,16 +717,15 @@ among the displayed tests, and notes any weak pairs that were hidden.
 
 - Tests are ranked by mean |r| across all pairs so the most strongly correlated tests
   cluster toward the top-left of the matrix.
-- The matrix shows between 6 and 20 tests — enough significant pairs to fill that range.
 - Hover a cell to see the full test names, test numbers, and the r value to four decimal
   places.
 - Click any off-diagonal cell to instantly update the scatter plot's X and Y tests.
-  The grid does not rebuild — scroll position is preserved.
-- **Grouped:** a **Group** dropdown appears in the panel; the matrix is computed for the
+  The panel does not rebuild — scroll position is preserved.
+- **Grouped:** a **Group:** dropdown appears in the panel; the matrix is computed for the
   selected group only (never pooled across groups). A group with too little variation shows
   a populated grid with blank cells and "No significant correlations found".
 
-### 7.6 Test correlation scatter
+### 7.7 Test correlation scatter
 
 ![Scatter plot with bin legend](images/scatter.png)
 
@@ -705,7 +737,7 @@ Die-level scatter plot for two parametric tests.
   All bins selected = all dies shown.
 - Spec limit lines appear as dashed lines on the corresponding axis.
 - The correlation matrix's click-cell shortcut updates this panel without rebuilding
-  the rest of the charts grid.
+  the rest of the grid.
 - **Grouped:** points are coloured by group instead of by hard bin, and the legend shows
   the groups; click a group to isolate its dies. This shows whether the groups separate in
   the X/Y plane without pooling them into a single (potentially misleading) statistic.

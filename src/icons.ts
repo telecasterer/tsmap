@@ -1,4 +1,5 @@
-// Icon set for tsmap's icon buttons, aligned with the wmap library so the two
+// Shared icon set for tsmap's icon buttons (toolbar, modal chrome, test
+// selector), aligned with the wmap library so the two
 // UIs (tsmap chrome + embedded wmap wafer maps) read as one. These are Lucide
 // SVGs copied verbatim from wmap's generated icon module
 // (`../wmap/packages/canvas-adapter/icons.ts`, source SVGs in

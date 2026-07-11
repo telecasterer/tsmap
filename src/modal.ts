@@ -14,8 +14,8 @@
 // (macOS Tauri) disables element fullscreen unless Apple private API is enabled.
 // CSS maximize behaves identically on every target (see CLAUDE.md issue #17).
 
-import { cssVar } from './charts/chartShell';
-import { ICONS } from './charts/icons';
+import { cssVar } from './theme';
+import { ICONS } from './icons';
 import { attachTooltip } from './tooltip';
 
 export interface ModalHandle {
@@ -46,6 +46,13 @@ export interface OpenModalOptions {
    * content up to a cap, used by the user guide.
    */
   sizing?: 'resizable' | 'content';
+  /**
+   * Override the fixed 'content' box's width/height cap (default CONTENT
+   * below). Ignored for 'resizable'. Lets a wide-content modal (e.g. the user
+   * guide, which needs room for readable screenshot images) size up without
+   * widening every other 'content' modal (e.g. the Splits dialog).
+   */
+  contentSize?: { width: string; height: string };
   /**
    * Extra icon buttons for the header, inserted before the maximize/close pair.
    * Each gets the shared button styling, hover treatment, and a themed tooltip.
@@ -92,8 +99,9 @@ const btnStyle: Partial<CSSStyleDeclaration> = {
  * keyboard, and lifecycle behaviour; callers supply only content and teardown.
  */
 export function openModal(options: OpenModalOptions): ModalHandle {
-  const { title, mount, onClose, sizing = 'resizable', bodyOverflow = 'hidden' } = options;
+  const { title, mount, onClose, sizing = 'resizable', bodyOverflow = 'hidden', contentSize } = options;
   const resizable = sizing === 'resizable';
+  const contentBox = contentSize ?? CONTENT;
 
   const savedOverflow = document.body.style.overflow;
   document.body.style.overflow = 'hidden';
@@ -128,7 +136,7 @@ export function openModal(options: OpenModalOptions): ModalHandle {
     maxWidth: '100vw', maxHeight: '100vh',
     ...(resizable
       ? { ...RESIZABLE, resize: 'both', minWidth: '400px', minHeight: '300px' }
-      : CONTENT),
+      : contentBox),
   } as Partial<CSSStyleDeclaration>);
 
   const header = document.createElement('div');
@@ -217,7 +225,7 @@ export function openModal(options: OpenModalOptions): ModalHandle {
       box.style.borderRadius = '0'; box.style.resize = 'none';
       box.style.width = '100vw'; box.style.height = '100vh';
     } else {
-      const size = resizable ? RESIZABLE : CONTENT;
+      const size = resizable ? RESIZABLE : contentBox;
       box.style.borderRadius = '10px';
       box.style.resize = resizable ? 'both' : 'none';
       box.style.width = size.width;

@@ -10,33 +10,29 @@
 // generated guide CSS.
 
 import { USER_GUIDE_HTML } from './userGuideHtml';
+import { LIGHT_TOKENS } from './printTheme';
 
-// Light, print-friendly values for the theme tokens the guide fragment
-// references. Sourced from index.html's light-theme block. Keep in sync if the
-// guide starts using a new --var token (any missing token renders as its CSS
-// default — usually harmless, but text/border tokens would look wrong).
-const LIGHT_TOKENS = `
-  --accent: #1a6bbf;
-  --bg-input: #fff;
-  --bg-modal: #fff;
-  --bg-overlay: #fff;
-  --bg-toolbar: #f0f0f0;
-  --bg-row-border: #e8e8e8;
-  --border-strong: #ccc;
-  --border-mid: #bbb;
-  --border-muted: #bbb;
-  --border-dim: #aaa;
-  --border-subtle: #d8d8d8;
-  --text-primary: #111;
-  --text-secondary: #222;
-  --text-tertiary: #333;
-  --text-muted: #555;
-  --text-dim: #666;
-  --text-light: #1a1a1a;
-  --text-subdued: #444;
-  --error-text: #b91c1c;
-  --warn-text: #92400e;
-`;
+// Wider than the in-app modal's --guide-content-width (index.html) — this
+// page is a standalone browser tab/print target, not a fixed-size dialog box,
+// so there's no reason to cap it as tightly. The mockup/screenshot images
+// (max-width: 100% of this column) are the reason: readable text in
+// screenshots needs real pixels, not the modal's narrower reading column.
+const GUIDE_TOKENS = `${LIGHT_TOKENS}\n  --guide-content-width: 1400px;\n`;
+
+// The guide fragment ships images as `<img data-src="...">` rather than
+// `src` so the in-app modal can gate loading on a reachability probe (see
+// guideImages.ts) before fetching from GitHub Pages. This print page opens in
+// the system browser instead of the Tauri webview, where fetching a remote
+// https image from a file:// document is an ordinary resource load with no
+// probe needed — so promote data-src to src directly here. Without this the
+// print/PDF page has no script to do the promotion and every image is
+// silently missing.
+function promoteGuideImages(html: string): string {
+  return html.replace(
+    /<img data-src="([^"]*)"/g,
+    (_, url) => `<img src="${url}" onerror="this.style.display='none'"`
+  );
+}
 
 /** A complete, standalone light-themed HTML document of the user guide. */
 export function userGuidePrintHtml(appVersion: string): string {
@@ -47,7 +43,7 @@ export function userGuidePrintHtml(appVersion: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tsmap user guide</title>
 <style>
-  :root {${LIGHT_TOKENS}}
+  :root {${GUIDE_TOKENS}}
   html { background: #fff; }
   body {
     margin: 0; background: #fff;
@@ -55,7 +51,7 @@ export function userGuidePrintHtml(appVersion: string): string {
     color: #111;
   }
   /* Centred reading column with page margins — matches the in-app cap. */
-  .guide-page { max-width: 780px; margin: 0 auto; padding: 32px 28px 64px; }
+  .guide-page { max-width: 1460px; margin: 0 auto; padding: 32px 28px 64px; }
   .guide-print-header {
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 12px; margin-bottom: 20px; padding-bottom: 10px;
@@ -81,7 +77,7 @@ export function userGuidePrintHtml(appVersion: string): string {
       <h1>tsmap user guide</h1>
       <span class="ver">v${escapeHtml(appVersion)}</span>
     </div>
-    ${USER_GUIDE_HTML}
+    ${promoteGuideImages(USER_GUIDE_HTML)}
   </div>
 </body>
 </html>`;

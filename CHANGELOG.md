@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Inline test renaming in the test selector** — click a test's name to edit it directly (looks like plain text until hovered/focused; Enter or click-away commits, Esc reverts). Renames persist across "Filter tests…" re-opens and are included in **Save list**, using the same `nameOverrides` mechanism as loading a hand-edited test list file.
+- **Recent files** (desktop only) — the last 8 opened file sets are remembered, each with a last-loaded timestamp, for one-click reopen with a remove (×) button. Shown both on the empty state and via a new toolbar **Recent** button that stays available once a file is loaded (not just from the empty state). Persisted to `localStorage`. Requires a native file path to reopen, so this is not shown on the web build.
+- **"Load sample data" on the empty state** — loads a bundled synthetic 13-wafer, 5-process-corner demo lot (`sample_data/PVT-LOT-05.stdf`, gzipped to 106 KB) through the normal load pipeline, so a first-time user (or someone getting past the unsigned-installer security warning) can see the app work before opening their own files. Works on both platforms: desktop reads it via a bundled Tauri resource path (`bundle.resources` in `tauri.conf.json`), web fetches it as a static asset — both go through the existing transparent `.gz` decompression, no new parsing code. Its matching process-corner splits (`PVT-LOT-05_splits.csv`) load alongside it and apply automatically via the existing splits auto-restore mechanism, so the demo shows off the **Splits…** feature immediately with no extra step.
+
+### Changed
+
+- **User guide reading column widened** — the in-app modal and the print/PDF page were both capped at a narrow 720px column shared with the guide's prose typography, which made embedded screenshots too small to read. Now driven by a `--guide-content-width` CSS variable each context sets independently: ~960px for the modal (box widened to match via a new `contentSize` override on `openModal`), ~1400px for the standalone print page. UI mockups and tables no longer stretch to the wider column with them — they're informational/fixed-size content, not photos, so they now cap independently at 760px/900px regardless of `--guide-content-width`.
+
+### Fixed
+
+- **Shared themed tooltip could render behind later-appended overlays** — `getTooltip()` only appended its singleton element to `<body>` the first time it was ever shown; after that it reused the already-connected node without moving it. Since CSS breaks equal-z-index ties by DOM order, any modal/menu/popup appended to `<body>` afterward (e.g. the new Recent dropdown) would silently outrank the tooltip in paint order despite `--z-tooltip` being the documented top tier. Now re-appends (moves to the end) on every show, so it's always last regardless of what else has been added since.
+- **Caught Tauri command errors displayed as "undefined" in the log panel** — `invoke()` rejects with whatever the Rust command's `Err` serialises to (a plain string for `Result<T, String>`), not an `Error` instance, so the codebase-wide `(e as Error).message` pattern silently read as `undefined` and discarded the real message everywhere it was used (7 call sites in `main.ts`). Added `errMsg()` in `lib.ts` (handles `Error`, string, or anything else) and switched every call site to it.
+- **"Load sample data" failed with ENOENT on desktop** — `bundle.resources` was configured as a bare string array (`["../sample_data/sample-lot.stdf.gz"]`); Tauri rewrites `..` segments in that form to a literal `_up_` in the resource tree, so the real registered key was `_up_/sample_data/sample-lot.stdf.gz`, not `sample-lot.stdf.gz` as the JS code assumed. Switched to the `{ "source": "target" }` object form, which pins the target name explicitly and avoids the rewrite.
+- **Shared themed tooltip text could overflow its background box** — `white-space: pre-wrap` only wraps at existing whitespace/newlines, so a long unbroken string (e.g. a filesystem path, which has no spaces) had nowhere to wrap and spilled past the fixed 280px width instead of staying inside it. Added `overflow-wrap: break-word`.
+- **User guide "Print or save as PDF" page never showed images** — the guide markup ships `<img data-src="...">` (not `src`) so the in-app modal can gate loading on a reachability probe before promoting it. The print page opens in the system browser and has no script to do that promotion, so every image was silently missing there regardless of platform. Now promoted directly to `src` when building the print page, since a browser loading a remote https image from a file:// document needs no probe.
+- Test-name renames were not carried into a later "Filter tests…" re-open — the selector re-seeded from the original first-pass scan, so a rename applied on the initial load appeared to silently revert when reopening the filter dialog (the render/export path was unaffected — only the selector's own display was stale).
+
 ## [0.1.17] — 2026-07-08
 
 ### Added

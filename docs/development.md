@@ -42,14 +42,12 @@ python3 scripts/generate_atdf.py /tmp/test.atdf         # synthetic ATDF — sam
 
 ```
 src/
-  main.ts          — app entry: file open, two-pass test selector, renderWafers, chart view
+  main.ts          — app entry: file open, two-pass test selector, renderWafers, map/gallery view
   platform.ts      — platform adapter: Tauri IPC (desktop) or WASM-in-a-Worker (browser)
   parserWorker.ts  — web-only module worker running the WASM parsers off the UI thread
   mappingUI.ts     — CSV/JSON column mapping overlay
   multiFileUI.ts   — multi-file rename and append confirmation
   testSelectorUI.ts — test selector overlay for large STDF/ATDF files
-  charts/          — yield heatmap, bin pareto, box plot, histogram, correlation, scatter
-                     (chartShell.ts = shared chrome; one module per chart; render.ts = grid)
   types.ts         — shared types: ParsedFile, WaferData, TestDef, LotMeta
 
 packages/parsers/  — shared Rust crate, compiles for native Tauri and WASM

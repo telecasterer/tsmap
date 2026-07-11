@@ -429,6 +429,11 @@
         --z-modal:    7000;
         --z-tooltip:  7100;
 
+        /* User-guide reading-column width (src/userGuidePrint.ts sets its own,
+           wider value for the standalone print page — see scripts/build-user-guide.mjs
+           where .tsmap-guide consumes this via var(..., 720px)). */
+        --guide-content-width: 960px;
+
         /* wmap chrome theming (WMAP_ISSUES #25): wmap reads its toolbar / panel /
            canvas colours from these --wmap-* tokens. Mapping them to tsmap's own
            --var tokens makes the embedded wafer map follow whatever theme is
@@ -507,19 +512,13 @@
       }
       #add-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
       #add-btn:disabled { opacity: 0.4; cursor: default; }
-      #charts-btn {
+      #filter-tests-btn, #value-findings-btn, #splits-btn, #recent-btn {
         background: none; border: 1px solid var(--border-dim); border-radius: 4px;
         color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
         white-space: nowrap;
       }
-      #charts-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
-      #charts-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
-      #filter-tests-btn, #value-findings-btn, #splits-btn {
-        background: none; border: 1px solid var(--border-dim); border-radius: 4px;
-        color: var(--text-muted); font-size: 12px; padding: 3px 10px; cursor: pointer;
-        white-space: nowrap;
-      }
-      #filter-tests-btn:hover, #value-findings-btn:not(:disabled):hover, #splits-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #filter-tests-btn:hover, #value-findings-btn:not(:disabled):hover, #splits-btn:hover, #recent-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
+      #recent-btn { display: inline-flex; align-items: center; gap: 5px; }
       /* The checkbox glyph carries the on/off state so the button reads as a toggle, not a nav link. */
       #value-findings-btn .vf-box::before { content: '\2610'; margin-right: 5px; }      /* ☐ off */
       #value-findings-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-accent-hover); }
@@ -542,7 +541,7 @@
       @keyframes tsmap-spin { to { transform: rotate(360deg); } }
 
       #map-container { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; }
-      #map-container.gallery, #map-container.charts { overflow-y: auto; }
+      #map-container.gallery { overflow-y: auto; }
 
       /* ── Mapping overlay ───────────────────────────────────────── */
       #tsmap-mapping-overlay {
@@ -696,7 +695,7 @@
             style="display:none" />
         </div>
         <button id="add-btn" disabled title="Append more files to the current view">Add files</button>
-        <button id="charts-btn" style="display:none" title="Switch between the map and charts views">Charts</button>
+        <button id="recent-btn" style="display:none" title="Recently opened files"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.64-6.36"/><path d="M3 4v5h5"/><path d="M12 7v5l4 2"/></svg> Recent</button>
         <button id="filter-tests-btn" style="display:none" title="Change which tests are imported, then re-parse">Filter tests…</button>
         <button id="splits-btn" style="display:none" title="Define and assign wafer splits (process corners, experiment groups, etc.)">Splits…</button>
         <button id="value-findings-btn" role="switch" style="display:none" aria-checked="false"><span class="vf-box"></span>Value findings</button>

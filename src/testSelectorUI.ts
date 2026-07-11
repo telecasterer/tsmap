@@ -1,5 +1,5 @@
 import type { TestDef } from './types';
-import { ICONS } from './charts/icons';
+import { ICONS } from './icons';
 import { attachTooltip } from './tooltip';
 
 export interface CapacityInfo {
@@ -367,9 +367,63 @@ export function showTestSelectorOverlay(
       numSpan.style.cssText = 'color:var(--text-dim);min-width:52px;flex-shrink:0';
       numSpan.textContent = e.num.toString();
 
-      const nameSpan = document.createElement('span');
-      nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-      nameSpan.textContent = displayName(e.num, e.def) || e.num.toString();
+      // Renaming for display: looks like plain text until hovered/focused (a
+      // border/background only appear then), so the common non-renaming case
+      // is visually identical to the old static span. Committing happens on
+      // blur/Enter (not per keystroke) — clearing or retyping the original
+      // name removes the override so displayName() falls back to e.def.name.
+      // Lives in `nameOverrides`, the same map Save list / Load list already
+      // read and write, so no separate save-path wiring is needed.
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.spellcheck = false;
+      nameInput.value = displayName(e.num, e.def) || e.num.toString();
+      nameInput.setAttribute('aria-label', `Display name for test ${e.num}`);
+      nameInput.style.cssText = [
+        'flex:1;min-width:0;font:inherit;color:inherit',
+        'background:none;border:1px solid transparent;border-radius:3px',
+        'padding:1px 4px;margin:-1px -4px',
+        'overflow:hidden;text-overflow:ellipsis',
+      ].join(';');
+      // Click/mousedown on the input must not fall through to the row's own
+      // shift-click range-select handling on the checkbox (that listener is
+      // on `cb`, not here, but stop it explicitly rather than rely on the
+      // browser's label/form-control click semantics being exactly right).
+      nameInput.addEventListener('click', evt => evt.stopPropagation());
+      nameInput.addEventListener('mouseenter', () => {
+        if (document.activeElement !== nameInput) nameInput.style.borderColor = 'var(--border-mid)';
+      });
+      nameInput.addEventListener('mouseleave', () => {
+        if (document.activeElement !== nameInput) nameInput.style.borderColor = 'transparent';
+      });
+      nameInput.addEventListener('focus', () => {
+        nameInput.style.borderColor = 'var(--accent,#4a9eff)';
+        nameInput.style.background = 'var(--bg-input)';
+      });
+      nameInput.addEventListener('blur', () => {
+        nameInput.style.borderColor = 'transparent';
+        nameInput.style.background = 'none';
+        const trimmed = nameInput.value.trim();
+        if (!trimmed || trimmed === e.def.name) {
+          nameOverrides.delete(e.num);
+          nameInput.value = e.def.name;
+        } else {
+          nameOverrides.set(e.num, trimmed);
+          nameInput.value = trimmed;
+        }
+      });
+      nameInput.addEventListener('keydown', evt => {
+        if (evt.key === 'Enter') { evt.preventDefault(); nameInput.blur(); }
+        else if (evt.key === 'Escape') {
+          // Revert the in-progress edit only — stopPropagation so this
+          // doesn't also reach the overlay's own document-level Escape
+          // listener, which would close the whole dialog.
+          evt.preventDefault();
+          evt.stopPropagation();
+          nameInput.value = displayName(e.num, e.def); // discard in-progress edit
+          nameInput.blur();
+        }
+      });
 
       const metaSpan = document.createElement('span');
       metaSpan.style.cssText = 'color:var(--text-dim);font-size:11px;flex-shrink:0';
@@ -379,7 +433,7 @@ export function showTestSelectorOverlay(
       if (e.def.units) parts.push(e.def.units);
       metaSpan.textContent = parts.join(' ');
 
-      row.append(cb, numSpan, nameSpan, metaSpan);
+      row.append(cb, numSpan, nameInput, metaSpan);
       listContainer.appendChild(row);
     }
   }

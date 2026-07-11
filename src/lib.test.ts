@@ -274,4 +274,22 @@ describe('toWmapWaferMeta', () => {
     expect(m.waferId).toBe('W1');
     expect('lot' in m).toBe(false);
   });
+
+  it('maps a wafer split (splitLabel) to wmap\'s first-class `split` field', () => {
+    const m = toWmapWaferMeta(source({ lotId: 'LOT1' }), 'W1', [{ key: 'splitLabel', value: 'TT' }])!;
+    expect(m.lot).toBe('LOT1');
+    expect(m.split).toBe('TT');
+  });
+
+  it('per-wafer fields win over same-named lot-level fields', () => {
+    const m = toWmapWaferMeta(source({ lotId: 'LOT1' }), 'W1', [{ key: 'lotId', value: 'OVERRIDE' }])!;
+    expect(m.lot).toBe('OVERRIDE');
+  });
+
+  it('still produces metadata from waferFields alone when there is no source', () => {
+    const m = toWmapWaferMeta(undefined, 'W1', [{ key: 'splitLabel', value: 'FF' }])!;
+    expect(m).toBeDefined();
+    expect(m.waferId).toBe('W1');
+    expect(m.split).toBe('FF');
+  });
 });

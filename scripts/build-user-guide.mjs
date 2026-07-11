@@ -74,7 +74,7 @@ html = html.replace(
 // column) so the two products' guides read as one — but kept THEME-AWARE via
 // --var tokens (wmap's guide is hardcoded light; tsmap follows the OS theme).
 const css = `
-.tsmap-guide { font-size: 14px; color: var(--text-light); line-height: 1.65; max-width: 720px; margin: 0 auto; }
+.tsmap-guide { font-size: 14px; color: var(--text-light); line-height: 1.65; max-width: var(--guide-content-width, 720px); margin: 0 auto; }
 .tsmap-guide h1 { font-size: 1.35em; font-weight: 700; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 2px solid var(--border-mid); color: var(--text-primary); }
 .tsmap-guide h2 { font-size: 1.1em; font-weight: 700; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); }
 .tsmap-guide h3 { font-size: 1em; font-weight: 700; margin: 20px 0 6px; color: var(--text-tertiary); }
@@ -95,11 +95,17 @@ const css = `
   border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0 0 12px;
 }
 .tsmap-guide pre code { background: none; border: none; padding: 0; font-size: 12px; }
-.tsmap-guide table { border-collapse: collapse; width: 100%; margin: 0 0 16px; font-size: 13px; }
+.tsmap-guide table { border-collapse: collapse; width: 100%; max-width: 900px; margin: 0 0 16px; font-size: 13px; }
 .tsmap-guide th { text-align: left; padding: 7px 10px; color: var(--text-tertiary); font-weight: 600; background: var(--bg-toolbar); border: 1px solid var(--border-mid); }
 .tsmap-guide td { padding: 6px 10px; color: var(--text-subdued); border: 1px solid var(--border-subtle); vertical-align: top; }
 .tsmap-guide tr:nth-child(even) td { background: var(--bg-row-border); }
-.tsmap-guide img, .tsmap-guide table { max-width: 100%; }
+.tsmap-guide img { max-width: 100%; }
+/* Mockups (UI replicas) and tables are structural/informational, not photo
+   content — unlike screenshots (kept at full column width for legibility),
+   stretching them to a wide reading column just adds whitespace between
+   fixed-size chrome/short cell text. Capped independent of --guide-content-width.
+   Mirrors docs/tsmap-theme.css's .tsmap-mockup rule for the docs site. */
+.tsmap-guide .tsmap-mockup { max-width: 760px; }
 .tsmap-guide hr { border: none; border-top: 1px solid var(--border-subtle); margin: 24px 0; }
 .tsmap-guide blockquote { border-left: 3px solid var(--border-mid); margin: 0 0 12px; padding: 4px 12px; color: var(--text-muted); }
 .tsmap-guide-offline-note {

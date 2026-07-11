@@ -10,9 +10,16 @@
 
 let sharedTooltip: HTMLElement | null = null;
 
-/** The one shared tooltip element, lazily created and appended to <body>. */
+/** The one shared tooltip element, lazily created and appended to <body>.
+ *  Always re-appends, even when already connected: CSS breaks z-index ties by
+ *  DOM order, so any overlay appended to <body> *after* this element's first
+ *  show (any modal, menu, or popup — all of which share --z-tooltip's tier or
+ *  land at --z-modal just below it) would otherwise silently out-rank the
+ *  tooltip and render it hidden behind them, despite --z-tooltip being the
+ *  documented top tier. Moving to the end on every show keeps it truly last
+ *  regardless of what else has been appended since. `appendChild` on a node
+ *  that's already body's last child is a cheap no-op relocate. */
 function getTooltip(): HTMLElement {
-  if (sharedTooltip?.isConnected) return sharedTooltip;
   const el = sharedTooltip ?? document.createElement('div');
   if (!sharedTooltip) {
     Object.assign(el.style, {
@@ -27,6 +34,11 @@ function getTooltip(): HTMLElement {
       lineHeight: '1.55',
       maxWidth: '280px',
       whiteSpace: 'pre-wrap',
+      // pre-wrap alone only breaks at existing whitespace/newlines — a long
+      // unbroken string (e.g. a filesystem path, which has no spaces) has
+      // nowhere to wrap and overflows the fixed maxWidth instead of clipping
+      // to it. break-word forces a break within such a run when needed.
+      overflowWrap: 'break-word',
       // --z-tooltip is the top tier of the app's stacking scale (see index.html
       // :root): above every tsmap overlay and modal, and above wmap's overlay
       // band, so the hint is never clipped behind the chrome it annotates.

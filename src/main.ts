@@ -4,10 +4,9 @@ declare const __BUILD_DATE__: string;
 import { buildWaferMap } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
-import type { LotStatsSummary } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
 import type { FileHandle, StdfTestNames, ScanResult } from './platform';
-import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData } from './lib';
+import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData, errMsg } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
@@ -19,17 +18,12 @@ import { attachTooltip, upgradeTitleTooltips } from './tooltip';
 import { openModal } from './modal';
 import { initTheme, onThemeChange, getTheme, setTheme, THEME_GROUPS, type Theme } from './theme';
 import { makeMenuSelect } from './menuSelect';
-import { ICONS } from './charts/icons';
+import { ICONS } from './icons';
 import { userGuidePrintHtml } from './userGuidePrint';
 import { applyGuideImagePolicy } from './guideImages';
-import { renderChartGrid, renderBoxplotPanel, renderHistogramPanel, renderCorrelationPanel, renderScatterPanel, renderBinClusterPanel, disconnectAllObservers } from './charts/render';
-import type { ChartPanel } from './charts/render';
-import { buildYieldData, buildYieldDataCombined, buildBinParetoData, buildBinClusterData, buildTestBoxplotData, buildTestBoxplotDataCombined, buildTestHistogramData, buildTestHistogramSeries, buildCorrelationMatrix, filterCorrelationMatrix, buildScatterData, buildScatterDataGrouped, listNumericTests } from './charts/aggregate';
-import { buildFacetTable, facetValueOf, NONE_VALUE } from './metadata';
 import { showSplitsModal } from './splitsUI';
-import { getSplitLabel, setSplitLabel, waferDisplayLabel, splitsFingerprint } from './splits';
-import type { BinType, BoxplotDatum, ChartDatum, YieldSortBy } from './charts/types';
-import { getColorScheme, listColorSchemes } from '@paulrobins/wafermap/renderer';
+import { getSplitLabel, setSplitLabel, waferDisplayLabel, splitsFingerprint, parseSplitsCsv } from './splits';
+import { getRecentFiles, addRecentFiles, removeRecentFile, formatRecentTime } from './recentFiles';
 
 
 const platform = createPlatform();
@@ -39,7 +33,7 @@ const platform = createPlatform();
 const container       = document.getElementById('map-container')!;
 const openBtn         = document.getElementById('open-btn')!;
 const addBtn          = document.getElementById('add-btn') as HTMLButtonElement;
-const chartsBtn       = document.getElementById('charts-btn') as HTMLButtonElement;
+const recentBtn       = document.getElementById('recent-btn') as HTMLButtonElement;
 const filterTestsBtn    = document.getElementById('filter-tests-btn') as HTMLButtonElement;
 const splitsBtn        = document.getElementById('splits-btn') as HTMLButtonElement;
 const valueFindingsBtn  = document.getElementById('value-findings-btn') as HTMLButtonElement;
@@ -66,14 +60,8 @@ let currentTestNames: StdfTestNames | null = null; // first-pass scan result, re
 let binaryScanScope: 'largest' | 'all' = 'largest';
 
 
-// ── Chart mode state ──────────────────────────────────────────────────────────
+// ── App-wide state ────────────────────────────────────────────────────────────
 
-type ViewMode = 'map' | 'charts';
-
-let viewMode: ViewMode = 'map';
-let yieldSortBy: YieldSortBy = 'yield';
-let binType: BinType = 'hbin';
-let chartColorScheme = 'default';
 // "Value findings" toggle: when on, wmap's regional parametric test-value
 // pass runs (edge/quadrant/site "reads high/low on test X" + spec-region findings).
 // This gates ONLY the test-value (Welch) findings — regional yield and bin findings
@@ -87,54 +75,8 @@ const analyzeOpts = () => ({ enableTestValueAnalysis: valueFindings });
 
 // Whether wafer map/gallery titles, cards, and summary panels show a wafer's
 // split as a " · <split>" suffix (toggled in the splits modal). On by default
-// so assigning a split is immediately visible outside the Charts view.
+// so assigning a split is immediately visible.
 let showSplitSuffix = true;
-
-/**
- * The "Value findings" toggle only feeds the summary panel, which is part of the
- * map view — it has no effect on the charts page. Disable (not hide) it in charts
- * view so the lack of effect is explicit rather than a mystery, restoring it on
- * the map. Call whenever `viewMode` changes.
- */
-// Live tooltip text for the value-findings toggle (changes with the view).
-// Read by the themed tooltip via a getter; not a native `title`.
-function valueFindingsTip(): string {
-  return viewMode === 'charts'
-    ? 'Only applies in the map view — switch to Maps to use it'
-    : 'Add regional test-value findings to the summary panel (slower on large lots)';
-}
-function syncValueFindingsBtn() {
-  const inCharts = viewMode === 'charts';
-  valueFindingsBtn.disabled = inCharts;
-  valueFindingsBtn.style.opacity = inCharts ? '0.4' : '';
-  valueFindingsBtn.style.cursor = inCharts ? 'default' : '';
-}
-// Faceting: which WaferSource field charts combine by ('' = none). Page-level
-// control populated from buildFacetTable; a change re-renders the charts view.
-// Selecting a field pools each group's dies into one aggregate series per group
-// (combined yield bar, boxplot, histogram overlay, clustered pareto).
-let chartGroupBy = '';
-// Boxplot test selector (independent)
-let selectedTestNumber: number | null = null;
-let boxplotLogScale = false;
-let boxplotAxisIncludesLimits = false;
-let boxplotShowTrend = false;
-// Drill-down state for the yield and boxplot panels: null = overview (one row
-// per group when grouped, one row per wafer when not); non-null = detail view
-// scoped to that group's wafers (one row per wafer within the group). Reset to
-// null in renderChartsViewWork whenever the group no longer exists (grouping
-// turned off, switched to a different facet, or folded away) — see there.
-let yieldDrillGroup: string | null = null;
-let boxplotDrillGroup: string | null = null;
-// Histogram has its own test selector and wafer selector
-let histogramTestNumber: number | null = null;
-let histogramWaferIndex: number | null = null;
-let histogramAxisIncludesLimits = false;
-// Scatter has independent X and Y test selectors
-let scatterXTest: number | null = null;
-let scatterYTest: number | null = null;
-// Correlation matrix — limit controls how many tests are shown (top N by mean |r|)
-let correlationMatrixLimit = 25;
 
 let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
 // The wmap controller for the map currently rendered into the main `container`
@@ -146,31 +88,9 @@ function destroyMainView() {
   mainViewController?.destroy();
   mainViewController = null;
 }
-const cachedBinData: Map<BinType, ReturnType<typeof buildBinParetoData>> = new Map();
-// Keyed by `${testNumber}:${groupBy}` so faceting changes invalidate the entry.
-const cachedBoxplotData: Map<string, ReturnType<typeof buildTestBoxplotData>> = new Map();
-const cachedHistogramData: Map<string, ReturnType<typeof buildTestHistogramData>> = new Map();
-const cachedHistogramSeries: Map<string, ReturnType<typeof buildTestHistogramSeries>> = new Map();
-// Full N×N matrix cached once per file load; display matrix recomputed when limit changes.
-let cachedCorrelationMatrix: ReturnType<typeof buildCorrelationMatrix> | null = null;
-const cachedScatterData: Map<string, ReturnType<typeof buildScatterData>> = new Map();
-// Drill-down detail data (yield/boxplot, keyed by group + the axis that affects
-// it) — same recompute-avoidance as the caches above, since detail data reruns
-// the full-lot builder and filters it down to one group on every drill click.
-const cachedYieldDetailData: Map<string, ChartDatum[]> = new Map();
-const cachedBoxplotDetailData: Map<string, BoxplotDatum[]> = new Map();
-
-/** Invalidate every memoised chart aggregate. Call whenever the loaded wafer set changes. */
-function clearChartCaches() {
+/** Invalidate the memoised lot-stats cache. Call whenever the loaded wafer set changes. */
+function clearLotStatsCache() {
   cachedLotStats = null;
-  cachedBinData.clear();
-  cachedBoxplotData.clear();
-  cachedHistogramData.clear();
-  cachedHistogramSeries.clear();
-  cachedCorrelationMatrix = null;
-  cachedScatterData.clear();
-  cachedYieldDetailData.clear();
-  cachedBoxplotDetailData.clear();
 }
 
 // ── Log panel ─────────────────────────────────────────────────────────────────
@@ -247,25 +167,17 @@ if (isTauri) {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
-function makeHeavyChartPlaceholder(title: string, message: string): HTMLElement {
-  const card = document.createElement('div');
-  card.className = 'chart-card';
-  const heading = document.createElement('div');
-  heading.className = 'chart-card-title';
-  heading.textContent = title;
-  const body = document.createElement('div');
-  body.style.cssText = 'padding:16px 0;color:var(--text-muted);font-size:12px;line-height:1.5;';
-  body.textContent = message;
-  card.appendChild(heading);
-  card.appendChild(body);
-  return card;
-}
-
-function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof buildWaferMap>[]; lotStatsSummary: LotStatsSummary } {
+// Return type is inferred (not annotated) so `items[i].label`/`.statsSummary`
+// stay visible to TS — they're real fields (spread from `waferMap` plus both
+// added below), but an explicit `{ items: ReturnType<typeof buildWaferMap>[] }`
+// annotation here would narrow them away for every caller, including the
+// Analysis tab (via `lotStatsSummary`) and wmap's own summary-panel report
+// button, which reads `.label`/`.statsSummary` off the same items.
+function buildLotStatsSummary(wafers: WaferData[]) {
   const testDefs = toWmapTestDefs(currentTestDefs);
   const items = wafers.map(w => {
     const displayId = waferDisplayLabel(w, showSplitSuffix);
-    const waferMap = buildWaferMap({ results: w.results, testDefs, waferConfig: { metadata: toWmapWaferMeta(w.source, displayId) } });
+    const waferMap = buildWaferMap({ results: w.results, testDefs, waferConfig: { metadata: toWmapWaferMeta(w.source, displayId, w.fields) } });
     for (const warning of waferMap.warnings) {
       const conf = warning.confidence !== undefined ? ` (confidence ${(warning.confidence * 100).toFixed(0)}%)` : '';
       log('warn', `Wafer ${w.waferId}: ${warning.message}${conf}`);
@@ -288,12 +200,28 @@ function buildLotStatsSummary(wafers: WaferData[]): { items: ReturnType<typeof b
 
 const SPLITS_LS_KEY = 'tsmap:wafer-splits';
 
+/**
+ * Set by the "Load sample data" flow just before calling handleFiles, since
+ * the demo lot's matching splits (waferId → split label, from the bundled
+ * PVT-LOT-05_splits.csv) can't be written into SPLITS_LS_KEY until the
+ * fingerprint is computable, which needs parsed wafers — not available yet at
+ * click time. `loadSavedSplits` below seeds the store from this the moment
+ * wafers exist, then defers entirely to the existing restore path (auto-open
+ * dialog, log message, etc.) — no separate apply/UI logic duplicated.
+ */
+let pendingSampleSplitSeed: Map<string, string> | null = null;
+
 /** Applies any saved splits for this exact wafer set and reports whether it
  * applied anything — callers must surface that (never apply silently), since
  * a previous session's splits reappearing with no visible cause is confusing. */
 function loadSavedSplits(wafers: WaferData[]): boolean {
   try {
     const store = JSON.parse(localStorage.getItem(SPLITS_LS_KEY) ?? '{}');
+    if (pendingSampleSplitSeed) {
+      store[splitsFingerprint(wafers)] = Object.fromEntries(pendingSampleSplitSeed);
+      localStorage.setItem(SPLITS_LS_KEY, JSON.stringify(store));
+      pendingSampleSplitSeed = null;
+    }
     const saved: Record<string, string> | undefined = store[splitsFingerprint(wafers)];
     if (!saved) return false;
     let applied = false;
@@ -322,10 +250,9 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   currentFileName = label;
   currentTestDefs = testDefs;
   const restoredSplits = loadSavedSplits(wafers);
-  clearChartCaches();
+  clearLotStatsCache();
   addBtn.disabled = wafers.length === 0;
   resetBtn.style.display = '';
-  chartsBtn.style.display = wafers.length > 0 ? '' : 'none';
   filterTestsBtn.style.display = Object.keys(currentTestDefs).length > 0 ? '' : 'none';
   splitsBtn.style.display = wafers.length > 0 ? '' : 'none';
   // Value findings are only meaningful when there are test values. Reset
@@ -335,9 +262,6 @@ function renderWafers(wafers: WaferData[], label: string, testDefs: Record<strin
   valueFindingsBtn.classList.remove('active');
   valueFindingsBtn.setAttribute('aria-checked', 'false');
   valueFindingsBtn.style.display = hasTestValues ? '' : 'none';
-  chartsBtn.textContent = 'Charts';
-  chartsBtn.classList.remove('active');
-  viewMode = 'map';
 
   const totalDies = wafers.reduce((n, w) => n + w.results.length, 0);
   const loadedMsg = `${label} — ${wafers.length} wafer${wafers.length !== 1 ? 's' : ''}, ${totalDies} dies`;
@@ -372,17 +296,15 @@ const onSaveImage = isTauri
   : undefined;
 
 function renderWaferView(wafers: WaferData[], label: string) {
-  disconnectAllObservers();
   destroyMainView();
-  syncValueFindingsBtn();
   container.innerHTML = '';
   const stem = label.replace(/\.[^.]+$/, '');
 
   const plotMode = autoPlotMode(wafers);
   const wmapTestDefs = toWmapTestDefs(currentTestDefs);
   if (wafers.length === 1) {
-    container.classList.remove('gallery', 'charts');
-    const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafers[0].source, waferDisplayLabel(wafers[0], showSplitSuffix)) } });
+    container.classList.remove('gallery');
+    const waferMap = buildWaferMap({ results: wafers[0].results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafers[0].source, waferDisplayLabel(wafers[0], showSplitSuffix), wafers[0].fields) } });
     const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
     mainViewController = renderWaferMap(container, waferMap, {
       statsSummary,
@@ -391,6 +313,11 @@ function renderWaferView(wafers: WaferData[], label: string) {
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
+      // Single-wafer counterpart to the gallery's analysisEnabled below —
+      // closes the gap that blocked removing tsmap's own Charts page (see
+      // WMAP_ISSUES.md): single-wafer loads had no chart access at all
+      // without this.
+      analysisEnabled: true,
     });
   } else {
     container.classList.add('gallery');
@@ -403,599 +330,12 @@ function renderWaferView(wafers: WaferData[], label: string) {
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
+      // wmap-owned Analysis tab (see WMAP_ISSUES.md #31) — the only chart
+      // access now that tsmap's own Charts page has been removed.
+      analysisEnabled: true,
     });
   }
 }
-
-// ── Chart view ────────────────────────────────────────────────────────────────
-
-function makeSelect(optionLabels: Array<[string, string]>, current: string, onChange: (v: string) => void): HTMLSelectElement {
-  const select = document.createElement('select');
-  select.style.cssText = 'font-size:12px;padding:2px 6px;background:var(--bg-input);color:var(--text-secondary);border:1px solid var(--border-mid);border-radius:4px;';
-  for (const [value, text] of optionLabels) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = text;
-    if (value === current) opt.selected = true;
-    select.appendChild(opt);
-  }
-  select.addEventListener('change', () => onChange(select.value));
-  return select;
-}
-
-// z-index for wmap's transient overlays (menus, tooltip, its own expand/help
-// modals) when a map is rendered inside the wafer drilldown modal. The drilldown
-// backdrop sits at --z-modal (7000); wmap layers its overlays from this value
-// upward (base, +1, +2), so it must clear the modal. Passed as the `zIndex`
-// render option (wmap 0.16.1+) to every render in openWaferModal. See
-// WMAP_ISSUES.md #22/#23. Kept above --z-modal (7000) and below --z-tooltip (7100).
-const WAFER_MODAL_OVERLAY_Z = 7010;
-
-/**
- * Open a wafer-map drilldown as a MODAL over the charts view, via the shared
- * `openModal` (src/modal.ts). The charts grid stays mounted untouched behind it,
- * so closing (Esc / close / backdrop) returns the user to exactly where they
- * were — same scroll, same selectors. Never touches `viewMode` — drilldown is
- * not navigation.
- *
- * `render` returns the wmap controller it created; on close we call its
- * `destroy()` to disconnect wmap's internal ResizeObserver / pointer / window /
- * document listeners deterministically before the modal DOM is detached. Both
- * `renderWaferMap` (WaferMapController) and `renderWaferGallery` (GalleryController)
- * expose `destroy(): void` — see WMAP_ISSUES.md #21.
- *
- * NB: we deliberately do NOT call `disconnectAllObservers()` on close — that
- * registry holds the live charts grid's observers (the grid stays mounted behind
- * the modal); flushing it would kill the grid's resize handling. wmap owns its
- * observers and we tear them down via `controller.destroy()`.
- */
-function openWaferModal(title: string, render: (body: HTMLElement) => { destroy(): void }, opts?: { bodyOverflow?: 'hidden' | 'auto' }) {
-  let controller: { destroy(): void } | undefined;
-  openModal({
-    title,
-    mount: body => { controller = render(body); },
-    onClose: () => controller?.destroy(),
-    bodyOverflow: opts?.bodyOverflow,
-  });
-}
-
-function openSingleWafer(waferIndices: number[]) {
-  const filtered = waferIndices.map(i => currentWafers[i]);
-  if (filtered.length === 0) return;
-  const stem = currentFileName.replace(/\.[^.]+$/, '');
-  const plotMode = autoPlotMode(filtered);
-  const wmapTestDefs = toWmapTestDefs(currentTestDefs);
-
-  if (filtered.length === 1) {
-    const wafer = filtered[0];
-    const displayId = waferDisplayLabel(wafer, showSplitSuffix);
-    openWaferModal(`${currentFileName} — wafer ${displayId}`, body => {
-      const waferMap = buildWaferMap({ results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, displayId) } });
-      const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-      const controller = renderWaferMap(body, waferMap, {
-        statsSummary,
-        summaryPanel: { placement: 'right', defaultOpen: true },
-        showHelpButton: true,
-        downloadFilename: stem,
-        onSaveImage,
-        viewOptions: { plotMode },
-        zIndex: WAFER_MODAL_OVERLAY_Z,
-        showExpandButton: false,
-      });
-      injectMapBanner(body, `Wafer ${displayId}`);
-      return controller;
-    });
-    return;
-  }
-
-  // Subset gallery: build lot-stats fresh — the global cachedLotStats is keyed to
-  // the FULL lot and must not be reused for a subset.
-  const label = `${currentFileName} — ${filtered.length} wafers: ${filtered.map(w => waferDisplayLabel(w, showSplitSuffix)).join(', ')}`;
-  openWaferModal(label, body => {
-    const { items, lotStatsSummary } = buildLotStatsSummary(filtered);
-    return renderWaferGallery(body, items, {
-      lotStatsSummary,
-      summaryPanel: { placement: 'right', defaultOpen: true },
-      showHelpButton: true,
-      downloadFilename: stem,
-      onSaveImage,
-      viewOptions: { plotMode },
-      zIndex: WAFER_MODAL_OVERLAY_Z,
-    });
-  }, { bodyOverflow: 'auto' });
-}
-
-function openStackedBin(waferIndices: number[], datum: ChartDatum) {
-  const stackWafers = waferIndices.map(i => currentWafers[i]);
-  if (stackWafers.length === 0) return;
-  const stem = currentFileName.replace(/\.[^.]+$/, '');
-  const stackedIds = stackWafers.map(w => waferDisplayLabel(w, showSplitSuffix)).join(', ');
-  const label = `${currentFileName} — stacked ${datum.label} across ${stackWafers.length} wafer${stackWafers.length !== 1 ? 's' : ''}: ${stackedIds}`;
-
-  openWaferModal(label, body => {
-    // Stack metadata is meaningful only when every stacked wafer shares one
-    // source (same lot/program). Shared-by-reference makes that an identity check.
-    const sharedSource = stackWafers.every(w => w.source === stackWafers[0].source) ? stackWafers[0].source : undefined;
-    const waferMap = buildWaferMap({
-      lotStack: {
-        results: stackWafers.map(w => w.results),
-        method: 'countBin',
-        targetBin: datum.binCode!,
-      },
-      waferConfig: { metadata: toWmapWaferMeta(sharedSource, `${stackWafers.length} wafers`) },
-    });
-    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-    return renderWaferMap(body, waferMap, {
-      statsSummary,
-      summaryPanel: { placement: 'right', defaultOpen: true },
-      showHelpButton: true,
-      downloadFilename: stem,
-      onSaveImage,
-      viewOptions: { plotMode: 'value' },
-      zIndex: WAFER_MODAL_OVERLAY_Z,
-      showExpandButton: false,
-    });
-  });
-}
-
-function openTestValueWafer(waferIndex: number, testNumber: number) {
-  const wafer = currentWafers[waferIndex];
-  if (!wafer) return;
-  const stem = currentFileName.replace(/\.[^.]+$/, '');
-  const testDef = currentTestDefs[String(testNumber)];
-  const testLabel = testDef?.name ? `${testDef.name} (#${testNumber})` : `test #${testNumber}`;
-  const displayId = waferDisplayLabel(wafer, showSplitSuffix);
-  const label = `${currentFileName} — wafer ${displayId} — ${testLabel} value map`;
-
-  openWaferModal(label, body => {
-    const wmapTestDefs = toWmapTestDefs(currentTestDefs);
-    const waferMap = buildWaferMap(
-      { results: wafer.results, testDefs: wmapTestDefs, waferConfig: { metadata: toWmapWaferMeta(wafer.source, displayId) } },
-      { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
-    );
-    const statsSummary = analyzeWaferMap(waferMap, analyzeOpts());
-    const controller = renderWaferMap(body, waferMap, {
-      statsSummary,
-      summaryPanel: { placement: 'right', defaultOpen: true },
-      showHelpButton: true,
-      downloadFilename: stem,
-      onSaveImage,
-      viewOptions: { plotMode: 'value', activeTest: testNumber, logScale: boxplotLogScale },
-      zIndex: WAFER_MODAL_OVERLAY_Z,
-      showExpandButton: false,
-    });
-    injectMapBanner(body, `${displayId} — ${testLabel}`);
-    return controller;
-  });
-}
-
-function renderChartsView() {
-  viewMode = 'charts';
-  syncValueFindingsBtn();
-  chartsBtn.textContent = 'Maps';
-  chartsBtn.classList.add('active');
-  container.classList.remove('gallery');
-  container.classList.add('charts');
-
-  const totalDies = currentWafers.reduce((n, w) => n + w.results.length, 0);
-  const loadedMsg = `${currentFileName} — ${currentWafers.length} wafer${currentWafers.length !== 1 ? 's' : ''}, ${totalDies} dies`;
-
-  // buildLotStatsSummary/renderChartGrid run synchronously and can take real
-  // time on large lots — show the spinner and yield a tick so it actually
-  // paints before the heavy work blocks the main thread.
-  setBusy(`Building charts for ${loadedMsg}…`);
-  requestAnimationFrame(() => requestAnimationFrame(() => { renderChartsViewWork(loadedMsg); }));
-}
-
-function renderChartsViewWork(loadedMsg: string) {
-  disconnectAllObservers();
-  destroyMainView(); // tear down the map view's wmap controller before the grid replaces the container
-  cachedLotStats ??= buildLotStatsSummary(currentWafers);
-  const { lotStatsSummary } = cachedLotStats;
-
-  function makeHeaderLines(panelTitle: string, testName?: string): { title: string; subtitle: string } {
-    const now = new Date();
-    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const parts: string[] = [loadedMsg];
-    if (testName) parts.push(testName);
-    parts.push(ts);
-    return { title: panelTitle, subtitle: parts.join(' · ') };
-  }
-
-  const testOptions = listNumericTests(currentTestDefs);
-  const firstTest = testOptions[0]?.testNumber ?? null;
-
-  // ── Faceting ─────────────────────────────────────────────────────────────────
-  // The distinct-values table drives the "Group by" page control. Only splittable
-  // fields (>1 distinct value) are offered. If the persisted choice is no longer
-  // valid (different file loaded), drop it.
-  const facetTable = buildFacetTable(currentWafers);
-  const splittableFacets = facetTable.filter(f => f.splittable);
-  if (chartGroupBy && !splittableFacets.some(f => f.key === chartGroupBy)) chartGroupBy = '';
-
-  // Resolve the active group-by into a (wafer)=>key function, applying a top-K cap:
-  // the K largest groups (by wafer count) keep their value; the rest fold into one
-  // "… N more" bucket so a many-lot load can't explode the chart.
-  const GROUP_TOP_K = 12;
-  const activeFacet = chartGroupBy ? splittableFacets.find(f => f.key === chartGroupBy) : undefined;
-  const topGroupValues = activeFacet ? new Set(activeFacet.values.slice(0, GROUP_TOP_K).map(v => v.value)) : null;
-  const foldedGroupCount = activeFacet ? Math.max(0, activeFacet.values.length - GROUP_TOP_K) : 0;
-  const groupBy = activeFacet
-    ? (wafer: WaferData): string | undefined => {
-        // Missing/empty values fold into the explicit `(none)` group (matching the
-        // facet table) rather than being dropped from the grouped chart.
-        const v = facetValueOf(wafer, activeFacet.key) ?? NONE_VALUE;
-        return topGroupValues!.has(v) ? v : `… ${foldedGroupCount} more`;
-      }
-    : undefined;
-  // A selected group field always means "combine by it" (one aggregate per group).
-  const combined = !!groupBy;
-
-  // Partition wafers into ordered groups (first-seen order), honouring the top-K
-  // fold. Used by scatter (colour-by-group) and correlation (restrict-to-group),
-  // where pooling across groups is misleading rather than a clean aggregate.
-  function groupedWafers(): Array<{ key: string; wafers: WaferData[] }> {
-    if (!groupBy) return [];
-    const map = new Map<string, WaferData[]>();
-    const order: string[] = [];
-    for (const w of currentWafers) {
-      const k = groupBy(w);
-      if (k === undefined) continue;
-      if (!map.has(k)) { map.set(k, []); order.push(k); }
-      map.get(k)!.push(w);
-    }
-    return order.map(key => ({ key, wafers: map.get(key)! }));
-  }
-
-  // Drill-down: reset to overview if the drilled-into group no longer exists —
-  // grouping turned off, switched to a different facet, or folded away as
-  // cardinality shifted. Leaves the drill alone for any other rebuild (e.g.
-  // colour-scheme change), since chartGroupBy/groupedWafers() are unaffected.
-  if (yieldDrillGroup !== null && !groupedWafers().some(g => g.key === yieldDrillGroup)) yieldDrillGroup = null;
-  if (boxplotDrillGroup !== null && !groupedWafers().some(g => g.key === boxplotDrillGroup)) boxplotDrillGroup = null;
-
-  const groupLabelText = activeFacet?.label ?? 'wafer';
-
-  // Detail data for a drilled-into group: the existing per-wafer builder run
-  // over the FULL lot (so wafer indices stay global), then filtered down to
-  // the group's membership — the group's own WaferData subset can't be passed
-  // directly, since buildYieldData/buildTestBoxplotData derive waferIndex from
-  // the array/lookup they're given, not from wafer identity.
-  function groupWaferIndexSet(groupKey: string): Set<number> {
-    const group = groupedWafers().find(g => g.key === groupKey);
-    if (!group) return new Set();
-    return new Set(group.wafers.map(w => currentWafers.indexOf(w)));
-  }
-  function getYieldDetailData(groupKey: string): ChartDatum[] {
-    const key = `${groupKey}:${yieldSortBy}`;
-    if (!cachedYieldDetailData.has(key)) {
-      const idx = groupWaferIndexSet(groupKey);
-      cachedYieldDetailData.set(key, buildYieldData(currentWafers, lotStatsSummary, yieldSortBy).filter(d => idx.has(d.waferIndices[0])));
-    }
-    return cachedYieldDetailData.get(key)!;
-  }
-  function getBoxplotDetailData(groupKey: string, testNumber: number): BoxplotDatum[] {
-    const key = `${groupKey}:${testNumber}`;
-    if (!cachedBoxplotDetailData.has(key)) {
-      const idx = groupWaferIndexSet(groupKey);
-      cachedBoxplotDetailData.set(key, buildTestBoxplotData(currentWafers, testNumber).filter(d => idx.has(d.waferIndex)));
-    }
-    return cachedBoxplotDetailData.get(key)!;
-  }
-
-  // Each chart has its own independent test selection — default to first test.
-  if (selectedTestNumber === null || !testOptions.some(t => t.testNumber === selectedTestNumber)) selectedTestNumber = firstTest;
-  if (histogramTestNumber === null || !testOptions.some(t => t.testNumber === histogramTestNumber)) histogramTestNumber = firstTest;
-  if (scatterXTest === null || !testOptions.some(t => t.testNumber === scatterXTest)) scatterXTest = firstTest;
-  if (scatterYTest === null || !testOptions.some(t => t.testNumber === scatterYTest)) scatterYTest = testOptions[1]?.testNumber ?? firstTest;
-
-  // ── Yield ──────────────────────────────────────────────────────────────────
-  const makeYieldData = () => combined
-    ? buildYieldDataCombined(currentWafers, lotStatsSummary, yieldSortBy, groupBy!)
-    : buildYieldData(currentWafers, lotStatsSummary, yieldSortBy);
-  const yieldData = makeYieldData();
-
-  // ── Bin pareto ─────────────────────────────────────────────────────────────
-  // Plain (ungrouped / per-wafer) pareto data. Combined mode uses a separate
-  // clustered-bar card instead (built below), so this is the non-combined path.
-  const makeBinData = () => {
-    if (!cachedBinData.has(binType)) cachedBinData.set(binType, buildBinParetoData(currentWafers, binType));
-    return cachedBinData.get(binType)!;
-  };
-  const binData = makeBinData();
-
-  // ── Callbacks for self-contained panels ───────────────────────────────────
-  function getBoxplotData(testNumber: number) {
-    const key = `${testNumber}:${chartGroupBy}`;
-    if (!cachedBoxplotData.has(key)) {
-      const data = combined
-        ? buildTestBoxplotDataCombined(currentWafers, testNumber, groupBy!)
-        : buildTestBoxplotData(currentWafers, testNumber);
-      cachedBoxplotData.set(key, data);
-    }
-    return cachedBoxplotData.get(key)!;
-  }
-
-  function getBoxplotTestMeta(testNumber: number) {
-    const def = currentTestDefs[String(testNumber)];
-    const opt = testOptions.find(t => t.testNumber === testNumber);
-    return { unit: opt?.unit, limitLow: def?.loLimit, limitHigh: def?.hiLimit };
-  }
-
-  function getHistogramData(testNumber: number, waferIndex: number | null, axisIncludesLimits: boolean) {
-    const key = `${testNumber}:${waferIndex}:${axisIncludesLimits}`;
-    if (!cachedHistogramData.has(key)) {
-      const wafers = waferIndex !== null ? [currentWafers[waferIndex]] : currentWafers;
-      const def = currentTestDefs[String(testNumber)];
-      const limitLow  = axisIncludesLimits ? def?.loLimit  : undefined;
-      const limitHigh = axisIncludesLimits ? def?.hiLimit : undefined;
-      cachedHistogramData.set(key, buildTestHistogramData(wafers, testNumber, 16, limitLow, limitHigh));
-    }
-    return cachedHistogramData.get(key)!;
-  }
-
-  function getHistogramSeries(testNumber: number, axisIncludesLimits: boolean) {
-    const key = `${testNumber}:${axisIncludesLimits}:${chartGroupBy}`;
-    if (!cachedHistogramSeries.has(key)) {
-      const def = currentTestDefs[String(testNumber)];
-      const limitLow  = axisIncludesLimits ? def?.loLimit  : undefined;
-      const limitHigh = axisIncludesLimits ? def?.hiLimit : undefined;
-      cachedHistogramSeries.set(key, buildTestHistogramSeries(currentWafers, testNumber, groupBy!, 16, limitLow, limitHigh));
-    }
-    return cachedHistogramSeries.get(key)!;
-  }
-
-  function getHistogramTestMeta(testNumber: number) {
-    const def = currentTestDefs[String(testNumber)];
-    const opt = testOptions.find(t => t.testNumber === testNumber);
-    return { unit: opt?.unit, limitLow: def?.loLimit, limitHigh: def?.hiLimit };
-  }
-
-  function getScatterPoints(xTest: number, yTest: number) {
-    // When a facet is active, tag points with their group (colour-by-group);
-    // otherwise plain points coloured by hard bin. Cache key includes the facet.
-    const key = `${xTest}:${yTest}:${chartGroupBy}`;
-    if (!cachedScatterData.has(key)) {
-      const data = combined
-        ? buildScatterDataGrouped(currentWafers, xTest, yTest, groupBy!)
-        : buildScatterData(currentWafers, xTest, yTest);
-      cachedScatterData.set(key, data);
-    }
-    return cachedScatterData.get(key)!;
-  }
-
-  // Die count threshold above which per-die-per-test charts (correlation matrix, scatter)
-  // are skipped — walking N tests × D dies for N up to 400 and D up to 250k is feasible,
-  // but the in-memory parsed representation itself can be several GB at that scale.
-  // 500k is a conservative ceiling; users hitting it should use test-selector filtering.
-  const totalDies = currentWafers.reduce((s, w) => s + w.results.length, 0);
-  const HEAVY_CHART_DIE_LIMIT = 500_000;
-  const tooManyDies = totalDies > HEAVY_CHART_DIE_LIMIT;
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-  const scheme = getColorScheme(chartColorScheme);
-  const binColorFn = scheme.forBin;
-
-  const yieldPanel: ChartPanel = {
-    kind: 'yield',
-    title: yieldDrillGroup === null
-      ? `Yield by ${groupLabelText}`
-      : `Yield by wafer — ${groupLabelText}: ${yieldDrillGroup}`,
-    data: yieldDrillGroup === null ? yieldData : getYieldDetailData(yieldDrillGroup),
-    selfControl: {
-      current: yieldSortBy,
-      options: [
-        ['yield', 'Sort: yield'],
-        ['waferId', yieldDrillGroup === null && combined ? `Sort: ${groupLabelText}` : 'Sort: wafer ID'],
-      ],
-      onChange: v => {
-        yieldSortBy = v as YieldSortBy;
-        return { data: yieldDrillGroup === null ? makeYieldData() : getYieldDetailData(yieldDrillGroup) };
-      },
-    },
-    barColor: datum => scheme.forValue(Math.max(0, Math.min(100, datum.percent)) / 100),
-    valueLabel: datum => `${datum.percent.toFixed(1)}%`,
-    clickHint: 'click to open this wafer',
-    drill: combined ? {
-      activeGroup: yieldDrillGroup,
-      groupLabelText,
-      onOpenGroup: datum => {
-        yieldDrillGroup = datum.label;
-        return { data: getYieldDetailData(yieldDrillGroup), title: `Yield by wafer — ${groupLabelText}: ${yieldDrillGroup}` };
-      },
-      onBack: () => {
-        yieldDrillGroup = null;
-        return { data: makeYieldData(), title: `Yield by ${groupLabelText}` };
-      },
-    } : undefined,
-  };
-
-  // Bin pareto: combined mode uses a dedicated clustered-bar card (sub-bar per
-  // group within each bin); otherwise the generic ungrouped pareto panel.
-  const binParetoPanel: ChartPanel = {
-    kind: 'binPareto',
-    title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
-    data: binData,
-    selfControl: {
-      current: binType,
-      options: [['hbin', 'Hard bins'], ['sbin', 'Soft bins']],
-      onChange: v => {
-        binType = v as BinType;
-        return {
-          data: makeBinData(),
-          title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
-        };
-      },
-    },
-    barColor: datum => datum.binCode === undefined ? scheme.forValue(0) : binColorFn(datum.binCode),
-    // Clicking a pareto bar opens that bin stacked across the wafers that have it
-    // (openStackedBin) — not a single wafer — so the hint differs from yield.
-    clickHint: 'click to open this bin across the wafers that have it',
-  };
-
-  const binClusterCard = combined
-    ? renderBinClusterPanel({
-        title: `${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`,
-        binType,
-        getData: (bt) => buildBinClusterData(currentWafers, bt, groupBy!),
-        colorScheme: chartColorScheme,
-        onToggleBinType: (bt) => { binType = bt; },
-        onOpen: (waferIndices) => { if (waferIndices.length > 0) openSingleWafer(waferIndices); },
-        savePng: onSaveImage,
-        getHeaderLines: () => makeHeaderLines(`${binType === 'hbin' ? 'Hard' : 'Soft'} bin pareto`),
-      })
-    : null;
-
-  const panels: ChartPanel[] = combined ? [yieldPanel] : [yieldPanel, binParetoPanel];
-
-  const boxplotCard = renderBoxplotPanel({
-    title: `Test value distribution by ${groupLabelText}`,
-    testOptions,
-    selectedTestNumber,
-    getData: getBoxplotData,
-    getTestMeta: getBoxplotTestMeta,
-    logScale: boxplotLogScale,
-    axisIncludesLimits: boxplotAxisIncludesLimits,
-    showTrend: boxplotShowTrend,
-    colorScheme: chartColorScheme,
-    onStateChange: (n) => { selectedTestNumber = n; },
-    onToggleLogScale: () => { boxplotLogScale = !boxplotLogScale; },
-    onToggleAxisIncludesLimits: () => { boxplotAxisIncludesLimits = !boxplotAxisIncludesLimits; },
-    onToggleShowTrend: () => { boxplotShowTrend = !boxplotShowTrend; },
-    onOpen: (waferIndex) => { if (selectedTestNumber !== null) openTestValueWafer(waferIndex, selectedTestNumber); },
-    savePng: onSaveImage,
-    getHeaderLines: () => makeHeaderLines(
-      boxplotDrillGroup !== null ? `Test value distribution by wafer — ${groupLabelText}: ${boxplotDrillGroup}` : `Test value distribution by ${groupLabelText}`,
-      testOptions.find(t => t.testNumber === selectedTestNumber)?.label,
-    ),
-    drillGroup: combined ? boxplotDrillGroup : null,
-    getDrillData: combined ? (groupKey, testNumber) => getBoxplotDetailData(groupKey, testNumber) : undefined,
-    onDrillChange: combined ? (g) => { boxplotDrillGroup = g; } : undefined,
-    drillTitle: combined ? (g) => `Test value distribution by wafer — ${groupLabelText}: ${g}` : undefined,
-    groupLabelText,
-  });
-
-  const histogramCard = renderHistogramPanel({
-    title: 'Value histogram',
-    testOptions,
-    selectedTestNumber: histogramTestNumber,
-    getData: getHistogramData,
-    getSeriesData: combined ? getHistogramSeries : undefined,
-    getTestMeta: getHistogramTestMeta,
-    colorScheme: chartColorScheme,
-    waferLabels: currentWafers.map(w => w.waferId),
-    selectedWafer: histogramWaferIndex,
-    axisIncludesLimits: histogramAxisIncludesLimits,
-    onStateChange: (n, waferIndex) => { histogramTestNumber = n; histogramWaferIndex = waferIndex; },
-    onToggleAxisIncludesLimits: () => { histogramAxisIncludesLimits = !histogramAxisIncludesLimits; },
-    savePng: onSaveImage,
-    getHeaderLines: () => makeHeaderLines('Value histogram', testOptions.find(t => t.testNumber === histogramTestNumber)?.label),
-  });
-
-  let correlationCard: HTMLElement;
-  let scatterCard: HTMLElement;
-
-  if (tooManyDies) {
-    const msg = `Correlation matrix and scatter charts are unavailable for lots with more than ${HEAVY_CHART_DIE_LIMIT.toLocaleString()} dies (this lot has ${totalDies.toLocaleString()}). Use "Filter tests…" to reduce the dataset first.`;
-    correlationCard = makeHeavyChartPlaceholder('Test correlation matrix', msg);
-    scatterCard = makeHeavyChartPlaceholder('Test correlation', msg);
-  } else {
-    cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions);
-
-    const scatterResult = renderScatterPanel({
-      title: 'Test correlation',
-      testOptions,
-      xTestNumber: scatterXTest,
-      yTestNumber: scatterYTest,
-      getPoints: getScatterPoints,
-      getTestMeta: getBoxplotTestMeta,
-      colorScheme: chartColorScheme,
-      groups: combined ? groupedWafers().map(g => g.key) : undefined,
-      onStateChange: (x, y) => { scatterXTest = x; scatterYTest = y; },
-      savePng: onSaveImage,
-      getHeaderLines: () => {
-        const xLabel = testOptions.find(t => t.testNumber === scatterXTest)?.label;
-        const yLabel = testOptions.find(t => t.testNumber === scatterYTest)?.label;
-        const testName = xLabel && yLabel ? `${xLabel} vs ${yLabel}` : (xLabel ?? yLabel);
-        return makeHeaderLines('Test correlation', testName);
-      },
-    });
-    scatterCard = scatterResult.card;
-
-    // Per-group correlation matrices (built lazily, cached) — pooling across
-    // groups would be misleading, so when grouping is active the matrix is
-    // restricted to one group, chosen via the panel's group selector.
-    const corrGroups = combined ? groupedWafers() : [];
-    const corrGroupMatrices = new Map<string, ReturnType<typeof buildCorrelationMatrix>>();
-    const matrixForGroup = (groupKey?: string) => {
-      if (!groupKey) return (cachedCorrelationMatrix ??= buildCorrelationMatrix(currentWafers, testOptions));
-      if (!corrGroupMatrices.has(groupKey)) {
-        const g = corrGroups.find(x => x.key === groupKey);
-        corrGroupMatrices.set(groupKey, buildCorrelationMatrix(g ? g.wafers : [], testOptions));
-      }
-      return corrGroupMatrices.get(groupKey)!;
-    };
-
-    correlationCard = renderCorrelationPanel({
-      title: 'Test correlation matrix',
-      groupKeys: corrGroups.map(g => g.key),
-      filter: (maxTests, groupKey) => {
-        const { matrix, ...summary } = filterCorrelationMatrix(matrixForGroup(groupKey), { minTests: 6, maxTests });
-        return { matrix, summary };
-      },
-      initialLimit: correlationMatrixLimit,
-      onLimitChange: (limit) => { correlationMatrixLimit = limit; },
-      colorScheme: chartColorScheme,
-      onSelectPair: (x, y) => { scatterXTest = x; scatterYTest = y; scatterResult.setXY(x, y); },
-      savePng: onSaveImage,
-      getHeaderLines: () => makeHeaderLines('Test correlation matrix'),
-    });
-  }
-
-  const colorSchemeLabel = document.createElement('span');
-  colorSchemeLabel.textContent = 'Chart colour scheme:';
-  colorSchemeLabel.style.cssText = 'color:var(--text-muted);font-size:12px;';
-  const colorSchemeSelect = makeSelect(
-    listColorSchemes().map(s => [s.name, s.label] as [string, string]),
-    chartColorScheme,
-    v => { chartColorScheme = v; renderChartsView(); },
-  );
-
-  // "Group by" page control — populated from the splittable facets. Hidden
-  // entirely when there is nothing to split on (single lot, no metadata).
-  const groupByControls: HTMLElement[] = [];
-  if (splittableFacets.length > 0) {
-    const groupByLabel = document.createElement('span');
-    groupByLabel.textContent = 'Group by:';
-    groupByLabel.style.cssText = 'color:var(--text-muted);font-size:12px;';
-    const groupBySelect = makeSelect(
-      [['', 'None'], ...splittableFacets.map(f => [f.key, `${f.label} (${f.values.length})`] as [string, string])],
-      chartGroupBy,
-      v => { chartGroupBy = v; renderChartsView(); },
-    );
-    groupByControls.push(groupByLabel, groupBySelect);
-  }
-
-  const scrollTop = container.scrollTop;
-  const binCard = binClusterCard ? [binClusterCard] : [];
-  renderChartGrid(container, [...panels, ...binCard, boxplotCard, histogramCard, correlationCard, scatterCard], {
-    onOpen: (waferIndices, datum) => {
-      if (waferIndices.length === 0) return;
-      // Pareto bar → stacked-bin modal across ONLY the wafers that have this bin
-      // (datum.waferIndices). Yield bar → that single wafer's map modal (a grouped/
-      // multi-wafer yield bar is intercepted first by ChartPanel.drill and never
-      // reaches this callback — see yieldPanel above).
-      if (datum.binCode !== undefined) openStackedBin(datum.waferIndices, datum);
-      else openSingleWafer(waferIndices);
-    },
-    savePng: onSaveImage,
-    getHeaderLines: (panelTitle) => makeHeaderLines(panelTitle),
-  }, [colorSchemeLabel, colorSchemeSelect, ...groupByControls]);
-  container.scrollTop = scrollTop;
-
-  setIdle(loadedMsg);
-}
-
 
 /**
  * Tear down the current maps/charts view for a fresh (non-append) load that has
@@ -1006,9 +346,8 @@ function renderChartsViewWork(loadedMsg: string) {
  * `renderWafers` replaces this placeholder once the parse completes.
  */
 function showLoadingState(msg: string) {
-  disconnectAllObservers();
   destroyMainView();
-  container.classList.remove('gallery', 'charts');
+  container.classList.remove('gallery');
   container.innerHTML = '';
   const placeholder = document.createElement('div');
   placeholder.style.cssText =
@@ -1026,18 +365,14 @@ function showEmptyState() {
   currentBinaryExt = '';
   currentTestNames = null;
   binaryScanScope = 'largest';
-  clearChartCaches();
+  clearLotStatsCache();
   addBtn.disabled = true;
   resetBtn.style.display = 'none';
-  chartsBtn.style.display = 'none';
   filterTestsBtn.style.display = 'none';
   splitsBtn.style.display = 'none';
   valueFindingsBtn.style.display = 'none';
-  chartsBtn.textContent = 'Charts';
-  chartsBtn.classList.remove('active');
-  viewMode = 'map';
   destroyMainView();
-  container.classList.remove('gallery', 'charts');
+  container.classList.remove('gallery');
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
                 position:absolute;inset:0;gap:16px;color:var(--text-faint);user-select:none;">
@@ -1053,6 +388,183 @@ function showEmptyState() {
       <div style="font-size:15px;color:var(--text-dim);">Open a file to get started</div>
       <div style="font-size:12px;color:var(--text-veryfaint);">Supports STDF, ATDF, CSV and JSON</div>
     </div>`;
+
+  const column = container.firstElementChild as HTMLElement;
+
+  // Loads a bundled synthetic lot through the normal load pipeline (test
+  // selector, etc.) so a first-time user — or an evaluator getting past the
+  // unsigned-installer security warning — can see the app work before
+  // trusting it with their own files. Works on both platforms: desktop reads
+  // it as a real bundled resource path, web fetches it as a static asset.
+  const sampleBtn = document.createElement('button');
+  sampleBtn.type = 'button';
+  sampleBtn.style.cssText = 'margin-top:4px;background:none;border:1px solid var(--border-dim);' +
+    'border-radius:4px;color:var(--text-muted);font-size:12px;padding:4px 12px;cursor:pointer;';
+  sampleBtn.textContent = 'Load sample data';
+  sampleBtn.addEventListener('click', async () => {
+    if (busy) return;
+    try {
+      const file = await platform.getSampleFile();
+      // Best-effort: a missing/failed splits fetch shouldn't block the load
+      // itself, so this deliberately doesn't throw — the lot is still a
+      // perfectly good demo without its splits.
+      const splitsCsv = await platform.getSampleSplitsCsv().catch(() => null);
+      if (splitsCsv) pendingSampleSplitSeed = parseSplitsCsv(splitsCsv);
+      handleFiles([file], false);
+    } catch (e) {
+      log('error', `Failed to load sample data: ${errMsg(e)}`);
+    }
+  });
+  column.appendChild(sampleBtn);
+
+  // Recent files needs a persistent native path to reopen without the picker —
+  // only available on desktop (webPlatform's File objects have no path). Also
+  // reachable from the toolbar's Recent button once data is loaded (openRecentMenu).
+  if (isTauri && getRecentFiles().length > 0) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px;width:320px;';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:11px;color:var(--text-veryfaint);text-transform:uppercase;' +
+      'letter-spacing:.04em;margin-bottom:2px;text-align:center;';
+    heading.textContent = 'Recent';
+    wrap.appendChild(heading);
+    wrap.appendChild(buildRecentRows(() => {}, () => { showEmptyState(); }));
+    column.appendChild(wrap);
+  }
+}
+
+/**
+ * Builds the recent-files row list (open + remove per entry), shared by the
+ * empty-state panel and the toolbar's Recent dropdown (openRecentMenu). Each
+ * row's open action is a fresh load (`isAppend: false`), matching "Open file"'s
+ * existing replace-current-data behaviour — there is no append-from-recent yet.
+ * `onOpen` fires just before a reopen starts (the toolbar menu uses it to close
+ * itself); `onRemove` fires after a row is deleted so the caller can re-render.
+ */
+function buildRecentRows(onOpen: () => void, onRemove: () => void): HTMLElement {
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+  for (const entry of getRecentFiles()) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+    const rowOpenBtn = document.createElement('button');
+    rowOpenBtn.type = 'button';
+    rowOpenBtn.style.cssText = 'flex:1;min-width:0;text-align:left;background:none;' +
+      'border:1px solid var(--border-dim);border-radius:4px;color:var(--text-secondary);' +
+      'font-size:12px;padding:4px 8px;cursor:pointer;display:flex;flex-direction:column;gap:1px;overflow:hidden;';
+    const nameLine = document.createElement('div');
+    nameLine.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nameLine.textContent = entry.label;  // textContent: file names are untrusted
+    const timeLine = document.createElement('div');
+    timeLine.style.cssText = 'font-size:10px;color:var(--text-veryfaint);';
+    timeLine.textContent = formatRecentTime(entry.time);
+    rowOpenBtn.append(nameLine, timeLine);
+    // Dynamically-created element — upgradeTitleTooltips only runs once at
+    // startup over the static toolbar, so this needs the themed tooltip
+    // wired explicitly (a plain `title` here leaves ghost rendering
+    // artifacts on WebKitGTK when the row is removed while it's showing).
+    attachTooltip(rowOpenBtn, entry.paths.join('\n'));
+    rowOpenBtn.addEventListener('click', () => {
+      if (busy) return;
+      const files: FileHandle[] = entry.paths.map(p => ({ name: basename(p), bytes: new Uint8Array(0), path: p }));
+      onOpen();
+      handleFiles(files, false);
+    });
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.setAttribute('aria-label', `Remove ${entry.label} from recent files`);
+    removeBtn.style.cssText = 'flex-shrink:0;background:none;border:none;color:var(--text-veryfaint);' +
+      'cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeRecentFile(entry.paths);
+      syncRecentBtn();
+      onRemove();
+    });
+
+    row.append(rowOpenBtn, removeBtn);
+    list.appendChild(row);
+  }
+  return list;
+}
+
+/** Shows/hides the toolbar's Recent button based on whether any entries exist —
+ *  independent of load state, so it stays available once data is loaded (the
+ *  gap this closes: the recent list previously only appeared on the empty
+ *  state, which disappears the moment a file is open). */
+function syncRecentBtn() {
+  if (!isTauri) return;
+  recentBtn.style.display = getRecentFiles().length > 0 ? '' : 'none';
+}
+
+let closeRecentMenu: (() => void) | null = null;
+
+/** Opens (or closes, if already open) a themed dropdown of recent files
+ *  anchored under `anchor`, reusing buildRecentRows for the row UI. */
+function openRecentMenu(anchor: HTMLElement) {
+  if (closeRecentMenu) { closeRecentMenu(); return; }
+
+  const popup = document.createElement('div');
+  popup.style.cssText = [
+    'position:fixed', 'z-index:var(--z-tooltip)',
+    'background:var(--bg-overlay)', 'color:var(--text-secondary)',
+    'border:1px solid var(--border-mid)', 'border-radius:6px',
+    'box-shadow:0 6px 20px rgba(0,0,0,0.35)',
+    'padding:8px', 'min-width:260px', 'max-width:360px',
+    'font-size:12px', 'font-family:system-ui,sans-serif',
+  ].join(';');
+
+  const heading = document.createElement('div');
+  heading.style.cssText = 'font-size:11px;color:var(--text-veryfaint);text-transform:uppercase;' +
+    'letter-spacing:.04em;margin-bottom:6px;';
+  heading.textContent = 'Recent';
+  popup.appendChild(heading);
+
+  const rebuild = () => {
+    popup.querySelector('.recent-rows')?.remove();
+    if (getRecentFiles().length === 0) { close(); return; }
+    const rows = buildRecentRows(close, rebuild);
+    rows.classList.add('recent-rows');
+    popup.appendChild(rows);
+  };
+  rebuild();
+
+  document.body.appendChild(popup);
+  const r = anchor.getBoundingClientRect();
+  const margin = 8;
+  popup.style.top = `${r.bottom + 4}px`;
+  popup.style.left = `${r.left}px`;
+  requestAnimationFrame(() => {
+    const pw = popup.offsetWidth;
+    let left = r.left;
+    if (left + pw + margin > window.innerWidth) left = window.innerWidth - pw - margin;
+    popup.style.left = `${Math.max(margin, left)}px`;
+  });
+
+  function onOutside(e: PointerEvent) {
+    const t = e.target as Node;
+    if (!popup.contains(t) && !anchor.contains(t)) close();
+  }
+  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(); }
+
+  function close() {
+    popup.remove();
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('blur', close);
+    window.removeEventListener('resize', close);
+    closeRecentMenu = null;
+  }
+  closeRecentMenu = close;
+
+  document.addEventListener('pointerdown', onOutside, true);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', close);
+  window.addEventListener('resize', close);
 }
 
 // ── Multi-file load flow ──────────────────────────────────────────────────────
@@ -1075,20 +587,6 @@ function setIdle(msg = '') {
   openBtn.style.pointerEvents = '';
   openBtn.style.opacity = '';
   if (currentWafers.length > 0) addBtn.disabled = false;
-}
-
-/** Injects a small floating label at the top-left of the map container
- *  showing which wafer (and test) is currently displayed. Workaround for
- *  wmap lacking a label/title option on renderWaferMap — see WMAP_ISSUES.md. */
-function injectMapBanner(container: HTMLElement, text: string) {
-  const banner = document.createElement('div');
-  banner.style.cssText = 'position:absolute;top:8px;left:8px;z-index:10;' +
-    'background:var(--bg-overlay);border:1px solid var(--border-subtle);' +
-    'border-radius:4px;padding:3px 10px;font-size:12px;' +
-    'color:var(--text-secondary);pointer-events:none;white-space:nowrap;' +
-    'box-shadow:0 1px 4px rgba(0,0,0,0.3);';
-  banner.textContent = text;
-  container.appendChild(banner);
 }
 
 /**
@@ -1116,7 +614,7 @@ async function scanBinaryTests(filesToScan: FileHandle[]): Promise<{ testDefs: S
       anyOk = true;
       log('info', `${file.name}: ${Object.keys(result.testDefs).length} tests found, ${result.dieCount.toLocaleString()} dies`);
     } catch (e) {
-      log('warn', `Test name scan failed for ${file.name}: ${(e as Error).message}`);
+      log('warn', `Test name scan failed for ${file.name}: ${errMsg(e)}`);
     }
   }
   if (!anyOk) {
@@ -1129,6 +627,10 @@ async function scanBinaryTests(filesToScan: FileHandle[]): Promise<{ testDefs: S
 async function handleFiles(files: FileHandle[], isAppend: boolean) {
   if (files.length === 0) return;
   if (busy) return;
+
+  // Captured before archive expansion/reassignment below, so a reopened .zip
+  // records (and re-expands) its own path rather than its extracted contents.
+  const originalPaths = files.every(f => f.path) ? files.map(f => f.path as string) : null;
 
   setBusy(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`);
   // Yield two animation frames so the spinner actually paints before the
@@ -1257,7 +759,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
         firstPassTestDefs = { ...(firstPassTestDefs ?? {}), ...parsed.testDefs };
       }
     } catch (e) {
-      log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
+      log('error', `Failed to parse ${file.name}: ${errMsg(e)}`);
     }
   }
 
@@ -1393,11 +895,11 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
         log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
         logWarnings(parsed);
       } catch (e) {
-        log('error', `Failed to parse ${file.name}: ${(e as Error).message}`);
+        log('error', `Failed to parse ${file.name}: ${errMsg(e)}`);
       }
     }
   } catch (e) {
-    const msg = (e as Error)?.message ?? String(e);
+    const msg = errMsg(e);
     log('error', `Parse failed: ${msg}. Try selecting fewer tests.`);
     abortFreshLoad('Out of memory — reduce test selection and try again');
     return;
@@ -1463,6 +965,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
       entries.length === 1 ? entries[0].fileName : `${entries.length} files`,
       Object.assign({}, ...entries.map(e => e.parsed.testDefs))
     );
+    if (originalPaths) { addRecentFiles(originalPaths); syncRecentBtn(); }
   }
 }
 
@@ -1476,7 +979,7 @@ async function pickAndHandle(isAppend: boolean) {
   try {
     files = await platform.pickFiles();
   } catch (e) {
-    log('error', `File picker failed: ${(e as Error).message}`);
+    log('error', `File picker failed: ${errMsg(e)}`);
     setIdle(prevLabel);
     return;
   }
@@ -1491,6 +994,8 @@ async function pickAndHandle(isAppend: boolean) {
 if (isTauri) {
   openBtn.addEventListener('click', () => pickAndHandle(false));
   addBtn.addEventListener('click', () => pickAndHandle(true));
+  recentBtn.addEventListener('click', () => openRecentMenu(recentBtn));
+  syncRecentBtn();
 } else {
   // On web, trigger the native file input synchronously from the click event
   // so the browser treats it as a user gesture (async calls block the picker).
@@ -1537,27 +1042,8 @@ if (isTauri) {
   });
 }
 
-chartsBtn.addEventListener('click', () => {
-  if (currentWafers.length < 1) return;
-  if (viewMode === 'charts') {
-    chartsBtn.classList.remove('active');
-    chartsBtn.textContent = 'Charts';
-    viewMode = 'map';
-    const totalDies = currentWafers.reduce((n, w) => n + w.results.length, 0);
-    const loadedMsg = `${currentFileName} — ${currentWafers.length} wafer${currentWafers.length !== 1 ? 's' : ''}, ${totalDies} dies`;
-    setBusy(`Rendering ${loadedMsg}…`);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      renderWaferView(currentWafers, currentFileName);
-      setIdle(loadedMsg);
-    }));
-  } else {
-    renderChartsView();
-  }
-});
-
 valueFindingsBtn.addEventListener('click', () => {
-  // No-op in charts view (button is disabled there) — guard defensively anyway.
-  if (busy || currentWafers.length === 0 || viewMode === 'charts') return;
+  if (busy || currentWafers.length === 0) return;
   valueFindings = !valueFindings;
   valueFindingsBtn.classList.toggle('active', valueFindings);
   valueFindingsBtn.setAttribute('aria-checked', String(valueFindings));
@@ -1589,7 +1075,15 @@ filterTestsBtn.addEventListener('click', async () => {
   let filterOverrideNames: Map<number, string> = new Map();
   let scopedDefs = selectorTestDefs;
   let carrySelection: number[] = Object.keys(currentTestDefs).map(Number);
+  // Seed with any renames already baked into currentTestDefs (from the
+  // initial load's rename/Load-list) but not reflected in selectorTestDefs
+  // (the original first-pass scan) — otherwise a rename applied earlier
+  // would appear to have silently reverted when the selector reopens here.
   let carryNames = new Map<number, string>();
+  for (const [key, def] of Object.entries(currentTestDefs)) {
+    const scanned = selectorTestDefs[key];
+    if (scanned && def.name !== scanned.name) carryNames.set(Number(key), def.name);
+  }
   let testSelection: number[] | null = null;
 
   filterLoop: for (;;) {
@@ -1698,7 +1192,7 @@ filterTestsBtn.addEventListener('click', async () => {
       log('info', `Re-parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''} (${testSelection.length} tests)`);
       logWarnings(parsed);
     } catch (e) {
-      log('error', `Failed to re-parse ${file.name}: ${(e as Error).message}`);
+      log('error', `Failed to re-parse ${file.name}: ${errMsg(e)}`);
     }
   }
 
@@ -1728,11 +1222,7 @@ function openSplitsDialog() {
     onToggleSuffix: (show) => { showSplitSuffix = show; },
     onChange: () => {
       saveSplits(currentWafers);
-      clearChartCaches();
-      if (viewMode === 'charts') {
-        renderChartsView();
-        return;
-      }
+      clearLotStatsCache();
       const label = currentFileName;
       setBusy(`Rendering ${label}…`);
       requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -1753,6 +1243,11 @@ helpBtn.addEventListener('click', () => {
   openModal({
     title: 'User guide',
     sizing: 'content',
+    // Wider than the default 'content' box (860px, still used by the Splits
+    // dialog) — screenshots embedded in the guide need real pixels to stay
+    // readable; see --guide-content-width (index.html) which the guide's own
+    // CSS caps its reading column to, in step with this box.
+    contentSize: { width: 'min(94vw, 1040px)', height: 'min(88vh, 900px)' },
     headerActions: [{
       // Opens the guide as a standalone light-themed page in the system browser,
       // where the user can Print or Save-as-PDF. Reuses platform.openReport (the
@@ -1778,13 +1273,13 @@ helpBtn.addEventListener('click', () => {
 // Replace the native `title` tooltips on tsmap's top-toolbar chrome with the
 // themed, instant tooltip (see tooltip.ts) so they match the wmap map toolbar
 // rather than the OS's slow black hint. Static-text buttons are upgraded from
-// their existing `title` markup; the two with runtime-varying text (value
-// findings, log toggle) are wired with getters so the hint tracks state. Run at
-// the end of module init: the getters read state (viewMode, logPanel) that is
-// declared above, so wiring earlier would hit a temporal-dead-zone ReferenceError
-// and abort the module — killing every button handler registered after it.
+// their existing `title` markup; the log toggle has runtime-varying text so
+// it's wired with a getter instead. Run at the end of module init: the getter
+// reads state (logPanel) that is declared above, so wiring earlier would hit
+// a temporal-dead-zone ReferenceError and abort the module — killing every
+// button handler registered after it.
 upgradeTitleTooltips(document.getElementById('toolbar') ?? document);
-attachTooltip(valueFindingsBtn, valueFindingsTip);
+attachTooltip(valueFindingsBtn, 'Add regional test-value findings to the summary panel (slower on large lots)');
 attachTooltip(logToggle, logToggleTip);
 
 // ── Theme picker ──────────────────────────────────────────────────────────
@@ -1796,8 +1291,7 @@ initTheme();
 
 function refreshCurrentView(): void {
   if (currentWafers.length === 0) return; // empty state: CSS-only, nothing to redraw
-  if (viewMode === 'charts') renderChartsView();
-  else renderWaferView(currentWafers, currentFileName);
+  renderWaferView(currentWafers, currentFileName);
 }
 
 // Grouped theme picker. Uses the custom menuSelect (not a native <select>):

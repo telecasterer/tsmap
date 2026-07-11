@@ -55,6 +55,13 @@ export interface Platform {
   parseAtdfFiltered(file: FileHandle, selected: number[]): Promise<RustParsedFile>;
   saveTextFile(content: string, defaultName: string): Promise<void>;
   pickTextFile(): Promise<{ content: string; name: string } | null>;
+  /** Returns a FileHandle for the bundled synthetic demo lot (13 wafers, 5
+   *  process corners), for the empty state's "Load sample data" action. */
+  getSampleFile(): Promise<FileHandle>;
+  /** Returns the CSV text for the demo lot's matching split assignments
+   *  (see splits.ts's parseSplitsCsv), or null if it can't be read — splits
+   *  are a bonus on top of the sample load, not required for it to succeed. */
+  getSampleSplitsCsv(): Promise<string | null>;
 }
 
 // ── Tauri platform ────────────────────────────────────────────────────────────
@@ -212,6 +219,34 @@ function makeTauriPlatform(): Platform {
       const content = await readTextFile(path);
       const name = path.split(/[\\/]/).pop() ?? path;
       return { content, name };
+    },
+
+    async getSampleFile() {
+      const { resolveResource } = await import('@tauri-apps/api/path');
+      // Bundled via tauri.conf.json's bundle.resources — a real OS path, so
+      // this reuses the exact same native parse commands (path-based, with
+      // transparent .gz decompression in read_bytes) as any other open.
+      // MUST match tauri.conf.json's resources map exactly: bundle.resources
+      // must be the { "src": "target" } object form here, not a bare string
+      // array — a source path containing "../" (the file lives outside
+      // src-tauri) gets its ".." segments rewritten to a literal "_up_" in
+      // the resource tree under the array form, so resolveResource('sample-
+      // lot.stdf.gz') would 404 (ENOENT) against the real registered key,
+      // "_up_/sample_data/sample-lot.stdf.gz". The object form pins the
+      // target name explicitly instead of relying on that rewrite.
+      const path = await resolveResource('sample-lot.stdf.gz');
+      return { name: 'PVT-LOT-05.stdf.gz', bytes: new Uint8Array(0), path };
+    },
+
+    async getSampleSplitsCsv() {
+      try {
+        const { resolveResource } = await import('@tauri-apps/api/path');
+        const invoke = await getInvoke();
+        const path = await resolveResource('sample-lot-splits.csv');
+        return await invoke<string>('read_text_file', { path });
+      } catch {
+        return null;
+      }
     },
   };
 }
@@ -467,6 +502,30 @@ function makeWebPlatform(): Platform {
         input.addEventListener('cancel', () => resolve(null));
         input.click();
       });
+    },
+
+    async getSampleFile() {
+      // `new URL(..., import.meta.url)` is Vite's asset-reference pattern —
+      // resolved (and, for a build, copied/hashed) relative to this module,
+      // so it works under both the Tauri dev absolute base and the relative
+      // base used for the GitHub Pages web build. Fetched bytes still carry
+      // the .gz suffix in their name; expandArchives() in handleFiles already
+      // decompresses that via DecompressionStream, same as a dropped .gz file.
+      const url = new URL('../sample_data/sample-lot.stdf.gz', import.meta.url);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed to fetch sample data: ${res.status}`);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      return { name: 'sample-lot.stdf.gz', bytes };
+    },
+
+    async getSampleSplitsCsv() {
+      try {
+        const url = new URL('../sample_data/PVT-LOT-05_splits.csv', import.meta.url);
+        const res = await fetch(url);
+        return res.ok ? await res.text() : null;
+      } catch {
+        return null;
+      }
     },
   };
 }

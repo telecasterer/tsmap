@@ -1,6 +1,6 @@
 // Pure, DOM-free utility functions extracted from main.ts for testability.
 
-import type { LotMeta, ParsedFile, TestDef, WaferData, WaferSource } from './types';
+import type { LotMeta, MetaField, ParsedFile, TestDef, WaferData, WaferSource } from './types';
 import type { RustParsedFile, StdfTestNames } from './platform';
 import type { TestDef as WmapTestDef } from '@paulrobins/wafermap';
 import type { PlotMode } from '@paulrobins/wafermap';
@@ -8,6 +8,20 @@ import type { WaferMetadata } from '@paulrobins/wafermap/renderer';
 
 export function basename(p: string): string {
   return p.split(/[\\/]/).pop() ?? p;
+}
+
+/**
+ * Extracts a displayable message from a caught error. Tauri's `invoke()`
+ * rejects with whatever the Rust command's `Err` serialises to — for
+ * `Result<T, String>` that's a plain string, not an `Error` instance — so
+ * `(e as Error).message` on it silently reads as `undefined` and swallows the
+ * real diagnostic (this hid the root cause of a real bug once already). Use
+ * this everywhere a caught value is turned into a log/toast message instead.
+ */
+export function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try { return JSON.stringify(e); } catch { return String(e); }
 }
 
 export function rustToLocal(r: RustParsedFile, fileName: string): ParsedFile {
@@ -54,18 +68,24 @@ const WMAP_META_KEY: Record<string, keyof WaferMetadata> = {
   jobName: 'testProgram',
   startT: 'testDate',
   operName: 'operator',
+  splitLabel: 'split',
 };
 
 /**
- * Map a tsmap `WaferSource` to wmap's `WaferMetadata` (passed as
- * `buildWaferMap({ waferConfig: { metadata } })`). Wafer-level only — tsmap
- * does not stamp per-die `DieMetadata`. Known keys map to wmap's named slots;
- * everything else flows through wmap's open index signature.
+ * Map a tsmap `WaferSource` (lot-level) plus optional per-wafer fields to
+ * wmap's `WaferMetadata` (passed as `buildWaferMap({ waferConfig: { metadata } })`).
+ * Known keys map to wmap's named slots; everything else flows through wmap's
+ * open index signature. `waferFields` (e.g. a wafer's split assignment, see
+ * `splits.ts`) is applied after `source.fields` so a per-wafer value wins
+ * over a same-named lot-level one — previously omitted entirely, which meant
+ * splits were invisible to wmap (its own summary panel/report had no way to
+ * know a wafer's split; only tsmap's own separate charts code did, by
+ * reading `getSplitLabel` directly instead of going through wmap's metadata).
  */
-export function toWmapWaferMeta(source: WaferSource | undefined, waferId: string): WaferMetadata | undefined {
-  if (!source) return undefined;
+export function toWmapWaferMeta(source: WaferSource | undefined, waferId: string, waferFields?: MetaField[]): WaferMetadata | undefined {
+  if (!source && !waferFields?.length) return undefined;
   const meta: WaferMetadata = { waferId };
-  for (const { key, value } of source.fields) {
+  const applyField = ({ key, value }: MetaField) => {
     if (key === 'testTemp') {
       const t = Number(value);
       if (Number.isFinite(t)) meta.temperature = t; else meta.testTemp = value;
@@ -73,7 +93,9 @@ export function toWmapWaferMeta(source: WaferSource | undefined, waferId: string
       const mapped = WMAP_META_KEY[key];
       meta[mapped ?? key] = value;
     }
-  }
+  };
+  for (const f of source?.fields ?? []) applyField(f);
+  for (const f of waferFields ?? []) applyField(f);
   return meta;
 }
 

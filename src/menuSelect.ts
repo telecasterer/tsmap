@@ -14,7 +14,7 @@
 // type-ahead. Focus returns to the trigger on close. Matches what the native
 // <select> provided.
 
-import { cssVar } from './charts/chartShell';
+import { cssVar } from './theme';
 
 export interface MenuOption { value: string; label: string }
 export interface MenuGroup { group: string; options: ReadonlyArray<MenuOption> }

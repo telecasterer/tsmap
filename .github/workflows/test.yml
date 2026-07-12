@@ -30,9 +30,9 @@ jobs:
 
       - run: npm ci
 
-      # userGuideHtml.ts is generated (gitignored) — normally produced by the
-      # predev/prebuild hooks. `npm run check` has no such hook, so generate it
-      # here before any tsc step or the type check fails to resolve the import.
+      # public/guide/ is generated (gitignored) and no longer required for the
+      # type check (nothing in src/ imports it) — this step is a smoke check
+      # that the guide build itself doesn't error, not a typecheck dependency.
       - name: Build user guide
         run: npm run build:guide
 

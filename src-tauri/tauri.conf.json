@@ -38,7 +38,8 @@
     ],
     "resources": {
       "../sample_data/sample-lot.stdf.gz": "sample-lot.stdf.gz",
-      "../sample_data/PVT-LOT-05_splits.csv": "sample-lot-splits.csv"
+      "../sample_data/PVT-LOT-05_splits.csv": "sample-lot-splits.csv",
+      "../public/guide": "guide"
     }
   }
 }

@@ -26,6 +26,15 @@
  *   ['loadFile', '/tmp/tsmap-demo.stdf']
  *     Inject a file into the app via simulated drop. Waits for parse to complete.
  *
+ *   ['loadFiles', ['/tmp/a.stdf', '/tmp/b.stdf']]
+ *     Inject multiple files in one drop (triggers the wafer rename overlay —
+ *     see multiFileUI.ts's needsRename, which requires entries.length > 1).
+ *
+ *   ['addFiles', '/tmp/tsmap-demo2.stdf']
+ *     Click the "Add files" toolbar button and pick a file via Playwright's
+ *     filechooser interception (real button + native input, not a drop — only
+ *     this path sets isAppend=true, needed to reach append-confirm).
+ *
  *   ['waitForWafers']
  *     Poll until a canvas element appears inside #map-container.
  *
@@ -37,6 +46,12 @@
  *
  *   ['dismissSelectorSelectNone']
  *     Click "Select none" then "Import" (imports bin data only, skips selector screenshot).
+ *
+ *   ['dismissSelectorThenRename']
+ *     Like dismissSelector, but waits for the rename overlay instead of a
+ *     wafer canvas afterward — needed when loading multiple files together,
+ *     where the rename overlay appears before anything renders (see
+ *     multiFileUI.ts's needsRename: entries.length > 1).
  *
  *   ['openCharts']
  *     Click the "Charts" toolbar button; waits for chart panels to render.
@@ -92,6 +107,15 @@
  *
  *   ['hideCursor']
  *     Remove the fake cursor.
+ *
+ *   ['shrinkPanelToContent']
+ *     For the mapping/rename overlays: `.mapping-panel` is `flex:1` inside a
+ *     `position:fixed;inset:0` overlay by design (a real full-screen dialog,
+ *     content scrolls inside it) — so it always fills the whole viewport
+ *     regardless of how little content there is, leaving a large empty gap in
+ *     a screenshot. Overrides flex-sizing so the panel and its scroll
+ *     container shrink-wrap their actual content instead, for a tight crop.
+ *     Capture-only cosmetic tweak; doesn't reflect real app behaviour.
  *
  *   ['wait', 400]
  *     Extra delay in ms.
@@ -199,10 +223,19 @@ async function removeCursor(page) {
 // baseUrl is passed in so the page knows where to fetch from.
 
 async function injectFile(page, filePath, baseUrl) {
-  if (!existsSync(filePath)) throw new Error(`Demo data file not found: ${filePath}`);
-  const fileName = filePath.split('/').pop();
-  const urlPrefix = filePath.startsWith(SAMPLEDATA) ? '/sample_data/' : '/testdata/';
-  const fetchUrl = `${baseUrl}${urlPrefix}${fileName}`;
+  await injectFiles(page, [filePath], baseUrl);
+}
+
+// Same as injectFile but drops every path in filePaths as one multi-item
+// DataTransfer — needed for the "loading multiple files together" state
+// (triggers the wafer rename overlay; see multiFileUI.ts's needsRename).
+async function injectFiles(page, filePaths, baseUrl) {
+  const items = filePaths.map(filePath => {
+    if (!existsSync(filePath)) throw new Error(`Demo data file not found: ${filePath}`);
+    const fileName = filePath.split('/').pop();
+    const urlPrefix = filePath.startsWith(SAMPLEDATA) ? '/sample_data/' : '/testdata/';
+    return { fetchUrl: `${baseUrl}${urlPrefix}${fileName}`, fileName };
+  });
 
   // Wait until the app's drop listener is registered (open-btn is present and the
   // page script has run). The listener is added synchronously in main.ts on DOMContentLoaded,
@@ -210,15 +243,28 @@ async function injectFile(page, filePath, baseUrl) {
   // extra guard to avoid a race on slower machines.
   await page.waitForFunction(() => !!document.getElementById('open-btn'), { timeout: 10000 });
 
-  await page.evaluate(async ([url, name]) => {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`fetch failed: ${resp.status} ${url}`);
-    const blob = await resp.blob();
-    const file = new File([blob], name);
-    const dt   = new DataTransfer();
-    dt.items.add(file);
+  await page.evaluate(async (fetchItems) => {
+    const dt = new DataTransfer();
+    for (const { fetchUrl, fileName } of fetchItems) {
+      const resp = await fetch(fetchUrl);
+      if (!resp.ok) throw new Error(`fetch failed: ${resp.status} ${fetchUrl}`);
+      const blob = await resp.blob();
+      dt.items.add(new File([blob], fileName));
+    }
     document.body.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-  }, [fetchUrl, fileName]);
+  }, items);
+}
+
+// Clicks the "Add files" toolbar button and picks filePath via Playwright's
+// filechooser interception — unlike a drop (always a fresh load), only the
+// real button + native <input type=file> path sets main.ts's `appendOnPick`
+// flag, which is what's needed to reach the append-confirm dialog.
+async function addFile(page, filePath) {
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.click('#add-btn'),
+  ]);
+  await chooser.setFiles(filePath);
 }
 
 // ─── Wait helpers ─────────────────────────────────────────────────────────────
@@ -347,6 +393,18 @@ async function runSetup(page, steps, baseUrl) {
         break;
       }
 
+      case 'loadFiles': {
+        await injectFiles(page, args[0], baseUrl);
+        await page.waitForTimeout(500);
+        break;
+      }
+
+      case 'addFiles': {
+        await addFile(page, args[0]);
+        await page.waitForTimeout(500);
+        break;
+      }
+
       case 'waitForWafers':
         await waitForWmapCanvas(page);
         break;
@@ -371,6 +429,24 @@ async function runSetup(page, steps, baseUrl) {
         });
         await page.click('#__import-btn__');
         await waitForWmapCanvas(page);
+        break;
+      }
+
+      case 'dismissSelectorThenRename': {
+        await waitForSelector(page, '#tsmap-test-selector-overlay');
+        await page.evaluate(() => {
+          const btns = [...document.querySelectorAll('#tsmap-test-selector-overlay button')];
+          btns.find(b => b.textContent?.trim() === 'Select all')?.click();
+        });
+        await page.waitForTimeout(200);
+        await page.evaluate(() => {
+          const btns = [...document.querySelectorAll('#tsmap-test-selector-overlay button')];
+          const b = btns.find(b => b.textContent?.includes('Import'));
+          if (b) { b.id = '__import-btn__'; }
+        });
+        await page.click('#__import-btn__');
+        await waitForSelector(page, '#tsmap-rename-overlay');
+        await page.waitForTimeout(300);
         break;
       }
 
@@ -561,6 +637,17 @@ async function runSetup(page, steps, baseUrl) {
       case 'hideCursor':
         await removeCursor(page);
         break;
+
+      case 'shrinkPanelToContent': {
+        await page.evaluate(() => {
+          const panel = document.querySelector('.mapping-panel');
+          if (panel) { panel.style.flex = 'none'; panel.style.maxHeight = 'none'; }
+          const scroll = document.querySelector('.mapping-scroll');
+          if (scroll) { scroll.style.flex = 'none'; scroll.style.overflow = 'visible'; scroll.style.maxHeight = 'none'; }
+        });
+        await page.waitForTimeout(100);
+        break;
+      }
 
       case 'wait':
         await page.waitForTimeout(args[0] ?? 300);

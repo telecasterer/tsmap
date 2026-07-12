@@ -429,11 +429,6 @@
         --z-modal:    7000;
         --z-tooltip:  7100;
 
-        /* User-guide reading-column width (src/userGuidePrint.ts sets its own,
-           wider value for the standalone print page — see scripts/build-user-guide.mjs
-           where .tsmap-guide consumes this via var(..., 720px)). */
-        --guide-content-width: 960px;
-
         /* wmap chrome theming (WMAP_ISSUES #25): wmap reads its toolbar / panel /
            canvas colours from these --wmap-* tokens. Mapping them to tsmap's own
            --var tokens makes the embedded wafer map follow whatever theme is
@@ -643,12 +638,6 @@
         display: flex; align-items: center; justify-content: center;
       }
       #help-btn:hover { color: var(--accent); }
-      /* The user-guide modal's box/header/buttons are provided by the shared
-         openModal (src/modal.ts); only the scrollable guide content is styled
-         here. .help-body is mounted into the shared modal body. */
-      /* Just the scroll container + padding — the guide content (.tsmap-guide)
-         owns its own centered reading-column width (see build-user-guide.mjs). */
-      .help-body { padding: 24px; overflow-y: auto; flex: 1; min-height: 0; }
 
       /* ── Log panel ─────────────────────────────────────────────── */
       #log-bar {

@@ -10,17 +10,12 @@ import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
 import { showTestSelectorOverlay } from './testSelectorUI';
-import { USER_GUIDE_HTML } from './userGuideHtml';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
 import type { ParsedFile, WaferData, TestDef } from './types';
 import { attachTooltip, upgradeTitleTooltips } from './tooltip';
-import { openModal } from './modal';
 import { initTheme, onThemeChange, getTheme, setTheme, THEME_GROUPS, type Theme } from './theme';
 import { makeMenuSelect } from './menuSelect';
-import { ICONS } from './icons';
-import { userGuidePrintHtml } from './userGuidePrint';
-import { applyGuideImagePolicy } from './guideImages';
 import { showSplitsModal } from './splitsUI';
 import { getSplitLabel, setSplitLabel, waferDisplayLabel, splitsFingerprint, parseSplitsCsv } from './splits';
 import { getRecentFiles, addRecentFiles, removeRecentFile, formatRecentTime } from './recentFiles';
@@ -83,7 +78,7 @@ let cachedLotStats: ReturnType<typeof buildLotStatsSummary> | null = null;
 // (full-window map/gallery view). Destroyed before the container is cleared so
 // wmap's observers/listeners are disconnected deterministically (see
 // WMAP_ISSUES.md #21). The modal drilldown owns its own controller separately.
-let mainViewController: { destroy(): void } | null = null;
+let mainViewController: { destroy(): void; openUserGuide(): void } | null = null;
 function destroyMainView() {
   mainViewController?.destroy();
   mainViewController = null;
@@ -309,7 +304,10 @@ function renderWaferView(wafers: WaferData[], label: string) {
     mainViewController = renderWaferMap(container, waferMap, {
       statsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
-      showHelpButton: true,
+      // No visible wmap help button — tsmap's own Help menu (openHelpMenu)
+      // triggers wmap's guide via the controller's openUserGuide(), not a
+      // button click. See WMAP_ISSUES.md #32.
+      showHelpButton: false,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
@@ -326,7 +324,10 @@ function renderWaferView(wafers: WaferData[], label: string) {
     mainViewController = renderWaferGallery(container, items, {
       lotStatsSummary,
       summaryPanel: { placement: 'right', defaultOpen: true },
-      showHelpButton: true,
+      // No visible wmap help button — tsmap's own Help menu (openHelpMenu)
+      // triggers wmap's guide via the controller's openUserGuide(), not a
+      // button click. See WMAP_ISSUES.md #32.
+      showHelpButton: false,
       downloadFilename: stem,
       onSaveImage,
       viewOptions: { plotMode },
@@ -1236,39 +1237,92 @@ function openSplitsDialog() {
 splitsBtn.addEventListener('click', openSplitsDialog);
 
 
-helpBtn.addEventListener('click', () => {
-  // Shared modal (src/modal.ts) owns backdrop / header chrome / Esc-F / maximize.
-  // The guide content is a scrollable `.help-body` mounted into the modal body;
-  // its styles (padding, overflow, readable-width cap) live in index.html.
-  openModal({
-    title: 'User guide',
-    sizing: 'content',
-    // Wider than the default 'content' box (860px, still used by the Splits
-    // dialog) — screenshots embedded in the guide need real pixels to stay
-    // readable; see --guide-content-width (index.html) which the guide's own
-    // CSS caps its reading column to, in step with this box.
-    contentSize: { width: 'min(94vw, 1040px)', height: 'min(88vh, 900px)' },
-    headerActions: [{
-      // Opens the guide as a standalone light-themed page in the system browser,
-      // where the user can Print or Save-as-PDF. Reuses platform.openReport (the
-      // same plumbing as the wmap report buttons) so it works on Tauri (all OSes)
-      // and web alike. See userGuidePrint.ts.
-      icon: ICONS.printer,
-      label: 'Print or save as PDF (opens in your browser)',
-      onClick: () => platform.openReport(userGuidePrintHtml(__APP_VERSION__)),
-    }],
-    mount: body => {
-      const guide = document.createElement('div');
-      guide.className = 'help-body';
-      guide.innerHTML = USER_GUIDE_HTML;
-      body.appendChild(guide);
-      // Images are loaded from GitHub Pages, not bundled — probe reachability
-      // before promoting them (see guideImages.ts) so offline users get a
-      // clean text-only guide instead of broken-image icons.
-      applyGuideImagePolicy(guide, url => platform.openExternal(url), log);
-    },
+let closeHelpMenu: (() => void) | null = null;
+
+/**
+ * A single Help entry point with two destinations: tsmap's own guide (always
+ * available) and wmap's built-in wafer-map reference (only reachable once a
+ * map/gallery is rendered, via mainViewController.openUserGuide() — wmap's
+ * own help button is disabled entirely (showHelpButton: false) since this
+ * menu is now the only entry point; see WMAP_ISSUES.md #32, resolved in wmap
+ * v0.18.1+ by exporting openUserGuide() on both controllers). Mirrors
+ * openRecentMenu's anchored-popup pattern.
+ */
+function openHelpMenu(anchor: HTMLElement) {
+  if (closeHelpMenu) { closeHelpMenu(); return; }
+
+  const popup = document.createElement('div');
+  popup.style.cssText = [
+    'position:fixed', 'z-index:var(--z-tooltip)',
+    'background:var(--bg-overlay)', 'color:var(--text-secondary)',
+    'border:1px solid var(--border-mid)', 'border-radius:6px',
+    'box-shadow:0 6px 20px rgba(0,0,0,0.35)',
+    'padding:6px', 'min-width:200px',
+    'font-size:13px', 'font-family:system-ui,sans-serif',
+    'display:flex', 'flex-direction:column', 'gap:2px',
+  ].join(';');
+
+  const makeRow = (label: string, hint: string, enabled: boolean, onClick: () => void) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.textContent = label;
+    row.disabled = !enabled;
+    row.style.cssText = 'text-align:left;background:none;border:none;border-radius:4px;' +
+      `padding:6px 10px;font-size:13px;color:${enabled ? 'var(--text-secondary)' : 'var(--text-veryfaint)'};` +
+      `cursor:${enabled ? 'pointer' : 'default'};`;
+    if (enabled) {
+      row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-hover-row)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
+      row.addEventListener('click', () => { close(); onClick(); });
+    }
+    attachTooltip(row, hint);
+    popup.appendChild(row);
+  };
+
+  makeRow('tsmap guide', 'File loading, mapping, splits, test selector, and more', true, () => platform.openGuide());
+
+  makeRow(
+    'Wafer map reference',
+    mainViewController ? 'Wafer map/gallery controls, Analysis tab panels, and more (wmap’s own guide)' : 'Load a file first to access the wafer map reference',
+    !!mainViewController,
+    () => mainViewController?.openUserGuide(),
+  );
+
+  document.body.appendChild(popup);
+  const r = anchor.getBoundingClientRect();
+  const margin = 8;
+  popup.style.top = `${r.bottom + 4}px`;
+  popup.style.left = `${r.left}px`;
+  requestAnimationFrame(() => {
+    const pw = popup.offsetWidth;
+    let left = r.left;
+    if (left + pw + margin > window.innerWidth) left = window.innerWidth - pw - margin;
+    popup.style.left = `${Math.max(margin, left)}px`;
   });
-});
+
+  function onOutside(e: PointerEvent) {
+    const t = e.target as Node;
+    if (!popup.contains(t) && !anchor.contains(t)) close();
+  }
+  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(); }
+
+  function close() {
+    popup.remove();
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('blur', close);
+    window.removeEventListener('resize', close);
+    closeHelpMenu = null;
+  }
+  closeHelpMenu = close;
+
+  document.addEventListener('pointerdown', onOutside, true);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', close);
+  window.addEventListener('resize', close);
+}
+
+helpBtn.addEventListener('click', () => openHelpMenu(helpBtn));
 
 // Replace the native `title` tooltips on tsmap's top-toolbar chrome with the
 // themed, instant tooltip (see tooltip.ts) so they match the wmap map toolbar

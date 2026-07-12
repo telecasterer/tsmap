@@ -48,6 +48,15 @@ export interface Platform {
   openReport(html: string): void;
   /** Opens an external URL in the system browser (Tauri) / a new tab (web). */
   openExternal(url: string): void;
+  /**
+   * Opens the bundled user guide (built by scripts/build-user-guide.mjs from
+   * docs/user-guide.md — see public/guide/). Tauri: the guide is bundled as a
+   * resource (tauri.conf.json) and opened as a local file in the system
+   * browser, so it works fully offline. Web: it's served from the same
+   * origin as the app (Vite copies public/ into the build output), so it's
+   * just a relative link — no bundling step needed there.
+   */
+  openGuide(): void;
   confirm(message: string): Promise<boolean>;
   stdfTestNames(file: FileHandle): Promise<ScanResult>;
   atdfTestNames(file: FileHandle): Promise<ScanResult>;
@@ -171,6 +180,14 @@ function makeTauriPlatform(): Platform {
 
     openExternal(url) {
       getOpener().then(({ openUrl }) => openUrl(url));
+    },
+
+    openGuide() {
+      import('@tauri-apps/api/path').then(async ({ resolveResource }) => {
+        const { openPath } = await getOpener();
+        const path = await resolveResource('guide/index.html');
+        await openPath(path);
+      });
     },
 
     async confirm(message) {
@@ -452,6 +469,20 @@ function makeWebPlatform(): Platform {
 
     openExternal(url) {
       window.open(url, '_blank', 'noopener');
+    },
+
+    openGuide() {
+      // public/guide/ is copied verbatim into the build output by Vite, so
+      // it's reachable at a plain same-origin relative URL — no bundling or
+      // reachability probing needed (unlike the old GitHub-Pages-hosted
+      // version, this ships with the web build itself). Resolved against the
+      // current page URL (not a hardcoded base) so it works whether the app
+      // is served from `/` (dev) or a subpath (e.g. GitHub Pages `/tsmap/app/`).
+      // The filename must be explicit (`guide/index.html`, not `guide/`) —
+      // Vite's dev server doesn't resolve directory-index requests the way a
+      // production static host does, so a trailing-slash URL silently falls
+      // through to the app's own SPA shell instead of the guide.
+      window.open(new URL('guide/index.html', window.location.href).href, '_blank', 'noopener');
     },
 
     async confirm(message) {

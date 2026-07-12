@@ -104,15 +104,86 @@ async function pinToolbar(page) {
 
 export const CAPTURES = [
 
-  // NOTE: §2 (empty state, adding files/append-confirm), §2.1 (wafer rename),
-  // §3 (column mapping), §4 (test selector), and §9 (log panel) all use live
-  // HTML mockups in docs/user-guide.md instead of screenshots (see CLAUDE.md
-  // "Keeping the guide in sync with the app") — screenshots are stripped from
-  // the in-app modal build entirely, so a mockup is the only way those sections
-  // get any visual in-app. Capture definitions for those states were removed
-  // 2026-07-08 rather than left to rot unreferenced; if a mockup ever needs a
-  // docs-site-only companion screenshot, add it back deliberately alongside a
-  // markdown ![]() reference, not as a standing unused target.
+  // ── §2 Empty-state toolbar ────────────────────────────────────────────────
+  // Replaces the hand-authored toolbar mockup — real empty-state screenshot,
+  // no data loaded. (Re-added 2026-07-12: the guide's in-app modal used to
+  // strip all images and rely on mockups instead — see WMAP_ISSUES.md #32 —
+  // that constraint is gone now that the guide bundles real image files.)
+  {
+    file: 'empty-toolbar',
+    group: 'ui',
+    description: 'Empty-state toolbar — Open file / Add files / Recent / theme / help',
+    selector: '#toolbar',
+  },
+
+  // ── §2 Add files → append-confirm dialog ──────────────────────────────────
+  {
+    file: 'append-confirm',
+    group: 'ui',
+    description: 'Append-confirm dialog — die-count mismatch warning (small.stdf + medium.stdf)',
+    setup: [
+      ['loadFile', TD('small.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['addFiles', TD('medium.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['waitForOverlay', '.tsmap-modal-backdrop'],
+    ],
+    selector: '.tsmap-modal',
+  },
+
+  // ── §2.1 Wafer rename overlay ──────────────────────────────────────────────
+  {
+    file: 'wafer-rename',
+    group: 'ui',
+    description: 'Wafer rename overlay — loading small.stdf + medium.stdf together',
+    setup: [
+      ['loadFiles', [TD('small.stdf'), TD('medium.stdf')]],
+      ['dismissSelectorThenRename'],
+      ['shrinkPanelToContent'],
+    ],
+    selector: '.mapping-panel',
+  },
+
+  // ── §3 Column mapping overlay ──────────────────────────────────────────────
+  {
+    file: 'column-mapping',
+    group: 'ui',
+    description: 'Column mapping overlay — small_long.csv (long-format, 10 columns)',
+    setup: [
+      ['loadFile', TD('small_long.csv')],
+      ['waitForOverlay', '#tsmap-mapping-overlay'],
+      ['shrinkPanelToContent'],
+    ],
+    selector: '.mapping-panel',
+  },
+
+  // ── §4 Test selector overlay ────────────────────────────────────────────────
+  {
+    file: 'test-selector',
+    group: 'ui',
+    description: 'Test selector overlay — many_tests.stdf (250 tests)',
+    setup: [
+      ['loadFile', TD('many_tests.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+    ],
+    selector: '#tsmap-test-selector-overlay div[role="dialog"]',
+  },
+
+  // ── §9 Log panel ─────────────────────────────────────────────────────────────
+  {
+    file: 'log-panel',
+    group: 'ui',
+    description: 'Log panel expanded, after a normal load',
+    setup: [
+      ['loadFile', TD('small.stdf')],
+      ['waitForOverlay', '#tsmap-test-selector-overlay'],
+      ['dismissSelector'],
+      ['expandLogPanel'],
+    ],
+    selector: '#log-bar',
+  },
 
   // ── §5.1 Single wafer map — hard bin, summary panel open ─────────────────
   // Use correlated.stdf (W01..W05 IDs don't trigger rename overlay)

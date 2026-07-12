@@ -11,8 +11,6 @@ nav = [
   { "Development" = "development.md" },
 ]
 
-extra_css = ["tsmap-theme.css"]
-
 [project.theme]
 features = [
   "navigation.tabs",

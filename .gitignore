@@ -1,5 +1,5 @@
 node_modules/
-src/userGuideHtml.ts
+public/guide/
 dist/
 site/
 src-tauri/target/

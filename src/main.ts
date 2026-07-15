@@ -166,8 +166,8 @@ if (isTauri) {
 // stay visible to TS — they're real fields (spread from `waferMap` plus both
 // added below), but an explicit `{ items: ReturnType<typeof buildWaferMap>[] }`
 // annotation here would narrow them away for every caller, including the
-// Analysis tab (via `lotStatsSummary`) and wmap's own summary-panel report
-// button, which reads `.label`/`.statsSummary` off the same items.
+// Insights tab (via `lotStatsSummary`) and wmap's own Findings sidebar
+// report button, which reads `.label`/`.statsSummary` off the same items.
 function buildLotStatsSummary(wafers: WaferData[]) {
   const testDefs = toWmapTestDefs(currentTestDefs);
   const items = wafers.map(w => {
@@ -290,6 +290,17 @@ const onSaveImage = isTauri
     }
   : undefined;
 
+// Route wmap CSV/text exports (Summary/Insights "Export CSV") through the
+// native dialog in Tauri; undefined on web uses the default download. Mirrors
+// onSaveImage — see WMAP_ISSUES.md #33.
+const onSaveText = isTauri
+  ? (text: string, suggestedName: string) => {
+      platform.saveTextFile(text, suggestedName)
+        .then(() => log('info', `Saved: ${suggestedName}`))
+        .catch((err: unknown) => log('error', `Save failed: ${err}`));
+    }
+  : undefined;
+
 function renderWaferView(wafers: WaferData[], label: string) {
   destroyMainView();
   container.innerHTML = '';
@@ -310,12 +321,13 @@ function renderWaferView(wafers: WaferData[], label: string) {
       showHelpButton: false,
       downloadFilename: stem,
       onSaveImage,
+      onSaveText,
       viewOptions: { plotMode },
-      // Single-wafer counterpart to the gallery's analysisEnabled below —
-      // closes the gap that blocked removing tsmap's own Charts page (see
+      // Single-wafer counterpart to the gallery's insights below — closes
+      // the gap that blocked removing tsmap's own Charts page (see
       // WMAP_ISSUES.md): single-wafer loads had no chart access at all
       // without this.
-      analysisEnabled: true,
+      insights: { enabled: true },
     });
   } else {
     container.classList.add('gallery');
@@ -330,10 +342,11 @@ function renderWaferView(wafers: WaferData[], label: string) {
       showHelpButton: false,
       downloadFilename: stem,
       onSaveImage,
+      onSaveText,
       viewOptions: { plotMode },
-      // wmap-owned Analysis tab (see WMAP_ISSUES.md #31) — the only chart
+      // wmap-owned Insights tab (see WMAP_ISSUES.md #31) — the only chart
       // access now that tsmap's own Charts page has been removed.
-      analysisEnabled: true,
+      insights: { enabled: true },
     });
   }
 }
@@ -1283,7 +1296,7 @@ function openHelpMenu(anchor: HTMLElement) {
 
   makeRow(
     'Wafer map reference',
-    mainViewController ? 'Wafer map/gallery controls, Analysis tab panels, and more (wmap’s own guide)' : 'Load a file first to access the wafer map reference',
+    mainViewController ? 'Wafer map/gallery controls, Findings/Insights panels, and more (wmap’s own guide)' : 'Load a file first to access the wafer map reference',
     !!mainViewController,
     () => mainViewController?.openUserGuide(),
   );

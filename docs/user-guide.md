@@ -360,7 +360,11 @@ in the [Analysis tab's Group by dropdown](#7-analysis-tab) — split-vs-split
 yield, boxplots, histograms, correlation, and scatter all work immediately with no extra
 setup — and they can optionally be shown right on the wafer map/gallery labels too.
 
-Once a file is loaded, click **Splits…** in the toolbar to open the assignment dialog:
+Once a file is loaded, click **Splits…** in the toolbar to open the assignment dialog.
+The banner at the top shows where things stand: with no assignments yet it points you at
+the two ways to get started (assign below, or load a saved CSV), and once splits exist it
+becomes a summary — e.g. *"5 splits assigned to 13 of 13 wafers"* — so a lot whose splits
+were [restored automatically](#64-restoring-splits-automatically) reads as already done:
 
 ![Wafer splits dialog, just opened — no assignments yet](images/splits-modal.png)
 
@@ -375,6 +379,11 @@ and click **Assign to selected**. **Clear split** removes the assignment from ju
 checked rows; **Clear all** removes every wafer's assignment at once (after a confirmation,
 since it's not scoped to your current selection). Every action applies immediately — there
 is no separate save step, and **Done** just closes the window.
+
+Unlike the test selector, ticking wafers here is never required to proceed — it only
+scopes the **Assign to selected** and **Clear split** buttons, which stay disabled until
+at least one wafer is ticked. Loading a CSV, **Clear all**, and **Save splits…** ignore
+the selection entirely.
 
 ### 6.2 Showing splits on the wafer map
 

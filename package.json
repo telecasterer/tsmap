@@ -1,7 +1,7 @@
 {
   "name": "tsmap",
   "private": true,
-  "version": "0.1.18",
+  "version": "0.1.19",
   "type": "module",
   "scripts": {
     "build:guide": "node scripts/build-user-guide.mjs",
@@ -25,7 +25,7 @@
     "tauri": "env -u GTK_PATH -u GTK_EXE_PREFIX -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR -u GIO_MODULE_DIR -u GTK_IM_MODULE_FILE -u LOCPATH tauri",
     "postinstall": "rm -rf node_modules/.vite/deps",
     "install-bin": "ln -sf $PWD/target/release/tsmap ~/.local/bin/tsmap",
-    "wmap:link": "npm link @paulrobins/wafermap && echo '\\n  ✓ linked to ../wmap — run `npm run build` in ../wmap after each change so dist/ refreshes. Unlink before releasing: npm run wmap:unlink'",
+    "wmap:link": "rm -rf node_modules/@paulrobins/wafermap && ln -s ../../../wmap node_modules/@paulrobins/wafermap && echo '\\n  ✓ linked to ../wmap — run `npm run build` in ../wmap after each change so dist/ refreshes. Unlink before releasing: npm run wmap:unlink'",
     "wmap:unlink": "npm unlink @paulrobins/wafermap && npm install @paulrobins/wafermap && echo '\\n  ✓ unlinked — restored published wmap from npm'",
     "screenshots:data": "python3 scripts/generate_test_suite.py",
     "screenshots": "node scripts/capture-screenshots.mjs",
@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@paulrobins/testdata-parser": "^0.4.0",
-    "@paulrobins/wafermap": "^0.19.0",
+    "@paulrobins/wafermap": "^0.20.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",

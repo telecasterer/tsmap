@@ -567,11 +567,13 @@ async function runSetup(page, steps, baseUrl) {
         // Splits are loaded via a real file picker (platform.pickTextFile), so
         // this must arm Playwright's filechooser listener before the click,
         // same pattern as a real user gesture — page.evaluate()-driven clicks
-        // are not reliably treated as one.
+        // are not reliably treated as one. .first(): when nothing is assigned
+        // yet the empty-state banner shows its own "Load splits…" button
+        // alongside the footer one — both trigger the same load.
         const filePath = args[0];
         const [chooser] = await Promise.all([
           page.waitForEvent('filechooser'),
-          page.locator('div[role="dialog"] button', { hasText: 'Load splits…' }).click(),
+          page.locator('div[role="dialog"] button', { hasText: 'Load splits…' }).first().click(),
         ]);
         await chooser.setFiles(filePath);
         await page.waitForTimeout(500);
@@ -699,7 +701,11 @@ async function main() {
 
   const { server, port } = await startServer();
   const base = `http://127.0.0.1:${port}`;
-  const browser = await chromium.launch();
+  // CHROME_PATH: fall back to a system Chrome when Playwright's bundled
+  // Chromium isn't installed/supported (e.g. CHROME_PATH=/usr/bin/google-chrome).
+  const browser = await chromium.launch(
+    process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {},
+  );
 
   let ok = 0, fail = 0;
 

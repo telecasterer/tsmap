@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-07-16
+
+### Added
+
+- **Splits dialog status banner** — a banner at the top of the **Splits…** dialog now shows where things stand: with no assignments yet it explains the two ways to get started (tick wafers and assign below, or load a saved CSV — with its own **Load splits…** shortcut button); once splits exist it becomes a live summary, e.g. *"5 splits assigned to 13 of 13 wafers"*, so a lot whose splits were auto-restored (like the bundled sample data) reads as already done rather than a task waiting to be repeated.
+
+### Changed
+
+- **Splits dialog selection is now visibly action-scoped** — **Assign to selected** and **Clear split** are disabled until at least one wafer is ticked (previously they silently did nothing), the assign button shows a live count ("Assign to 3 selected"), and a hint line explains the disabled state. This distinguishes the splits dialog's transient ticking (scope for the next action) from the test selector's checked-means-imported semantics — the two dialogs look alike and are often seen back to back, which misled users into thinking "Select all" was required here too.
+- **wmap bumped to 0.20.2** — Analysis tab reorganized into the opt-in **Insights** tab (`insights: { enabled }` replaces `analysisEnabled`), Summary panel findings filters and combined "Summary report" button, wafer/lot metadata badge, and the new `onSaveText` host hook. tsmap wires `onSaveText` through `platform.saveTextFile`, fixing the Insights tab's **Export CSV** button on desktop (WMAP_ISSUES.md #33); Help menu copy updated to match the Insights naming.
+- `npm run wmap:link` creates the `../wmap` symlink directly instead of going through `npm link`, so it no longer depends on npm's global prefix being writable; behaviour is otherwise identical and both guard scripts detect the link the same way.
+- Guide screenshot capture (`scripts/capture-screenshots.mjs`) honours a `CHROME_PATH` env var for environments where Playwright's bundled Chromium is unavailable, and the `loadSplitsFile` step tolerates the splits dialog's second "Load splits…" button.
+
 ## [0.1.18] — 2026-07-12
 
 ### Added

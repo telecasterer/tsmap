@@ -42,6 +42,29 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
     mount(body) {
       body.style.cssText += 'padding:16px;gap:10px;font-size:13px;color:var(--text-light)';
 
+      // Status banner. Empty state (no wafer has a split yet): guidance + a
+      // Load shortcut — the moment a first-time user (fresh off the test
+      // selector's "select all to proceed" flow) is most likely to assume they
+      // must select everything. Assigned state: a summary ("2 splits assigned
+      // to 6 of 13 wafers"), so e.g. the auto-restored sample-data splits read
+      // as "already done" rather than a task waiting to be repeated.
+      const statusBanner = document.createElement('div');
+      statusBanner.style.cssText = [
+        'display:flex;align-items:center;gap:10px;flex-wrap:wrap',
+        'border:1px solid var(--border-mid);border-radius:4px;padding:8px 10px',
+        'font-size:12px;color:var(--text-secondary)',
+      ].join(';');
+      const statusBannerText = document.createElement('span');
+      statusBannerText.style.cssText = 'flex:1;min-width:200px';
+      const statusBannerLoadBtn = document.createElement('button');
+      statusBannerLoadBtn.textContent = 'Load splits…';
+      statusBannerLoadBtn.style.cssText = [
+        'padding:3px 10px;border-radius:4px;border:1px solid var(--border-mid)',
+        'background:none;color:var(--accent,#4a9eff);cursor:pointer;font-size:12px;flex-shrink:0',
+      ].join(';');
+      statusBannerLoadBtn.addEventListener('click', () => { void loadSplits(); });
+      statusBanner.append(statusBannerText, statusBannerLoadBtn);
+
       const searchInput = document.createElement('input');
       searchInput.type = 'search';
       searchInput.placeholder = 'Filter by wafer ID or source file…';
@@ -113,6 +136,7 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
           cb.addEventListener('change', () => {
             if (cb.checked) selected.add(i); else selected.delete(i);
             lastClickedVisibleIndex = vi;
+            updateUi();
           });
           cb.addEventListener('click', (evt) => {
             if (evt.shiftKey && lastClickedVisibleIndex !== null) {
@@ -142,8 +166,8 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
           row.append(cb, idSpan, srcSpan, splitSpan);
           listContainer.appendChild(row);
         }
+        updateUi();
       }
-      renderList();
 
       // ── Assign row ────────────────────────────────────────────────────────
       const assignRow = document.createElement('div');
@@ -171,6 +195,10 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
         existingRow.appendChild(chip);
       }
 
+      // Both action buttons are disabled while nothing is selected (see
+      // updateUi) — selection here is transient scope for the next action,
+      // unlike the test selector where checked = imported. A disabled button
+      // plus the hint line below makes that legible instead of a silent no-op.
       const assignBtn = document.createElement('button');
       assignBtn.textContent = 'Assign to selected';
       assignBtn.style.cssText = secondaryBtnCss;
@@ -236,6 +264,30 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
 
       assignRow.append(splitInput, assignBtn, clearBtn, clearAllBtn);
 
+      const selectionHint = document.createElement('div');
+      selectionHint.style.cssText = 'font-size:12px;color:var(--text-dim);opacity:0.8';
+      selectionHint.textContent = 'Tick wafers above to enable Assign / Clear split.';
+
+      function updateUi(): void {
+        const n = selected.size;
+        assignBtn.textContent = n > 0 ? `Assign to ${n} selected` : 'Assign to selected';
+        for (const btn of [assignBtn, clearBtn]) {
+          btn.disabled = n === 0;
+          btn.style.opacity = n === 0 ? '0.5' : '';
+          btn.style.cursor = n === 0 ? 'default' : 'pointer';
+        }
+        selectionHint.style.display = n === 0 ? '' : 'none';
+        const assignedCount = wafers.filter(w => getSplitLabel(w) !== undefined).length;
+        if (assignedCount === 0) {
+          statusBannerText.textContent = 'No splits assigned yet — tick wafers and assign a split name below, or load a saved assignment from CSV.';
+          statusBannerLoadBtn.style.display = '';
+        } else {
+          const splitCount = listSplitValues(wafers).length;
+          statusBannerText.textContent = `${splitCount} split${splitCount !== 1 ? 's' : ''} assigned to ${assignedCount} of ${wafers.length} wafers.`;
+          statusBannerLoadBtn.style.display = 'none';
+        }
+      }
+
       // ── Save / load ───────────────────────────────────────────────────────
       const ioRow = document.createElement('div');
       ioRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
@@ -252,10 +304,8 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
         }
       });
 
-      const loadBtn = document.createElement('button');
-      loadBtn.textContent = 'Load splits…';
-      loadBtn.style.cssText = secondaryBtnCss;
-      loadBtn.addEventListener('click', async () => {
+      // Shared by the footer "Load splits…" button and the empty-state banner's.
+      async function loadSplits(): Promise<void> {
         let text: string | null;
         try {
           text = await options.onLoad();
@@ -278,7 +328,12 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
         renderList();
         rebuildChips();
         options.onChange();
-      });
+      }
+
+      const loadBtn = document.createElement('button');
+      loadBtn.textContent = 'Load splits…';
+      loadBtn.style.cssText = secondaryBtnCss;
+      loadBtn.addEventListener('click', () => { void loadSplits(); });
 
       ioRow.append(saveBtn, loadBtn);
 
@@ -303,7 +358,8 @@ export function showSplitsModal(wafers: WaferData[], options: SplitsUIOptions): 
 
       footerRow.append(footerNote, doneBtn);
 
-      body.append(searchInput, suffixLabel, bulkRow, listContainer, assignRow, existingRow, ioRow, footerRow);
+      body.append(statusBanner, searchInput, suffixLabel, bulkRow, listContainer, assignRow, selectionHint, existingRow, ioRow, footerRow);
+      renderList();
     },
   });
 }

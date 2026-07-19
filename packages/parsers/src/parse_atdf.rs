@@ -53,6 +53,7 @@ const PTR_TEST_NUM: usize = 0;
 const PTR_HEAD_NUM: usize = 1;
 const PTR_SITE_NUM: usize = 2;
 const PTR_RESULT: usize = 3;
+const PTR_PASS_FAIL: usize = 4;
 const PTR_TEST_TXT: usize = 6;
 const PTR_UNITS: usize = 9;
 const PTR_LO_LIMIT: usize = 10;
@@ -181,6 +182,7 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
     // Keyed by packed (head,site) u32 (see `site_key`) — avoids a `format!` string
     // key per PIR/PTR/FTR/PRR. Inner map keyed by test-number string (tsmap identity).
     let mut pending_values: HashMap<u32, HashMap<String, f64>> = HashMap::new();
+    let mut pending_pass: HashMap<u32, HashMap<String, bool>> = HashMap::new();
     let mut pending_site: HashMap<u32, u32> = HashMap::new();
     let mut soft_bin_fabricated: usize = 0;
 
@@ -252,6 +254,7 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
                 let site: u32 = at(&raw_fields, PIR_SITE_NUM).parse().unwrap_or(1);
                 pending_site.insert(key, site);
                 pending_values.insert(key, HashMap::new());
+                pending_pass.insert(key, HashMap::new());
             }
             "PTR" => {
                 let test_num = at(&raw_fields, PTR_TEST_NUM);
@@ -274,6 +277,13 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
                             vals.insert(test_num.to_string(), result);
                         }
                     }
+                    // ATDF PTR field 5 is Pass/Fail Flag: "P"/"F"; blank = no indication.
+                    let pf = at(&raw_fields, PTR_PASS_FAIL);
+                    if pf.eq_ignore_ascii_case("P") || pf.eq_ignore_ascii_case("F") {
+                        if let Some(passes) = pending_pass.get_mut(&key) {
+                            passes.insert(test_num.to_string(), pf.eq_ignore_ascii_case("P"));
+                        }
+                    }
                 }
             }
             "FTR" => {
@@ -289,9 +299,13 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
                     });
                 }
                 if want(test_num) {
-                    let passed = at(&raw_fields, FTR_PASS_FAIL).eq_ignore_ascii_case("P");
-                    if let Some(vals) = pending_values.get_mut(&key) {
-                        vals.insert(test_num.to_string(), if passed { 1.0 } else { 0.0 });
+                    // Functional outcomes are verdicts, not values: "P"/"F" go to the
+                    // pass channel; anything else records nothing (never a fabricated fail).
+                    let pf = at(&raw_fields, FTR_PASS_FAIL);
+                    if pf.eq_ignore_ascii_case("P") || pf.eq_ignore_ascii_case("F") {
+                        if let Some(passes) = pending_pass.get_mut(&key) {
+                            passes.insert(test_num.to_string(), pf.eq_ignore_ascii_case("P"));
+                        }
                     }
                 }
             }
@@ -307,6 +321,7 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
                 let key = site_key(at(&raw_fields, PRR_HEAD_NUM), at(&raw_fields, PRR_SITE_NUM));
                 let site_num = pending_site.remove(&key);
                 let test_values = pending_values.remove(&key).unwrap_or_default();
+                let test_pass = pending_pass.remove(&key).unwrap_or_default();
                 let hbin: Option<u32> = at(&raw_fields, PRR_HARD_BIN).parse().ok();
                 let raw_sbin: Option<u32> = at(&raw_fields, PRR_SOFT_BIN).parse().ok();
                 if raw_sbin == Some(65535) { soft_bin_fabricated += 1; }
@@ -314,7 +329,7 @@ fn parse_atdf_str(raw: &str, selected: Option<&std::collections::HashSet<u32>>) 
                     .map(|v: u32| if v == 65535 { hbin.unwrap_or(1) } else { v })
                     .or(hbin);
                 let part_id: Option<u32> = at(&raw_fields, PRR_PART_ID).parse().ok();
-                let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values };
+                let die = DieResult { x, y, hbin, sbin, site_num, part_id, test_values, test_pass };
                 match current_wafer.as_mut() {
                     Some(w) => w.results.push(die),
                     None => {
@@ -580,7 +595,8 @@ mod tests {
         let d3 = dies.iter().find(|d| d.site_num == Some(3)).expect("site 3 die");
         // Each site's value landed on the right die (packed key disambiguates sites).
         assert_eq!(d2.test_values.get("1000"), Some(&1.5));
-        assert_eq!(d2.test_values.get("2000"), Some(&1.0)); // FTR pass → 1.0
+        assert_eq!(d2.test_pass.get("2000"), Some(&true)); // FTR pass → verdict channel
+        assert!(!d2.test_values.contains_key("2000"));
         assert_eq!(d3.test_values.get("1000"), Some(&2.5));
         assert_eq!(d2.hbin, Some(1));
         assert_eq!(d3.hbin, Some(2));
@@ -700,13 +716,16 @@ mod tests {
     }
 
     #[test]
-    fn ftr_pass_is_1_fail_is_0() {
+    fn ftr_verdict_goes_to_test_pass_not_values() {
         let inner = pir(1,1) + &ftr_rec("200", 1, 1, true)  + &prr(1,1,0,0,1,1)
             + &pir(1,1) + &ftr_rec("200", 1, 1, false) + &prr(1,1,1,0,2,2);
         let path = tmp(&one_wafer("W1", &inner));
         let result = parse_atdf_sync(path.to_str().unwrap().to_string()).unwrap();
-        assert_eq!(result.wafers[0].results[0].test_values["200"], 1.0);
-        assert_eq!(result.wafers[0].results[1].test_values["200"], 0.0);
+        assert_eq!(result.wafers[0].results[0].test_pass["200"], true);
+        assert_eq!(result.wafers[0].results[1].test_pass["200"], false);
+        // Functional outcomes are verdicts, never fabricated values.
+        assert!(!result.wafers[0].results[0].test_values.contains_key("200"));
+        assert!(!result.wafers[0].results[1].test_values.contains_key("200"));
         assert_eq!(result.test_defs["200"].test_type, "F");
     }
 

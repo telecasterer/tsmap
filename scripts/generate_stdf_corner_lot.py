@@ -51,6 +51,7 @@ def u1(v: int) -> bytes: return struct.pack('B', v & 0xFF)
 def u2(v: int) -> bytes: return struct.pack('<H', v & 0xFFFF)
 def u4(v: int) -> bytes: return struct.pack('<I', v & 0xFFFFFFFF)
 def i2(v: int) -> bytes: return struct.pack('<h', v)
+def i4(v: int) -> bytes: return struct.pack('<i', v)
 def r4(v: float) -> bytes: return struct.pack('<f', v)
 def b1(v: int) -> bytes: return bytes([v & 0xFF])
 def c1(c: str) -> bytes: return c.encode('ascii')[:1]
@@ -142,9 +143,12 @@ def ftr_rec(test_num: int, site: int, passed: bool, test_txt: str) -> bytes:
         u4(test_num) + u1(1) + u1(site) +
         b1(0x00 if passed else 0x80) + b1(0xFF) +
         u4(0) + u4(0) + u4(0) + u4(0) +
-        i2(0) + i2(0) + i2(0) + u2(0) + u2(0) +
-        cn(test_txt) + cn('') + cn('') + cn('') + cn('') + cn('') + cn('') + cn('') +
-        u1(0) + b'\x00'
+        i4(0) + i4(0) + i2(0) + u2(0) + u2(0) +   # xfail/yfail are I*4 per spec
+        u2(0) +                                    # fail_pin (Dn: 0 bits)
+        cn('') + cn('') + cn('') +                 # vect_nam, time_set, op_code
+        cn(test_txt) +                             # test_txt — the spec's name slot
+        cn('') + cn('') + cn('') +                 # alarm_id, prog_txt, rslt_txt
+        u1(0) + u2(0)                              # patg_num, spin_map (Dn: 0 bits)
     )
     return record(*FTR, body)
 

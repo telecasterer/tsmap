@@ -190,7 +190,7 @@ fn parse_json_from_value(raw: Value, mapping: CsvMapping) -> Result<ParsedStdf, 
                 }
             }
 
-            dies.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
+            dies.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values, test_pass: HashMap::new() });
         }
 
         let part_count = dies.len() as u32;
@@ -284,7 +284,7 @@ fn parse_json_wide(
             part_count: None, good_count: None, fail_count: None,
             fields: Vec::new(),
         });
-        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
+        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values, test_pass: HashMap::new() });
     }
 
     let wafers: Vec<WaferData> = groups.into_values().map(|mut w| {

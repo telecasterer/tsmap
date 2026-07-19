@@ -5,7 +5,7 @@ import { buildWaferMap } from '@paulrobins/wafermap';
 import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render';
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
-import type { FileHandle, StdfTestNames, ScanResult } from './platform';
+import type { FileHandle, StdfTestNames, ScanResult, CliStartupArgs } from './platform';
 import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData, errMsg } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
@@ -143,7 +143,33 @@ if (isTauri) {
         handleFiles(files, false);
       }
     }).catch(e => log('warn', `File drop listener failed: ${e}`));
+
+    // Files forwarded from a second `tsmap <files>` launch (see
+    // src-tauri/src/lib.rs's single-instance callback, which focuses this
+    // window and emits this event rather than deciding anything itself).
+    // Nothing loaded yet → just open it. Otherwise never clobber in-progress
+    // analysis silently: ask first, and if declined, open the new data in its
+    // own independent window instead of discarding it.
+    listen<CliStartupArgs>('cli-open-files', async event => {
+      const args = event.payload;
+      if (currentWafers.length === 0) {
+        applyCliArgs(args);
+        return;
+      }
+      const n = args.files.length;
+      const replace = await platform.confirm(
+        `Replace the currently loaded data with ${n} file${n !== 1 ? 's' : ''} from the new tsmap launch?`
+      );
+      if (replace) {
+        applyCliArgs(args);
+      } else {
+        platform.respawnNewInstance(args).catch(e => log('error', `Failed to open a new tsmap window: ${errMsg(e)}`));
+      }
+    }).catch(e => log('warn', `CLI file listener failed: ${e}`));
   });
+
+  // Files/tests/splits resolved from this process's own CLI args/stdin at launch.
+  platform.getStartupFiles().then(args => { if (args) applyCliArgs(args); });
 } else {
   // Web drag-drop
   document.body.addEventListener('dragover', e => { e.preventDefault(); });
@@ -205,6 +231,16 @@ const SPLITS_LS_KEY = 'tsmap:wafer-splits';
  * dialog, log message, etc.) — no separate apply/UI logic duplicated.
  */
 let pendingSampleSplitSeed: Map<string, string> | null = null;
+
+/**
+ * Set by `applyCliArgs` just before calling `handleFiles`, from a CLI-supplied
+ * `--tests` file's content. Consumed once by the very first
+ * `showTestSelectorOverlay` call for that load (as `preloadListText`) and
+ * cleared — a later re-open of the same overlay within one load (e.g. the
+ * "scan all files" widen) must not keep re-applying it over the user's
+ * in-progress adjustments.
+ */
+let pendingTestListPreload: string | null = null;
 
 /** Applies any saved splits for this exact wafer set and reports whether it
  * applied anything — callers must surface that (never apply silently), since
@@ -794,6 +830,11 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     let scopedDefs = firstPassTestDefs;
     let carrySelection: number[] = [];
     let carryNames = new Map<number, string>();
+    // Consumed once, on the very first open of this load's selector — a
+    // "scan all files" re-open within the same load must not keep re-applying
+    // it over the user's in-progress adjustments (see pendingTestListPreload).
+    let testListPreload = pendingTestListPreload;
+    pendingTestListPreload = null;
 
     selector: for (;;) {
       const allTestNums = new Set(Object.keys(scopedDefs).map(Number));
@@ -814,6 +855,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
             onScanAll: canScanAll ? (sel, names) => resolve({ kind: 'scanAll', selection: sel, names }) : undefined,
             initialSelection: carrySelection,
             nameOverrides: carryNames,
+            preloadListText: testListPreload ?? undefined,
             capacity: totalDieCount > 0 ? { dieCount: totalDieCount, totalTests: allTestNums.size } : undefined,
             onSave: async (saveEntries) => {
               const lines = [
@@ -829,6 +871,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
           },
         );
       });
+      testListPreload = null; // only ever applied on the loop's first open
 
       if (result.kind === 'cancel') { setIdle(); return; }
 
@@ -981,6 +1024,37 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
     );
     if (originalPaths) { addRecentFiles(originalPaths); syncRecentBtn(); }
   }
+}
+
+/**
+ * Applies files/tests/splits resolved from CLI args — either this process's
+ * own argv/stdin at launch, or argv forwarded from a second `tsmap <files>`
+ * launch via the single-instance plugin (see the `cli-open-files` listener
+ * below). `--splits`/`--tests` reuse the exact seed/preload mechanisms the
+ * "Load sample data" flow and the test selector's own "Load list" button
+ * already use — nothing here is a new, silent code path.
+ */
+async function applyCliArgs(args: CliStartupArgs): Promise<void> {
+  if (args.splits) {
+    try {
+      pendingSampleSplitSeed = parseSplitsCsv(await platform.readTextFile(args.splits));
+    } catch (e) {
+      log('error', `Failed to read splits file "${args.splits}": ${errMsg(e)}`);
+    }
+  }
+  if (args.tests) {
+    try {
+      pendingTestListPreload = await platform.readTextFile(args.tests);
+    } catch (e) {
+      log('error', `Failed to read tests file "${args.tests}": ${errMsg(e)}`);
+    }
+  }
+  const files: FileHandle[] = args.files.map(p => ({
+    name: basename(p),
+    bytes: new Uint8Array(0),
+    path: p,
+  }));
+  handleFiles(files, false);
 }
 
 // ── Open / Add buttons ────────────────────────────────────────────────────────
@@ -1348,6 +1422,10 @@ helpBtn.addEventListener('click', () => openHelpMenu(helpBtn));
 upgradeTitleTooltips(document.getElementById('toolbar') ?? document);
 attachTooltip(valueFindingsBtn, 'Add regional test-value findings to the summary panel (slower on large lots)');
 attachTooltip(logToggle, logToggleTip);
+// file-label is CSS-truncated with ellipsis (long paths/filenames would
+// otherwise wrap and double the toolbar's height) — a getter-backed tooltip
+// shows the untruncated text, since its content changes on every load/idle.
+attachTooltip(fileLabel, () => fileLabel.textContent ?? '');
 
 // ── Theme picker ──────────────────────────────────────────────────────────
 // Apply the persisted theme, add the toolbar dropdown, and re-render the

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.1.20] — 2026-07-19
+
+### Added
+
+- **Command-line file arguments** — `tsmap file1.stdf file2.stdf` opens files directly from a terminal. `--list <file>` reads a newline-delimited list of paths (blank/`#`-comment lines skipped). `--tests <file>` pre-fills the test selector's selection/renames from a saved test list (the same CSV the selector's own **Save list** button produces) — the selector still always opens for a final confirm, per the existing "always shown" rule, it just saves re-picking tests you already chose. `--splits <file>` applies a wafer-splits CSV automatically, the same way the bundled sample lot's splits already do. With no files/`--list` given and stdin piped (never when run interactively), a newline-delimited file list is read from stdin instead. `-h`/`--help` prints full usage. See the [user guide](docs/user-guide.md#command-line) and CLAUDE.md for details.
+- **Single-instance forwarding** — launching `tsmap <files>` while an instance is already running hands the files to that window instead of opening a blank second one (`tauri-plugin-single-instance`). With nothing loaded yet, the files open immediately. With data already loaded, a confirmation dialog asks before replacing the view — declining opens the new files in a separate, independent window instead of discarding them. `--new-instance` also lets anyone open a second window deliberately, bypassing the prompt.
+- **CLI argument validation** — an unrecognized flag (`--` or single-dash) is now a hard error rather than being silently dropped or misread as a data-file path (e.g. a typo'd `-tests` no longer becomes a bogus "file" named `-tests`). A value flag (`--list`/`--tests`/`--splits`) with a missing value, or one immediately followed by another flag, also errors instead of silently swallowing the next flag as its value.
+- **Functional (pass/fail) tests are now first-class** — a test with no measured value, only a recorded pass/fail outcome (continuity, boundary scan, any go/no-go test), no longer gets faked into a `0.0`/`1.0` parametric value with meaningless boxplot/histogram/Cpk/correlation entries. STDF TEST_FLG and ATDF PTR `PASS_FAIL` (previously unread, despite being in the spec) now populate a new `DieResult.testPass` verdict channel, kept separate from `testValues`; FTR records write a verdict only. wmap 0.20.3 (see below) renders this via `passFailDisplay: 'test'` — solid green/red per die instead of a meaningless value gradient — and a "Functional Tests" pass-rate table replaces parametric stats for these tests everywhere (Summary panel, Insights, regional findings). **Desktop only for now** — the native build already ships this (it uses the parsers crate directly), but the browser/WASM build still produces legacy-encoded functional data until `@paulrobins/testdata-parser` is republished (falls back gracefully; see WMAP_ISSUES.md #34). Also fixed a related bug the end-to-end pass surfaced: every `generate_stdf*.py` script was writing a non-spec FTR record (wrong field width, test name in the wrong slot), which silently lost functional test names in the UI ("Test 2001" instead of "scan_chain") — `sample_data/PVT-LOT-05.stdf`/`sample-lot.stdf.gz` regenerated with the fix.
+
+### Changed
+
+- **wmap bumped to 0.20.3** — adds the first-class functional-test (pass/fail) support described above (`TestDef.testType`, `DieResult.testPass`, `passFailDisplay`) — see WMAP_ISSUES.md #34.
+
+### Fixed
+
+- **Toolbar's loaded-file info could wrap onto multiple lines and double the toolbar's height** for a long filename/path. Now truncates with an ellipsis and shows the full text on hover.
+- **`tsmap` crashed with a `GLIBC_PRIVATE` symbol lookup error when launched from a terminal that had inherited a snap-packaged app's GTK/GDK/GIO environment variables** (VS Code's snap build, in particular) — these pointed GTK's module loader at `.so` files bundled inside the snap, which pulled in an incompatible `libpthread` at load time. Now stripped at startup on Linux, unconditionally, regardless of how tsmap is invoked.
+
 ## [0.1.19] — 2026-07-16
 
 ### Added

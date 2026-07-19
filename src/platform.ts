@@ -35,6 +35,16 @@ export interface ScanResult {
   dieCount: number;
 }
 
+/** Data files (already expanded from any `--list`), plus an optional
+ *  test-selection list and/or splits CSV — resolved to absolute paths by the
+ *  Rust side (`cli_files.rs`), from either this process's own argv/stdin or
+ *  argv forwarded by the single-instance plugin from a second launch. */
+export interface CliStartupArgs {
+  files: string[];
+  tests?: string;
+  splits?: string;
+}
+
 export interface Platform {
   pickFiles(): Promise<FileHandle[]>;
   expandArchives(files: FileHandle[]): Promise<FileHandle[]>;
@@ -71,6 +81,19 @@ export interface Platform {
    *  (see splits.ts's parseSplitsCsv), or null if it can't be read — splits
    *  are a bonus on top of the sample load, not required for it to succeed. */
   getSampleSplitsCsv(): Promise<string | null>;
+  /** Files/tests-list/splits resolved from this process's own CLI args/stdin
+   *  at launch (see cli_files.rs) — consumed exactly once. `null` on web
+   *  (there is no CLI entry point there) or when tsmap was launched with no
+   *  file arguments at all. */
+  getStartupFiles(): Promise<CliStartupArgs | null>;
+  /** Launches a brand-new, independent tsmap process for `args` — used when
+   *  the user declines to replace the current view with files forwarded from
+   *  a second `tsmap <files>` launch (see the `cli-open-files` event). No-op
+   *  on web, where there is no process to respawn. */
+  respawnNewInstance(args: CliStartupArgs): Promise<void>;
+  /** Reads a text file by absolute path — used to fetch the content of a
+   *  CLI-supplied `--tests`/`--splits` file. Tauri only; never called on web. */
+  readTextFile(path: string): Promise<string>;
 }
 
 // ── Tauri platform ────────────────────────────────────────────────────────────
@@ -264,6 +287,27 @@ function makeTauriPlatform(): Platform {
       } catch {
         return null;
       }
+    },
+
+    async getStartupFiles() {
+      const invoke = await getInvoke();
+      return invoke<CliStartupArgs | null>('get_startup_files');
+    },
+
+    async respawnNewInstance(args) {
+      const invoke = await getInvoke();
+      await invoke('respawn_new_instance', { args });
+    },
+
+    async readTextFile(path) {
+      // The `@tauri-apps/plugin-fs` API is scope-restricted by
+      // capabilities/default.json (dialog-picked paths only) — a CLI-supplied
+      // `--tests`/`--splits` path was never picked via a dialog, so it isn't
+      // in scope and that API rejects it as "forbidden path". Route through
+      // the unrestricted `read_text_file` command instead, same as
+      // `getSampleSplitsCsv` already does for arbitrary bundled-resource paths.
+      const invoke = await getInvoke();
+      return invoke<string>('read_text_file', { path });
     },
   };
 }
@@ -548,6 +592,12 @@ function makeWebPlatform(): Platform {
       const bytes = new Uint8Array(await res.arrayBuffer());
       return { name: 'sample-lot.stdf.gz', bytes };
     },
+
+    // No CLI entry point on web — these three are never actually invoked
+    // there (main.ts's `if (isTauri)` startup block is what calls them).
+    async getStartupFiles() { return null; },
+    async respawnNewInstance() {},
+    async readTextFile() { throw new Error('readTextFile is not supported on web'); },
 
     async getSampleSplitsCsv() {
       try {

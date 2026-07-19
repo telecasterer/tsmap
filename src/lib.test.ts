@@ -91,6 +91,11 @@ describe('autoPlotMode', () => {
     expect(autoPlotMode(wafers)).toBe('value');
   });
 
+  it('falls back to value when only functional verdicts (testPass) exist', () => {
+    const wafers = [{ waferId: 'W1', results: [{ x: 0, y: 0, testPass: { 2001: true } }] }];
+    expect(autoPlotMode(wafers)).toBe('value');
+  });
+
   it('defaults to hardBin for empty results', () => {
     expect(autoPlotMode([{ waferId: 'W1', results: [] }])).toBe('hardBin');
   });
@@ -132,6 +137,15 @@ describe('applyTestSelection', () => {
     );
     applyTestSelection(parsed, [1001], null, new Map());
     expect(parsed.wafers[0].results[0].testValues).toEqual({ 1001: 0.5 });
+  });
+
+  it('prunes per-die testPass to selection', () => {
+    const parsed = makeParsed(
+      { '1001': { name: 'A', testType: 'P' }, '2001': { name: 'scan', testType: 'F' }, '2002': { name: 'bist', testType: 'F' } },
+    );
+    parsed.wafers[0].results[0].testPass = { 2001: true, 2002: false };
+    applyTestSelection(parsed, [1001, 2001], null, new Map());
+    expect(parsed.wafers[0].results[0].testPass).toEqual({ 2001: true });
   });
 
   it('backfills stop-on-fail tests from firstPassDefs', () => {

@@ -107,6 +107,7 @@ export function toWmapTestDefs(testDefs: Record<string, TestDef>): WmapTestDef[]
     unit: def.units,
     limitLow: def.loLimit,
     limitHigh: def.hiLimit,
+    testType: def.testType,
   }));
 }
 
@@ -114,7 +115,9 @@ export function autoPlotMode(wafers: WaferData[]): PlotMode {
   const sample = wafers[0]?.results ?? [];
   const hasHbin = sample.some(d => d.hbin !== undefined);
   const hasSbin = sample.some(d => d.sbin !== undefined);
-  const hasValues = sample.some(d => d.testValues && Object.keys(d.testValues).length > 0);
+  const hasValues = sample.some(d =>
+    (d.testValues && Object.keys(d.testValues).length > 0) ||
+    (d.testPass && Object.keys(d.testPass).length > 0));
   return hasHbin ? 'hardBin' : hasSbin ? 'softBin' : hasValues ? 'value' : 'hardBin';
 }
 
@@ -142,12 +145,18 @@ export function applyTestSelection(
     if (!selectionSet.has(key)) delete parsed.testDefs[key];
   }
 
-  // Prune per-die testValues to selection.
+  // Prune per-die testValues and testPass to selection.
   for (const wafer of parsed.wafers) {
     for (const die of wafer.results) {
-      if (!die.testValues) continue;
-      for (const key of Object.keys(die.testValues)) {
-        if (!selectionSet.has(key)) delete die.testValues[Number(key)];
+      if (die.testValues) {
+        for (const key of Object.keys(die.testValues)) {
+          if (!selectionSet.has(key)) delete die.testValues[Number(key)];
+        }
+      }
+      if (die.testPass) {
+        for (const key of Object.keys(die.testPass)) {
+          if (!selectionSet.has(key)) delete die.testPass[Number(key)];
+        }
       }
     }
   }

@@ -314,6 +314,7 @@ fn parse_csv_from_reader(mut rdr: csv::Reader<Box<dyn Read>>, mapping: CsvMappin
                 site_num,
                 part_id: None,
                 test_values,
+                test_pass: HashMap::new(),
             });
         }
 
@@ -432,7 +433,7 @@ fn parse_csv_wide(
             part_count: None, good_count: None, fail_count: None,
             fields: Vec::new(),
         });
-        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values });
+        wafer.results.push(DieResult { x, y, hbin, sbin, site_num, part_id: None, test_values, test_pass: HashMap::new() });
     }
 
     // Finalise per-wafer counts.

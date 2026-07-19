@@ -23,6 +23,13 @@ pub struct DieResult {
     pub part_id: Option<u32>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub test_values: HashMap<String, f64>,
+    /// Recorded per-test pass/fail verdicts (true = pass), keyed like
+    /// `test_values`. Functional (FTR) outcomes live here ONLY — they have no
+    /// measured value; parametric (PTR) tests get an entry when the tester
+    /// recorded a valid pass/fail indication (STDF TEST_FLG bit 6 clear).
+    /// Empty map serialises to nothing, so parametric-only files are unchanged.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub test_pass: HashMap<String, bool>,
 }
 
 #[derive(Serialize)]
@@ -154,6 +161,19 @@ mod tests {
         assert_eq!(epoch_to_iso(0), None); // 0 treated as "unset"
         assert_eq!(epoch_to_iso(1).as_deref(), Some("1970-01-01T00:00:01Z"));
         assert_eq!(epoch_to_iso(u32::MAX), None); // sentinel
+    }
+
+    #[test]
+    fn die_result_serialises_test_pass_camel_case_and_omits_empty() {
+        let mut die = DieResult {
+            x: 1, y: 2, hbin: Some(1), sbin: None, site_num: None, part_id: None,
+            test_values: HashMap::new(), test_pass: HashMap::new(),
+        };
+        let json = serde_json::to_string(&die).unwrap();
+        assert!(!json.contains("testPass"), "empty map must serialise to nothing: {json}");
+        die.test_pass.insert("2001".to_string(), true);
+        let json = serde_json::to_string(&die).unwrap();
+        assert!(json.contains("\"testPass\":{\"2001\":true}"), "camelCase key expected: {json}");
     }
 
     #[test]

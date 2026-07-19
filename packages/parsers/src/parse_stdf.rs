@@ -289,7 +289,17 @@ struct PtrFast {
     head: u8,
     site: u8,
     failed: bool,
+    /// Recorded pass/fail verdict from TEST_FLG: `None` when bit 6 (0x40,
+    /// "no pass/fail indication") is set, else `Some(bit 7 == 0)`.
+    pass: Option<bool>,
     result: f32,
+}
+
+/// TEST_FLG (shared PTR/FTR semantics): bit 6 (0x40) = no pass/fail indication
+/// recorded; bit 7 (0x80) = test failed. Valid verdict only when bit 6 is clear.
+#[inline(always)]
+fn test_flg_pass(flg: u8) -> Option<bool> {
+    if flg & 0x40 != 0 { None } else { Some(flg & 0x80 == 0) }
 }
 
 #[inline(always)]
@@ -300,6 +310,7 @@ fn parse_ptr_fast(b: &[u8], o: ByteOrder) -> Option<PtrFast> {
         head:     b[4],
         site:     b[5],
         failed:   b[6] & 0x80 != 0,
+        pass:     test_flg_pass(b[6]),
         result:   read_f32(b, 8, o)?,
     })
 }
@@ -355,14 +366,15 @@ fn ptr_limits_explicitly_absent(b: &[u8]) -> bool {
 }
 
 // FTR layout: [0..4] test_num, [4] head, [5] site, [6] test_flg
+// The returned verdict is `None` when TEST_FLG bit 6 marks it invalid — the
+// caller records nothing then (never a fabricated fail).
 #[inline(always)]
-fn parse_ftr_fast(b: &[u8], o: ByteOrder) -> Option<(u32, u8, u8, bool)> {
+fn parse_ftr_fast(b: &[u8], o: ByteOrder) -> Option<(u32, u8, u8, Option<bool>)> {
     if b.len() < 7 { return None; }
     let test_num = read_u4(b, 0, o)?;
     let head = b[4];
     let site = b[5];
-    let failed = b[6] & 0x80 != 0;
-    Some((test_num, head, site, failed))
+    Some((test_num, head, site, test_flg_pass(b[6])))
 }
 
 // FTR TEST_TXT is deep in the record after many fixed + variable-length fields.
@@ -432,25 +444,37 @@ impl TestIndex {
     fn len(&self) -> usize { self.order.len() }
 }
 
+// Per-slot pass/fail channel encoding for SiteAccum::pass.
+const PASS_ABSENT: u8 = 0;
+const PASS_FAIL:   u8 = 1;
+const PASS_PASS:   u8 = 2;
+
 struct SiteAccum {
     values: Vec<f32>,   // NaN = not present / failed with result==0
+    pass: Vec<u8>,      // PASS_ABSENT / PASS_FAIL / PASS_PASS, parallel to `values`
 }
 
 impl SiteAccum {
     fn new(capacity: usize) -> Self {
-        SiteAccum { values: vec![f32::NAN; capacity] }
+        SiteAccum { values: vec![f32::NAN; capacity], pass: vec![PASS_ABSENT; capacity] }
     }
     fn ensure_slot(&mut self, idx: usize) {
         if idx >= self.values.len() {
             self.values.resize(idx + 1, f32::NAN);
+            self.pass.resize(idx + 1, PASS_ABSENT);
         }
     }
     fn set(&mut self, idx: usize, v: f32) {
         self.ensure_slot(idx);
         self.values[idx] = v;
     }
+    fn set_pass(&mut self, idx: usize, passed: bool) {
+        self.ensure_slot(idx);
+        self.pass[idx] = if passed { PASS_PASS } else { PASS_FAIL };
+    }
     fn reset(&mut self) {
         self.values.iter_mut().for_each(|v| *v = f32::NAN);
+        self.pass.iter_mut().for_each(|p| *p = PASS_ABSENT);
     }
     fn to_test_values(&self, index: &TestIndex, test_defs_keys: &[String]) -> HashMap<String, f64> {
         // Count non-NaN entries first so we can pre-size the HashMap and avoid rehashing.
@@ -461,6 +485,19 @@ impl SiteAccum {
             if !v.is_nan() {
                 if let Some(key) = test_defs_keys.get(i) {
                     out.insert(key.clone(), v as f64);
+                }
+            }
+        }
+        out
+    }
+    fn to_test_pass(&self, index: &TestIndex, test_defs_keys: &[String]) -> HashMap<String, bool> {
+        let cap = self.pass.iter().take(index.order.len()).filter(|p| **p != PASS_ABSENT).count();
+        let mut out = HashMap::with_capacity(cap);
+        for (i, _) in index.order.iter().enumerate() {
+            let p = if i < self.pass.len() { self.pass[i] } else { PASS_ABSENT };
+            if p != PASS_ABSENT {
+                if let Some(key) = test_defs_keys.get(i) {
+                    out.insert(key.clone(), p == PASS_PASS);
                 }
             }
         }
@@ -545,12 +582,13 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                         ptr.result
                     };
                     accum.set(idx, value);
+                    if let Some(p) = ptr.pass { accum.set_pass(idx, p); }
                 }
             }
 
             // ── FTR ──────────────────────────────────────────────────────────
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
+                let Some((test_num, head, site, pass)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
 
                 if !test_num_to_key.contains_key(&test_num) {
@@ -571,9 +609,13 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                     test_num_to_key.insert(test_num, key_str);
                 }
 
-                if let Some(accum) = site_accums.get_mut(&key) {
-                    let idx = test_index.get_or_insert(test_num);
-                    accum.set(idx, if failed { 0.0 } else { 1.0 });
+                // Functional outcomes are verdicts, not values — recorded on the
+                // pass channel only (nothing when TEST_FLG marks no indication).
+                if let Some(p) = pass {
+                    if let Some(accum) = site_accums.get_mut(&key) {
+                        let idx = test_index.get_or_insert(test_num);
+                        accum.set_pass(idx, p);
+                    }
                 }
             }
 
@@ -593,10 +635,11 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                     continue;
                 }
                 let key = (prr.head, prr.site);
-                let test_values = if let Some(accum) = site_accums.get(&key) {
-                    accum.to_test_values(&test_index, &index_keys)
+                let (test_values, test_pass) = if let Some(accum) = site_accums.get(&key) {
+                    (accum.to_test_values(&test_index, &index_keys),
+                     accum.to_test_pass(&test_index, &index_keys))
                 } else {
-                    HashMap::new()
+                    (HashMap::new(), HashMap::new())
                 };
                 if prr.soft_bin == 65535 { soft_bin_fabricated += 1; }
                 let die = DieResult {
@@ -611,6 +654,7 @@ pub fn parse_stdf_from_bytes(bytes: &[u8]) -> Result<ParsedStdf, String> {
                     site_num: Some(prr.site as u32),
                     part_id: prr.part_id,
                     test_values,
+                    test_pass,
                 };
                 if current_wafer.is_none() {
                     current_wafer = Some(WaferData {
@@ -832,11 +876,12 @@ pub fn parse_stdf_from_bytes_filtered(
                     let idx = test_index.get_or_insert(ptr.test_num);
                     let value = if ptr.failed && ptr.result == 0.0 { f32::NAN } else { ptr.result };
                     accum.set(idx, value);
+                    if let Some(p) = ptr.pass { accum.set_pass(idx, p); }
                 }
             }
 
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
+                let Some((test_num, head, site, pass)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
 
                 if !test_num_to_key.contains_key(&test_num) {
@@ -861,9 +906,12 @@ pub fn parse_stdf_from_bytes_filtered(
                 // Skip accumulation for unselected tests
                 if !selected.contains(&test_num) { continue; }
 
-                if let Some(accum) = site_accums.get_mut(&key) {
-                    let idx = test_index.get_or_insert(test_num);
-                    accum.set(idx, if failed { 0.0 } else { 1.0 });
+                // Functional outcomes are verdicts, not values — pass channel only.
+                if let Some(p) = pass {
+                    if let Some(accum) = site_accums.get_mut(&key) {
+                        let idx = test_index.get_or_insert(test_num);
+                        accum.set_pass(idx, p);
+                    }
                 }
             }
 
@@ -881,10 +929,11 @@ pub fn parse_stdf_from_bytes_filtered(
                     continue;
                 }
                 let key = (prr.head, prr.site);
-                let test_values = if let Some(accum) = site_accums.get(&key) {
-                    accum.to_test_values(&test_index, &index_keys)
+                let (test_values, test_pass) = if let Some(accum) = site_accums.get(&key) {
+                    (accum.to_test_values(&test_index, &index_keys),
+                     accum.to_test_pass(&test_index, &index_keys))
                 } else {
-                    HashMap::new()
+                    (HashMap::new(), HashMap::new())
                 };
                 if prr.soft_bin == 65535 { soft_bin_fabricated += 1; }
                 let die = DieResult {
@@ -899,6 +948,7 @@ pub fn parse_stdf_from_bytes_filtered(
                     site_num: Some(prr.site as u32),
                     part_id: prr.part_id,
                     test_values,
+                    test_pass,
                 };
                 if current_wafer.is_none() {
                     current_wafer = Some(WaferData {
@@ -1041,10 +1091,11 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                     let idx = test_index.get_or_insert(ptr.test_num);
                     let value = if ptr.failed && ptr.result == 0.0 { f32::NAN } else { ptr.result };
                     accum.set(idx, value);
+                    if let Some(p) = ptr.pass { accum.set_pass(idx, p); }
                 }
             }
             (15, 20) => {
-                let Some((test_num, head, site, failed)) = parse_ftr_fast(b, order) else { continue };
+                let Some((test_num, head, site, pass)) = parse_ftr_fast(b, order) else { continue };
                 let key = (head, site);
                 if !test_num_to_key.contains_key(&test_num) {
                     let key_str = test_num.to_string();
@@ -1058,9 +1109,12 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                     index_keys[idx] = key_str.clone();
                     test_num_to_key.insert(test_num, key_str);
                 }
-                if let Some(accum) = site_accums.get_mut(&key) {
-                    let idx = test_index.get_or_insert(test_num);
-                    accum.set(idx, if failed { 0.0 } else { 1.0 });
+                // Functional outcomes are verdicts, not values — pass channel only.
+                if let Some(p) = pass {
+                    if let Some(accum) = site_accums.get_mut(&key) {
+                        let idx = test_index.get_or_insert(test_num);
+                        accum.set_pass(idx, p);
+                    }
                 }
             }
             (5, 10) => {
@@ -1077,10 +1131,11 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                 }
                 let key = (prr.head, prr.site);
                 let t_hmap = Instant::now();
-                let test_values = if let Some(accum) = site_accums.get(&key) {
-                    accum.to_test_values(&test_index, &index_keys)
+                let (test_values, test_pass) = if let Some(accum) = site_accums.get(&key) {
+                    (accum.to_test_values(&test_index, &index_keys),
+                     accum.to_test_pass(&test_index, &index_keys))
                 } else {
-                    HashMap::new()
+                    (HashMap::new(), HashMap::new())
                 };
                 p2_hashmap_ns += t_hmap.elapsed().as_nanos();
                 die_count += 1;
@@ -1092,6 +1147,7 @@ pub fn parse_stdf_from_bytes_timed(bytes: &[u8]) -> Result<(ParsedStdf, ParseTim
                     site_num: Some(prr.site as u32),
                     part_id: prr.part_id,
                     test_values,
+                    test_pass,
                 };
                 if current_wafer.is_none() {
                     current_wafer = Some(WaferData {
@@ -1245,6 +1301,91 @@ mod tests {
         for w in &result.wafers {
             for d in &w.results {
                 assert_ne!(d.sbin, Some(65535), "sbin sentinel leaked into die result");
+            }
+        }
+    }
+
+    #[test]
+    fn test_flg_pass_semantics() {
+        // bit 6 (0x40) = no pass/fail indication; bit 7 (0x80) = fail.
+        assert_eq!(test_flg_pass(0x00), Some(true));
+        assert_eq!(test_flg_pass(0x80), Some(false));
+        assert_eq!(test_flg_pass(0x40), None);
+        assert_eq!(test_flg_pass(0xC0), None); // invalid flag wins even with fail bit set
+    }
+
+    #[test]
+    fn ptr_fast_captures_recorded_verdict() {
+        // TEST_NUM=7 LE, head=1, site=2, TEST_FLG, PARM_FLG=0, RESULT=1.5f32 LE
+        let mk = |flg: u8| {
+            let mut b = vec![7, 0, 0, 0, 1, 2, flg, 0];
+            b.extend_from_slice(&1.5f32.to_le_bytes());
+            b
+        };
+        let p = parse_ptr_fast(&mk(0x00), ByteOrder::Little).unwrap();
+        assert_eq!(p.pass, Some(true));
+        let f = parse_ptr_fast(&mk(0x80), ByteOrder::Little).unwrap();
+        assert_eq!(f.pass, Some(false));
+        assert!(f.failed);
+        let n = parse_ptr_fast(&mk(0x40), ByteOrder::Little).unwrap();
+        assert_eq!(n.pass, None);
+    }
+
+    #[test]
+    fn ftr_fast_returns_verdict_or_none() {
+        let mk = |flg: u8| vec![9, 0, 0, 0, 1, 2, flg];
+        assert_eq!(parse_ftr_fast(&mk(0x00), ByteOrder::Little).unwrap().3, Some(true));
+        assert_eq!(parse_ftr_fast(&mk(0x80), ByteOrder::Little).unwrap().3, Some(false));
+        assert_eq!(parse_ftr_fast(&mk(0x40), ByteOrder::Little).unwrap().3, None);
+    }
+
+    const SAMPLE_LOT: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../sample_data/sample-lot.stdf.gz");
+
+    #[test]
+    fn functional_verdicts_live_in_test_pass_not_values() {
+        let result = parse_stdf_sync(SAMPLE_LOT.to_string()).unwrap();
+        let f_keys: Vec<&String> = result.test_defs.iter()
+            .filter(|(_, d)| d.test_type == "F")
+            .map(|(k, _)| k)
+            .collect();
+        assert!(!f_keys.is_empty(), "sample lot should contain a functional test");
+        // Guards the FTR TEST_TXT walker against generator/spec drift — the name
+        // silently degraded to "" once when the generators wrote a non-spec FTR.
+        for k in &f_keys {
+            assert!(!result.test_defs[*k].name.is_empty(), "FTR {} should have a name", k);
+        }
+        let mut verdicts = 0usize;
+        for w in &result.wafers {
+            for d in &w.results {
+                for k in &f_keys {
+                    assert!(!d.test_values.contains_key(*k),
+                        "functional test {} must never appear as a value", k);
+                    if d.test_pass.contains_key(*k) { verdicts += 1; }
+                }
+            }
+        }
+        assert!(verdicts > 0, "expected functional verdicts in test_pass");
+    }
+
+    #[test]
+    fn parametric_verdicts_recorded_when_test_flg_valid() {
+        let result = parse_stdf_sync(SAMPLE_LOT.to_string()).unwrap();
+        let p_keys: Vec<&String> = result.test_defs.iter()
+            .filter(|(_, d)| d.test_type == "P")
+            .map(|(k, _)| k)
+            .collect();
+        // Every recorded parametric verdict must belong to a die that also has
+        // (or legitimately lacks, for fail-with-zero-result) the test's value —
+        // and pass verdicts must always accompany a value.
+        for w in &result.wafers {
+            for d in &w.results {
+                for (k, pass) in &d.test_pass {
+                    if p_keys.iter().any(|pk| *pk == k) && *pass {
+                        assert!(d.test_values.contains_key(k),
+                            "passing parametric test {} should carry its value", k);
+                    }
+                }
             }
         }
     }

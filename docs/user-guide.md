@@ -104,6 +104,30 @@ list. Recent is available whenever you have history, whether or not a file is cu
 loaded — not just from the empty state. Not shown in the browser version, since reopening
 requires a native file path that browser file pickers don't provide.
 
+### Command line
+
+*Desktop only.* Launch tsmap with files already named, for scripting or automation:
+
+```bash
+tsmap lot1.stdf lot2.stdf                  # one or more data files
+tsmap --list files.txt                     # a text file of paths, one per line
+cat files.txt | tsmap                      # or piped via stdin
+tsmap lot1.stdf --tests my-tests.csv       # pre-fills the test selector (still shown — see below)
+tsmap lot1.stdf --splits my-splits.csv     # applies splits automatically, same as sample data
+tsmap --help                               # full usage
+```
+
+`--tests` takes the same CSV a test selector's **Save list** button produces, and `--splits`
+the same CSV the [Splits… dialog](#63-saving-and-loading-split-definitions-csv) saves and
+loads. `--tests` only pre-fills the selector's checkboxes and renames — the overlay still
+always appears and still needs a confirm click, the same as any other load; it just saves
+re-picking tests you already chose before.
+
+If tsmap is already running, launching it again with files hands them to the running window
+instead of opening a second blank one: with nothing currently loaded they open right away;
+with data already loaded, a dialog asks whether to replace it. Decline and the new files open
+in a separate, independent tsmap window instead, so nothing is lost either way.
+
 ### Adding files to an existing lot
 
 Once a file is loaded, the **Add files** button becomes active. Use it to append additional

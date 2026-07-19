@@ -524,7 +524,12 @@
         white-space: nowrap;
       }
       #reset-btn:hover { border-color: var(--error-text); color: var(--error-text); }
-      #file-label { font-size: 12px; color: var(--text-muted); }
+      #drop-hint { white-space: nowrap; flex-shrink: 0; }
+      #file-label {
+        font-size: 12px; color: var(--text-muted);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        min-width: 0; flex-shrink: 1;
+      }
       #busy-spinner {
         display: none; width: 13px; height: 13px; border-radius: 50%;
         border: 2px solid var(--border-dim); border-top-color: var(--accent);
@@ -689,7 +694,7 @@
         <button id="splits-btn" style="display:none" title="Define and assign wafer splits (process corners, experiment groups, etc.)">Splits…</button>
         <button id="value-findings-btn" role="switch" style="display:none" aria-checked="false"><span class="vf-box"></span>Value findings</button>
         <button id="reset-btn" style="display:none" title="Unload all files and reset">Clear</button>
-        <span>or drop a file anywhere</span>
+        <span id="drop-hint">or drop a file anywhere</span>
         <span id="busy-spinner"></span>
         <span id="file-label"></span>
         <button id="help-btn" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>

@@ -31,6 +31,14 @@ export interface TestSelectorOptions {
   capacity?: CapacityInfo;
   onSave?: (entries: Array<{ num: number; name: string }>) => Promise<void>;
   onLoad?: () => Promise<string | null>;
+  /**
+   * Same file format the "Load list" button accepts — applied once, before
+   * the overlay's first render, so the selection/renames are already checked
+   * when the user sees it (used for a CLI-supplied `--tests` file). The
+   * overlay is always still shown; this only pre-fills it, per CLAUDE.md's
+   * "test selector is always shown, user must choose explicitly" rule.
+   */
+  preloadListText?: string;
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
   onAsk?: (message: string) => Promise<boolean>;
 }
@@ -518,6 +526,30 @@ export function showTestSelectorOverlay(
     btnRow.appendChild(saveBtn);
   }
 
+  // Shared by the interactive "Load list" button and a CLI-supplied
+  // `preloadListText` (applied once before the overlay's first render) — same
+  // parsing, unknown-test validation, and log messages either way.
+  function applyLoadedList(text: string): void {
+    const parsed = parseTestListFile(text);
+    if (parsed.length === 0) {
+      options.onLog?.('warn', 'Test list file contained no valid entries');
+      return;
+    }
+    const allNumsSet = new Set(allNums);
+    let unknownCount = 0;
+    selected.clear();
+    for (const { num, name } of parsed) {
+      if (!allNumsSet.has(num)) { unknownCount++; continue; }
+      selected.add(num);
+      if (name) nameOverrides.set(num, name);
+    }
+    if (unknownCount > 0) {
+      options.onLog?.('warn', `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored`);
+    }
+    options.onLog?.('info', `Test list loaded: ${selected.size} test${selected.size !== 1 ? 's' : ''} selected`);
+    setFooterNotes(unknownCount > 0 ? `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored.` : undefined);
+  }
+
   if (options.onLoad) {
     const loadBtn = document.createElement('button');
     loadBtn.textContent = 'Load list';
@@ -532,24 +564,7 @@ export function showTestSelectorOverlay(
         return;
       }
       if (text === null) return;
-      const parsed = parseTestListFile(text);
-      if (parsed.length === 0) {
-        options.onLog?.('warn', 'Test list file contained no valid entries');
-        return;
-      }
-      const allNumsSet = new Set(allNums);
-      let unknownCount = 0;
-      selected.clear();
-      for (const { num, name } of parsed) {
-        if (!allNumsSet.has(num)) { unknownCount++; continue; }
-        selected.add(num);
-        if (name) nameOverrides.set(num, name);
-      }
-      if (unknownCount > 0) {
-        options.onLog?.('warn', `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored`);
-      }
-      options.onLog?.('info', `Test list loaded: ${selected.size} test${selected.size !== 1 ? 's' : ''} selected`);
-      setFooterNotes(unknownCount > 0 ? `${unknownCount} test${unknownCount !== 1 ? 's' : ''} in file not found in current scan and were ignored.` : undefined);
+      applyLoadedList(text);
       renderList();
       updateFooter();
     });
@@ -648,6 +663,8 @@ export function showTestSelectorOverlay(
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   panel.focus(); // move focus into the dialog so Esc and SR navigation work
+
+  if (options.preloadListText) applyLoadedList(options.preloadListText);
 
   renderList();
   updateFooter();

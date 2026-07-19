@@ -71,6 +71,15 @@ or a link to the PR/commit when done, rather than deleting the entry — keep th
 
 ## Chart/analysis additions (highest-value category — needs discussion on scope)
 
+**2026-07-11 ownership shift:** tsmap's own Charts page (`src/charts/*`, ~2000 lines) was
+deleted entirely as part of the wmap↔tsmap boundary rework — every chart/analysis panel (yield,
+bin pareto/cluster, capability, boxplot, histogram, correlation, scatter) now lives in wmap
+itself as its **Insights tab** (opt-in via `insights: { enabled: true }` on
+`renderWaferMap`/`renderWaferGallery`), available to any wmap host, not just tsmap. tsmap has no
+chart-rendering code of its own left. See `WMAP_ISSUES.md` #31 for the full migration history.
+Any new chart idea below would now be scoped and built as a **wmap** contribution, not a tsmap
+change — noted per item.
+
 - [x] **Cpk/Ppk (process capability).** Biggest functional gap for this audience. Boxplot and
       histogram already have mean/stddev/limits in scope — natural home for Cp/Cpk/Pp/Ppk.
       Implemented 2026-07-10 as a new **Process capability** chart panel (`src/charts/capability.ts`,
@@ -106,6 +115,12 @@ or a link to the PR/commit when done, rather than deleting the entry — keep th
       next section's layout. Deliberately not collapsible yet (agreed with the user to hold off
       until the remaining 3 chart ideas below actually make the page unwieldy, rather than
       building that complexity preemptively).
+      **Superseded 2026-07-11**: `src/charts/capability.ts` (and the rest of tsmap's Charts
+      page) was deleted as part of the wmap↔tsmap boundary rework. Cp/Cpk/Pp/Ppk now live in
+      wmap itself (`stats/capability.ts` + `packages/charts/capability.ts`) as part of its
+      Insights tab's Distributions section, ported with the same normalized-boxplot/Group-by/
+      cross-link design described above, and available to every wmap host, not just tsmap. See
+      `WMAP_ISSUES.md` #31.
 - [x] **Parametric "worst offenders" Pareto.** Bin pareto ranks hard-bin failures; nothing
       ranks *parametric tests* by out-of-spec rate or Cpk. Users currently click through tests
       one at a time to find the yield-loss driver. Mirrors the correlation matrix's existing
@@ -113,17 +128,28 @@ or a link to the PR/commit when done, rather than deleting the entry — keep th
       Folded into the Process capability panel above (2026-07-10) rather than built as a
       separate pareto bar chart — the normalized-boxplot-sorted-by-worst-Ppk view covers the
       same "which test is the problem" workflow while also showing distribution shape, not
-      just a single ranking number.
+      just a single ranking number. Migrated into wmap along with that panel — see the note
+      above.
 - [ ] **Cross-lot SPC/run chart.** Boxplot's "Trend line" only connects per-wafer medians
       *within one load*. No run chart of a test's mean/median across lots/dates with control
       limits, despite faceting already supporting multi-lot loads.
+      Note (2026-07-11): the "Trend line" toggle this idea builds on no longer exists at all —
+      it was deliberately trimmed (not carried over) when boxplot was ported into wmap's
+      Insights tab (`WMAP_ISSUES.md` #31). This would need to be built fresh in wmap, not layered
+      onto an existing feature. Still unimplemented either way.
 - [ ] **Wafer-to-wafer bin/value diff.** No overlay/diff view between two selected wafer maps
       (e.g. tool A vs tool B edge-ring pattern). Splits/grouping already segment wafers this
       way; a direct compare view closes the loop.
+      Note (2026-07-11): tsmap has no chart code of its own left — this would now be a wmap
+      Insights-tab addition, not a tsmap change. Still unimplemented.
 - [ ] **Site-level analysis view.** Test site is captured (tooltip + grouping dimension) but
       has no dedicated chart. Boxplot-by-site or site-vs-site comparison is the standard way to
       catch a miscalibrated test head on multi-site testers. Mostly reuses existing grouping
       infrastructure.
+      Note (2026-07-11): checked wmap's `buildFacetTable`/facet curation — site is not currently
+      exposed as a groupable wafer-level facet (it's per-die, not per-wafer metadata), so "mostly
+      reuses existing grouping infrastructure" is optimistic as written; would need its own
+      aggregation. Would now be a wmap addition. Still unimplemented.
 
 ## Workflow/report gaps
 
@@ -196,13 +222,40 @@ or a link to the PR/commit when done, rather than deleting the entry — keep th
       verified end-to-end with Playwright against a real two-lot merged load (13-wafer
       corner-lot + a separate 3-wafer synthetic lot) — confirmed fully independent per-group
       stats (2873 vs 663 dies, no cross-contamination) and zero console errors.
+      **Superseded 2026-07-11**: this entire tsmap-side implementation (`src/reportHtml.ts`,
+      `src/reportUI.ts`, and tsmap's own toolbar **Report…** button) was deleted as part of the
+      wmap↔tsmap boundary rework — wmap's own Summary panel already had a fully-wired, always-
+      visible **"Summary report"** button doing the identical thing, and the Capability/Splits
+      sections tsmap used to splice on by hand are now native section builders inside wmap
+      itself (`packages/stats/renderSummaryReport.ts`). tsmap no longer builds report HTML of
+      any kind — report generation is now wmap's Summary panel button only, for both
+      single-wafer and gallery views. Numeric parity (incl. the multi-group split fix above) was
+      verified byte-identical before/after the move. See `WMAP_ISSUES.md` #29/#30.
 - [ ] **Raw data export.** No path out of the app for selected test data besides re-parsing the
-      original file. Even a simple "export selected tests as CSV" from the test selector or
-      charts view would let users take data into Excel/JMP/Python.
+      original file. Even a simple "export selected tests as CSV" from the test selector would
+      let users take data into Excel/JMP/Python.
+      Note (2026-07-11): not the same as wmap's Insights/Summary panel "Export CSV" button —
+      that exports per-test **summary statistics** (min/max/mean/median/stddev/spec-yield), not
+      raw per-die values. This idea (raw die-level export) remains a distinct, unaddressed gap.
 - [ ] **Annotation/notes on a wafer or lot.** Splits set a precedent for lightweight per-wafer
       metadata the user assigns and the app persists/restores. A free-text note field (e.g.
       "retested — probe card swap") using the same persistence pattern gives engineers a trail
       without a separate tracking system.
+
+## Data ingestion (needs validated demand before scoping)
+
+- [ ] **"Open from URL" — REST-pull JSON ingestion.** Today tsmap only ingests local files; many
+      companies keep test data behind a database or internal data-analysis app instead, reachable
+      as a REST/HTTP endpoint. Explored 2026-07-19: a "tsmap pulls" design where the user enters an
+      endpoint (+ optional Bearer/API-key auth) and tsmap fetches JSON via a new Rust command
+      (never the webview, to avoid CORS/credential exposure), reusing the *existing* column-mapping
+      overlay unchanged — a generic bring-your-own-JSON-API connector, not a named-vendor
+      integration (no public REST API found for KLA Klarity, Synopsys YieldManager/SiliconDash, or
+      PDF Solutions Exensio). Estimated ~700-900 lines touched, medium-small since it reuses the
+      JSON parser/mapping overlay/modal chrome almost entirely; main risk is a refactor of
+      `main.ts`'s shared file-load path. Not started — full design, cost breakdown, and researched
+      tradeoffs (incl. why `tauri-plugin-http` was rejected in favor of a hand-rolled `reqwest`
+      command) are in [docs/plans/open-from-url-ingestion.md](docs/plans/open-from-url-ingestion.md).
 
 ## Smaller polish items
 
@@ -210,12 +263,26 @@ or a link to the PR/commit when done, rather than deleting the entry — keep th
       findings, Clear, theme picker, help). Watch whether it needs an overflow/"more" menu as
       more features land — re-check the z-index lesson (see CLAUDE.md "Stacking order") if any
       new overflow menu is itself an overlay.
+      Note (2026-07-11): the **Charts** button no longer exists (tsmap's Charts page was removed
+      — see the chart/analysis section above), and a short-lived toolbar **Report…** button was
+      added and then also removed (report generation moved into wmap's own Summary panel).
+      Current buttons: Open, Add, Recent, Filter tests, Splits, Value findings, Clear, theme
+      picker, help. Net roughly the same count as originally described, but the immediate
+      pressure that motivated this idea is lower now that Charts is gone. Still unimplemented.
 - [ ] **Accessibility for canvas charts.** Charts are canvas-only with no text/table
       alternative. Not urgent for this audience but worth tracking.
+      Note (2026-07-11): tsmap has no canvas chart code of its own left (moved into wmap's
+      Insights tab). wmap has since made real accessibility investments elsewhere — keyboard-
+      navigable toolbar/menu roles (`role="menu"`, arrow/Home/End/Enter/Escape), a 63-entry
+      colourblind-safe "Accessible" colour scheme — but no text/table alternative for the chart
+      canvases themselves exists yet. If pursued, this is now a wmap-side idea, not tsmap's.
 
 ## Prioritization (if picking three to start)
 
-1. Cpk/Ppk — closes the biggest functional gap for the target audience.
+1. Cpk/Ppk — closes the biggest functional gap for the target audience. **Done** 2026-07-10
+   (later migrated into wmap, 2026-07-11 — see above).
 2. Parametric worst-offenders ranking — speeds up the most common workflow (finding *which*
-   test is the problem).
-3. Recent-files list — cheap, removes daily friction.
+   test is the problem). **Done**, folded into Cpk/Ppk above (same migration).
+3. Recent-files list — cheap, removes daily friction. **Done** 2026-07-09.
+
+All three original picks have shipped — revisit this list next time priorities are discussed.

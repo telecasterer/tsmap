@@ -1,13 +1,13 @@
 {
   "name": "tsmap",
   "private": true,
-  "version": "0.1.20",
+  "version": "0.1.21",
   "type": "module",
   "scripts": {
     "build:guide": "node scripts/build-user-guide.mjs",
     "predev": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js",
-    "prebuild": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js",
-    "prebuild:web": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js",
+    "prebuild": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js && node scripts/check-testdata-parser-published.js",
+    "prebuild:web": "node scripts/build-user-guide.mjs && node scripts/check-version-sync.js && node scripts/check-wmap-update.js && node scripts/check-wmap-published.js && node scripts/check-testdata-parser-published.js",
     "dev": "vite --force",
     "dev:web": "vite --force --port 5301 --host",
     "build": "tsc && vite build",
@@ -32,7 +32,7 @@
     "screenshots:only": "node scripts/capture-screenshots.mjs --only"
   },
   "dependencies": {
-    "@paulrobins/testdata-parser": "^0.4.0",
+    "@paulrobins/testdata-parser": "^0.5.0",
     "@paulrobins/wafermap": "^0.20.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",

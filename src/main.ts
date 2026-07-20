@@ -6,13 +6,14 @@ import { renderWaferMap, renderWaferGallery } from '@paulrobins/wafermap/render'
 import { analyzeWaferMap, analyzeWaferLot, setReportOpener } from '@paulrobins/wafermap/stats';
 import { createPlatform, isTauri } from './platform';
 import type { FileHandle, StdfTestNames, ScanResult, CliStartupArgs } from './platform';
-import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData, errMsg } from './lib';
+import { basename, rustToLocal, toWmapTestDefs, autoPlotMode, applyTestSelection, applyTestOverrides, diffTestOverride, makeWaferSource, toWmapWaferMeta, toWaferData, errMsg } from './lib';
 import { showMappingOverlay } from './mappingUI';
 import { showRenameOverlay, showAppendConfirm } from './multiFileUI';
-import { showTestSelectorOverlay } from './testSelectorUI';
+import { showTestSelectorOverlay, formatTestListCsv } from './testSelectorUI';
+import type { TestListEntry } from './testSelectorUI';
 import type { CsvMapping } from './mappingUI';
 import type { FileWaferEntry, RenamedWafer } from './multiFileUI';
-import type { ParsedFile, WaferData, TestDef } from './types';
+import type { ParsedFile, WaferData, TestDef, TestOverride } from './types';
 import { attachTooltip, upgradeTitleTooltips } from './tooltip';
 import { initTheme, onThemeChange, getTheme, setTheme, THEME_GROUPS, type Theme } from './theme';
 import { makeMenuSelect } from './menuSelect';
@@ -816,7 +817,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   // ── Test selector ─────────────────────────────────────────────────────────
   // Always shown when any file has test data (non-empty merged testDefs).
   let testSelection: number[] | null = null;
-  let overlayNameOverrides: Map<number, string> = new Map();
+  let overlayTestOverrides: Map<number, TestOverride> = new Map();
 
   if (firstPassTestDefs && Object.keys(firstPassTestDefs).length > 0) {
     const csvDieCount = Array.from(preParsed.values())
@@ -824,12 +825,12 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
 
     // The selector can be re-entered when the user clicks "scan all files": we
     // widen the scope, re-scan, merge, and re-open with the same selection +
-    // name overrides preserved. `scanScope` tracks whether we're still on the
+    // test overrides preserved. `scanScope` tracks whether we're still on the
     // largest file only (so the toggle is offered) or have scanned everything.
     let scanScope: 'largest' | 'all' = 'largest';
     let scopedDefs = firstPassTestDefs;
     let carrySelection: number[] = [];
-    let carryNames = new Map<number, string>();
+    let carryOverrides = new Map<number, TestOverride>();
     // Consumed once, on the very first open of this load's selector — a
     // "scan all files" re-open within the same load must not keep re-applying
     // it over the user's in-progress adjustments (see pendingTestListPreload).
@@ -842,28 +843,23 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
       // Offer "scan all" only with >1 binary file and while still scoped to largest.
       const canScanAll = binaryFiles.length > 1 && scanScope === 'largest';
 
-      const result = await new Promise<{ kind: 'confirm'; selection: number[]; names: Map<number, string> }
+      const result = await new Promise<{ kind: 'confirm'; selection: number[]; overrides: Map<number, TestOverride> }
                                      | { kind: 'cancel' }
-                                     | { kind: 'scanAll'; selection: number[]; names: Map<number, string> }>(resolve => {
+                                     | { kind: 'scanAll'; selection: number[]; overrides: Map<number, TestOverride> }>(resolve => {
         showTestSelectorOverlay(
           scopedDefs,
-          (sel, names) => resolve({ kind: 'confirm', selection: sel, names }),
+          (sel, overrides) => resolve({ kind: 'confirm', selection: sel, overrides }),
           () => resolve({ kind: 'cancel' }),
           {
             scanScope: binaryFiles.length > 1 ? scanScope : undefined,
             scanFileCount: binaryFiles.length,
-            onScanAll: canScanAll ? (sel, names) => resolve({ kind: 'scanAll', selection: sel, names }) : undefined,
+            onScanAll: canScanAll ? (sel, overrides) => resolve({ kind: 'scanAll', selection: sel, overrides }) : undefined,
             initialSelection: carrySelection,
-            nameOverrides: carryNames,
+            testOverrides: carryOverrides,
             preloadListText: testListPreload ?? undefined,
             capacity: totalDieCount > 0 ? { dieCount: totalDieCount, totalTests: allTestNums.size } : undefined,
-            onSave: async (saveEntries) => {
-              const lines = [
-                '# tsmap test list',
-                `# Saved: ${new Date().toISOString()}`,
-                ...saveEntries.map(e => `${e.num},${e.name}`),
-              ];
-              await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+            onSave: async (saveEntries: TestListEntry[]) => {
+              await platform.saveTextFile(formatTestListCsv(saveEntries), 'test-list.csv');
             },
             onLoad: async () => (await platform.pickTextFile())?.content ?? null,
             onLog: log,
@@ -876,9 +872,9 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
       if (result.kind === 'cancel') { setIdle(); return; }
 
       if (result.kind === 'scanAll') {
-        // Preserve the user's in-progress selection/renames across the re-scan.
+        // Preserve the user's in-progress selection/overrides across the re-scan.
         carrySelection = result.selection;
-        carryNames = result.names;
+        carryOverrides = result.overrides;
         const scan = await scanBinaryTests(binaryFiles);
         if (scan) {
           scopedDefs = scan.testDefs;
@@ -893,7 +889,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
       }
 
       // confirm
-      overlayNameOverrides = result.names;
+      overlayTestOverrides = result.overrides;
       testSelection = result.selection;
       log('info', `Test filter: ${testSelection.length} of ${allTestNums.size} tests selected`);
       break;
@@ -923,7 +919,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
   try {
     // Finalise pre-parsed CSV/JSON entries — prune to selection.
     for (const [, parsed] of preParsed) {
-      applyTestSelection(parsed, testSelection ?? [], null, overlayNameOverrides);
+      applyTestSelection(parsed, testSelection ?? [], null, overlayTestOverrides);
     }
 
     for (const file of files) {
@@ -947,7 +943,7 @@ async function handleFiles(files: FileHandle[], isAppend: boolean) {
             ? await platform.parseAtdfFiltered(file, testSelection ?? [])
             : await platform.parseStdfFiltered(file, testSelection ?? []));
         const parsed = rustToLocal(raw, file.name);
-        applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayNameOverrides);
+        applyTestSelection(parsed, testSelection ?? [], firstPassTestDefs, overlayTestOverrides);
         entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
         log('info', `Parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''}`);
         logWarnings(parsed);
@@ -1160,43 +1156,41 @@ filterTestsBtn.addEventListener('click', async () => {
   // For STDF/ATDF we use currentTestNames from the first-pass scan (may re-parse if user adds tests).
   const selectorTestDefs: StdfTestNames = currentTestNames ?? currentTestDefs;
 
-  let filterOverrideNames: Map<number, string> = new Map();
+  let filterTestOverrides: Map<number, TestOverride> = new Map();
   let scopedDefs = selectorTestDefs;
   let carrySelection: number[] = Object.keys(currentTestDefs).map(Number);
-  // Seed with any renames already baked into currentTestDefs (from the
-  // initial load's rename/Load-list) but not reflected in selectorTestDefs
-  // (the original first-pass scan) — otherwise a rename applied earlier
+  // Seed with any overrides already baked into currentTestDefs (from the
+  // initial load's rename/limit-load) but not reflected in selectorTestDefs
+  // (the original first-pass scan) — otherwise an override applied earlier
   // would appear to have silently reverted when the selector reopens here.
-  let carryNames = new Map<number, string>();
+  let carryOverrides = new Map<number, TestOverride>();
   for (const [key, def] of Object.entries(currentTestDefs)) {
     const scanned = selectorTestDefs[key];
-    if (scanned && def.name !== scanned.name) carryNames.set(Number(key), def.name);
+    if (scanned) {
+      const diff = diffTestOverride(def, scanned);
+      if (diff) carryOverrides.set(Number(key), diff);
+    }
   }
   let testSelection: number[] | null = null;
 
   filterLoop: for (;;) {
     // Offer "scan all" only if this is a multi-file binary load not already widened.
     const canScanAll = currentBinaryFiles.length > 1 && binaryScanScope === 'largest';
-    const result = await new Promise<{ kind: 'confirm'; selection: number[]; names: Map<number, string> }
+    const result = await new Promise<{ kind: 'confirm'; selection: number[]; overrides: Map<number, TestOverride> }
                                    | { kind: 'cancel' }
-                                   | { kind: 'scanAll'; selection: number[]; names: Map<number, string> }>(resolve => {
+                                   | { kind: 'scanAll'; selection: number[]; overrides: Map<number, TestOverride> }>(resolve => {
       showTestSelectorOverlay(
         scopedDefs,
-        (sel, names) => resolve({ kind: 'confirm', selection: sel, names }),
+        (sel, overrides) => resolve({ kind: 'confirm', selection: sel, overrides }),
         () => resolve({ kind: 'cancel' }),
         {
           scanScope: currentBinaryFiles.length > 1 ? binaryScanScope : undefined,
           scanFileCount: currentBinaryFiles.length,
-          onScanAll: canScanAll ? (sel, names) => resolve({ kind: 'scanAll', selection: sel, names }) : undefined,
+          onScanAll: canScanAll ? (sel, overrides) => resolve({ kind: 'scanAll', selection: sel, overrides }) : undefined,
           initialSelection: carrySelection,
-          nameOverrides: carryNames,
-          onSave: async (entries) => {
-            const lines = [
-              '# tsmap test list',
-              `# Saved: ${new Date().toISOString()}`,
-              ...entries.map(e => `${e.num},${e.name}`),
-            ];
-            await platform.saveTextFile(lines.join('\n'), 'test-list.csv');
+          testOverrides: carryOverrides,
+          onSave: async (entries: TestListEntry[]) => {
+            await platform.saveTextFile(formatTestListCsv(entries), 'test-list.csv');
           },
           onLoad: async () => (await platform.pickTextFile())?.content ?? null,
           onLog: log,
@@ -1208,7 +1202,7 @@ filterTestsBtn.addEventListener('click', async () => {
 
     if (result.kind === 'scanAll') {
       carrySelection = result.selection;
-      carryNames = result.names;
+      carryOverrides = result.overrides;
       const scan = await scanBinaryTests(currentBinaryFiles);
       if (scan) {
         scopedDefs = scan.testDefs;
@@ -1220,7 +1214,7 @@ filterTestsBtn.addEventListener('click', async () => {
       continue filterLoop;
     }
 
-    filterOverrideNames = result.names;
+    filterTestOverrides = result.overrides;
     testSelection = result.selection;
     break;
   }
@@ -1249,11 +1243,7 @@ filterTestsBtn.addEventListener('click', async () => {
     for (const key of Object.keys(currentTestDefs)) {
       if (keepSet.has(Number(key))) filteredDefs[key] = currentTestDefs[key];
     }
-    for (const [num, name] of filterOverrideNames) {
-      if (String(num) in filteredDefs) {
-        filteredDefs[String(num)] = { ...filteredDefs[String(num)], name };
-      }
-    }
+    applyTestOverrides(filteredDefs, filterTestOverrides);
     log('info', `Test filter: ${testSelection.length} of ${Object.keys(selectorTestDefs).length} tests (in-memory)`);
     renderWafers(
       filteredWafers,
@@ -1275,7 +1265,7 @@ filterTestsBtn.addEventListener('click', async () => {
         ? await platform.parseAtdfFiltered(file, testSelection)
         : await platform.parseStdfFiltered(file, testSelection);
       const parsed = rustToLocal(raw, file.name);
-      applyTestSelection(parsed, testSelection, currentTestNames, filterOverrideNames);
+      applyTestSelection(parsed, testSelection, currentTestNames, filterTestOverrides);
       entries.push({ filePath: file.path ?? file.name, fileName: file.name, parsed });
       log('info', `Re-parsed ${file.name}: ${parsed.wafers.length} wafer${parsed.wafers.length !== 1 ? 's' : ''} (${testSelection.length} tests)`);
       logWarnings(parsed);

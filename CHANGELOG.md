@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.21] — 2026-07-20
+
+### Added
+
+- **Test list files can now carry spec limits and test type, not just selection/renames** — the test selector's **Save list**/**Load list** and the CLI `--tests <file>` flag accept an extended, header-driven format: optional `loLimit`/`hiLimit`/`units`/`testType` columns alongside `num`/`name`, letting the file double as a lightweight test-definitions file. Useful for characterisation/test-vehicle work, where spec limits are often defined by simulation or adjusted separately from the test program rather than shipped in the STDF/ATDF data itself. A header row (if present) is matched case-insensitively with common synonyms (`lsl`/`usl` for the limit columns, `type`/`test-type` for test type), can list columns in any order or subset, and old header-less 2-column files keep parsing exactly as before. A specified value always overrides whatever the parser found; a blank field leaves it alone. Loaded/overridden values are shown as always-visible limits and type columns in the selector (previously only shown for the raw parsed value, and only as an occasional override tag) — read-only, since Save/Load is the entire edit workflow, there's no in-app editor. Limits specified for a functional test are dropped with a warning (a pass/fail test has no measured value to check a limit against).
+
+### Changed
+
+- **`@paulrobins/testdata-parser` bumped to 0.5.0** — republishes the functional-test (`testPass`) parser support that shipped in v0.1.20 for the native/desktop build (via the local Cargo crate) but was never pushed to npm, leaving the browser/WASM build silently running the stale 0.4.0 parser for a month with no `testPass` data. Now current on both platforms.
+- **New release guard**: `scripts/check-testdata-parser-published.js` (wired into `prebuild`/`prebuild:web`, alongside the existing wmap guard) fails a release build if `packages/parsers/src` has changed since the crate's version was last bumped, if `packages/parsers/Cargo.toml`'s version doesn't match `package.json`'s pinned range, or if that range doesn't resolve to an actually-published npm version — the exact gap that let the above go unnoticed.
+
 ## [0.1.20] — 2026-07-19
 
 ### Added

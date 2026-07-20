@@ -25,7 +25,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Full history (not the default shallow clone) — this job runs `npm run
+      # build:web` -> prebuild:web -> scripts/check-testdata-parser-published.js,
+      # which needs git log on packages/parsers/ to detect source drift since the
+      # crate's last version bump; a shallow clone makes it silently skip that check.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:

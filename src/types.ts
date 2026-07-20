@@ -9,6 +9,20 @@ export interface TestDef {
 }
 
 /**
+ * A per-test override loaded from (or destined for) a "test list" file —
+ * only fields actually present are ever applied; absent/undefined fields
+ * leave whatever was already parsed/overridden alone. See
+ * `applyTestOverrides`/`diffTestOverride` in `lib.ts`.
+ */
+export interface TestOverride {
+  name?: string;
+  loLimit?: number;
+  hiLimit?: number;
+  units?: string;
+  testType?: 'P' | 'F';
+}
+
+/**
  * One metadata field as a raw key/value pair, as emitted by the parser
  * (`@paulrobins/testdata-parser`). `key` is the source field name (camelCase
  * STDF key like `lotId`, `testTemp`, `startT`, or a CSV/JSON column name).

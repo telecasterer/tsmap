@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection, makeWaferSource, toWmapWaferMeta, toWaferData } from './lib';
-import type { LotMeta, ParsedFile, TestDef, WaferSource } from './types';
+import { basename, toWmapTestDefs, autoPlotMode, applyTestSelection, applyTestOverrides, diffTestOverride, makeWaferSource, toWmapWaferMeta, toWaferData } from './lib';
+import type { LotMeta, ParsedFile, TestDef, TestOverride, WaferSource } from './types';
 
 // ── basename ──────────────────────────────────────────────────────────────────
 
@@ -167,15 +167,21 @@ describe('applyTestSelection', () => {
 
   it('applies name overrides', () => {
     const parsed = makeParsed({ '1001': { name: 'Original', testType: 'P' } });
-    applyTestSelection(parsed, [1001], null, new Map([[1001, 'User Name']]));
+    applyTestSelection(parsed, [1001], null, new Map([[1001, { name: 'User Name' }]]));
     expect(parsed.testDefs['1001'].name).toBe('User Name');
   });
 
   it('name overrides win over backfill names', () => {
     const parsed = makeParsed({});
     const firstPass = { '1001': { name: 'STDF Name', testType: 'P' as const } };
-    applyTestSelection(parsed, [1001], firstPass, new Map([[1001, 'User Name']]));
+    applyTestSelection(parsed, [1001], firstPass, new Map([[1001, { name: 'User Name' }]]));
     expect(parsed.testDefs['1001'].name).toBe('User Name');
+  });
+
+  it('applies limit, units, and testType overrides', () => {
+    const parsed = makeParsed({ '1001': { name: 'A', testType: 'P', loLimit: 0, hiLimit: 1 } });
+    applyTestSelection(parsed, [1001], null, new Map([[1001, { loLimit: -5, hiLimit: 5, units: 'mA', testType: 'P' }]]));
+    expect(parsed.testDefs['1001']).toEqual({ name: 'A', testType: 'P', loLimit: -5, hiLimit: 5, units: 'mA' });
   });
 
   it('empty selection removes all testDefs and testValues', () => {
@@ -202,6 +208,89 @@ describe('applyTestSelection', () => {
       testDefs: { '1001': { name: 'A', testType: 'P' } },
     };
     expect(() => applyTestSelection(parsed, [1001], null, new Map())).not.toThrow();
+  });
+});
+
+// ── applyTestOverrides ──────────────────────────────────────────────────────────
+
+describe('applyTestOverrides', () => {
+  it('partial override leaves other fields untouched', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P', loLimit: 0, hiLimit: 1, units: 'V' } };
+    applyTestOverrides(testDefs, new Map([[1001, { hiLimit: 5 }]]));
+    expect(testDefs['1001']).toEqual({ name: 'A', testType: 'P', loLimit: 0, hiLimit: 5, units: 'V' });
+  });
+
+  it('override always wins over the parsed value', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P', loLimit: 0 } };
+    applyTestOverrides(testDefs, new Map([[1001, { loLimit: -99 }]]));
+    expect(testDefs['1001'].loLimit).toBe(-99);
+  });
+
+  it('name-only override does not blank existing limits', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P', loLimit: 0, hiLimit: 1 } };
+    applyTestOverrides(testDefs, new Map([[1001, { name: 'Renamed' }]]));
+    expect(testDefs['1001']).toEqual({ name: 'Renamed', testType: 'P', loLimit: 0, hiLimit: 1 });
+  });
+
+  it('ignores an override for a test number absent from testDefs', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P' } };
+    applyTestOverrides(testDefs, new Map([[9999, { name: 'Ghost' }]]));
+    expect(testDefs).toEqual({ '1001': { name: 'A', testType: 'P' } });
+  });
+
+  it('applies an explicit 0 override (not treated as falsy-skip)', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P', loLimit: 5 } };
+    applyTestOverrides(testDefs, new Map([[1001, { loLimit: 0 }]]));
+    expect(testDefs['1001'].loLimit).toBe(0);
+  });
+
+  it('applies a testType override', () => {
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P' } };
+    applyTestOverrides(testDefs, new Map([[1001, { testType: 'F' }]]));
+    expect(testDefs['1001'].testType).toBe('F');
+  });
+
+  it('drops loLimit/hiLimit for an already-functional test, but keeps name/units', () => {
+    const testDefs: Record<string, TestDef> = { '2001': { name: 'scan', testType: 'F' } };
+    applyTestOverrides(testDefs, new Map([[2001, { name: 'Scan Chain', loLimit: 0, hiLimit: 1, units: 'x' }]]));
+    expect(testDefs['2001']).toEqual({ name: 'Scan Chain', testType: 'F', units: 'x' });
+  });
+
+  it('drops a new loLimit/hiLimit override when the same override reclassifies to functional', () => {
+    // Reclassifying to F blocks *new* limit overrides on this merge — it doesn't
+    // retroactively scrub limits already present on the TestDef (that combination
+    // can't occur from real parser output; FTR-based tests never carry limits).
+    const testDefs: Record<string, TestDef> = { '1001': { name: 'A', testType: 'P', loLimit: 0.1, hiLimit: 1.5 } };
+    applyTestOverrides(testDefs, new Map([[1001, { testType: 'F', loLimit: 0, hiLimit: 1 }]]));
+    expect(testDefs['1001']).toEqual({ name: 'A', testType: 'F', loLimit: 0.1, hiLimit: 1.5 });
+  });
+
+  it('allows loLimit/hiLimit when an override reclassifies a test to parametric', () => {
+    const testDefs: Record<string, TestDef> = { '2001': { name: 'scan', testType: 'F' } };
+    applyTestOverrides(testDefs, new Map([[2001, { testType: 'P', loLimit: 0, hiLimit: 1 }]]));
+    expect(testDefs['2001']).toEqual({ name: 'scan', testType: 'P', loLimit: 0, hiLimit: 1 });
+  });
+});
+
+// ── diffTestOverride ────────────────────────────────────────────────────────────
+
+describe('diffTestOverride', () => {
+  it('returns undefined when there is no diff', () => {
+    const def: TestDef = { name: 'A', testType: 'P', loLimit: 0, hiLimit: 1, units: 'V' };
+    expect(diffTestOverride(def, { ...def })).toBeUndefined();
+  });
+
+  it('returns only the field(s) that differ', () => {
+    const original: TestDef = { name: 'A', testType: 'P' };
+    const current: TestDef = { name: 'Renamed', testType: 'P' };
+    const diff: TestOverride | undefined = diffTestOverride(current, original);
+    expect(diff).toEqual({ name: 'Renamed' });
+  });
+
+  it('returns multiple differing fields', () => {
+    const original: TestDef = { name: 'A', testType: 'P', loLimit: 0 };
+    const current: TestDef = { name: 'A', testType: 'F', loLimit: -5, hiLimit: 5 };
+    expect(diffTestOverride(current, original)).toEqual({ testType: 'F', loLimit: -5, hiLimit: 5 });
   });
 });
 

@@ -1,0 +1,29 @@
+# tsmap test list — robustness / warning-path check (not a screenshot demo)
+# Pairs with sample_data/PVT-LOT-05.stdf. Load it, open the test selector,
+# click "Load list", pick this file, then check the log panel / footer note
+# for each warning called out below. Nothing here should crash or drop an
+# entire row — only the single bad field (or bad row) noted should be lost.
+#
+# Header: reordered vs. canonical, one genuinely unrecognized column ("foo")
+#   -> warns "Unrecognized column "foo" ignored", rest of header still used.
+num,name,lsl,usl,units,type,foo
+# 1001: valid row, also proves the unrecognized "foo" data cell is ignored.
+1001,Vt_N,270,370,mV,p,ignored-column
+# Legacy (no-comma, whitespace-separated) line mixed into an otherwise
+# header-driven file — proves the two parsing modes coexist; no limits
+# reach 1002 via this line (legacy form never carries limits).
+1002 Vt_P
+# 1003: "notanumber" in the lsl slot -> warns "Invalid loLimit value
+# "notanumber" ignored"; hiLimit/name/units/type on the same row still apply.
+1003,Idsat_N,notanumber,880,uA,P
+# 2001 is the lot's one functional (FTR) test — assigning it limits here is
+# the exact mistake the new guard catches: warns "1 functional test had
+# limit values ignored (limits only apply to parametric tests)", but the
+# rename still applies.
+2001,Scan Chain (bad),0,1,,F
+# X is not a recognized test type -> warns "Invalid test type "X" ignored
+# (expected P or F)"; name still applies, existing parsed type is kept.
+1005,Ioff,,,,X
+# 9999 does not exist in PVT-LOT-05 -> warns "1 test in file not found in
+# current scan and were ignored".
+9999,Ghost Test,0,1,,P

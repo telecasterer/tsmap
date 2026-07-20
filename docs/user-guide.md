@@ -19,8 +19,13 @@ interactive yield maps, parametric heat maps, and statistical charts. It runs as
 desktop application on Linux, macOS, and Windows, and as a browser app at
 [telecasterer.github.io/tsmap/app/](https://telecasterer.github.io/tsmap/app/).
 
-This guide covers the full workflow: opening files, column mapping, test filtering, reading
-maps, and using the Analysis tab.
+This guide covers tsmap's own side of the workflow: opening files, column mapping, test
+filtering, splits, and the command line. The wafer map itself, its toolbar, and every
+Insights tab panel (yield, bin pareto, process capability, boxplot, histogram, correlation,
+scatter) are a separate library, [wmap](https://github.com/telecasterer/wafermap), with its
+own built-in guide covering all of that in full — open it any time via the toolbar's **?**
+menu → **Wafer map reference** (enabled once a file is loaded). This guide doesn't repeat
+that material.
 
 ## 1. Supported file formats
 
@@ -117,11 +122,13 @@ tsmap lot1.stdf --splits my-splits.csv     # applies splits automatically, same 
 tsmap --help                               # full usage
 ```
 
-`--tests` takes the same CSV a test selector's **Save list** button produces, and `--splits`
-the same CSV the [Splits… dialog](#63-saving-and-loading-split-definitions-csv) saves and
-loads. `--tests` only pre-fills the selector's checkboxes and renames — the overlay still
+`--tests` takes the same file a test selector's **Save list** button produces — selection,
+renames, and optionally spec limits/test type (see
+[Test lists](#test-lists-save-load) above) — and `--splits` the same CSV the
+[Splits… dialog](#63-saving-and-loading-split-definitions-csv) saves and loads. `--tests` only
+pre-fills the selector's checkboxes, renames, and limit/type overrides — the overlay still
 always appears and still needs a confirm click, the same as any other load; it just saves
-re-picking tests you already chose before.
+re-picking (and re-entering limits for) tests you already set up before.
 
 If tsmap is already running, launching it again with files hands them to the running window
 instead of opening a second blank one: with nothing currently loaded they open right away;
@@ -267,7 +274,9 @@ of all 500 reduces the in-memory dataset by roughly 25×.
   the entire range between them.
 
 Each test row shows the test number (in dim monospace), the test name, and — where defined
-in the file — the units and spec limits.
+in the file — the units and spec limits. If a **Load list** (or `--tests`) has overridden a
+test's limits, units, or type, the row shows those overridden values, with a tooltip noting
+they were loaded from file.
 
 ### Renaming a test
 
@@ -281,31 +290,59 @@ is shown: the selector, the map tooltip, and chart axis labels. Renames persist 
 ### Test lists (Save / Load)
 
 The **Save list** and **Load list** buttons let you persist a selection and reuse it across
-sessions or files from the same product.
+sessions or files from the same product. Beyond just the selection and display names, a test
+list can also carry **spec limits and test type** — useful when a test program ships without
+limits (common for characterisation/test-vehicle work, where limits come from simulation or
+are defined and adjusted separately), or when you need to correct a test's parametric/
+functional classification. In effect, the file doubles as a lightweight test-definitions file.
 
-**Saving** writes a plain-text `.csv` file containing every selected test number and its
-current display name. **Loading** reads that file back, restores the selection, and applies
-any name overrides — so renamed tests stay renamed on reload.
+**Saving** writes a plain-text `.csv` file with every selected test's number, current display
+name, and current effective limits/units/type. **Loading** reads that file back, restores the
+selection, and applies whatever the file specifies as overrides on top of the parsed data —
+so renamed tests stay renamed, and any loaded limits/type replace what the test program shipped
+with (or fill in limits it didn't have at all).
 
-The file format is one test per line:
+The saved format is one test per line, with a header naming the columns:
 
     # tsmap test list
     # Saved: 2026-06-15T10:00:00.000Z
-    1000,Idsat_vg1
-    1001,Idsat_vg2
-    1010,Vt_lin
-
+    num,name,loLimit,hiLimit,units,testType
+    1000,Idsat_vg1,0.1,1.5,mA,P
+    1001,Idsat_vg2,,,mA,P
+    1010,Vt_lin,,,,
 
 - Lines starting with `#` are comments and are ignored on load.
-- Each data line is `<test number>,<display name>`. The name field is optional — a line
-  with just a number selects that test without overriding its name.
-- Delimiters can be comma, semicolon, or whitespace — the parser accepts all three.
+- **Legacy format** (still fully supported): `<test number> <display name>`, with the number
+  and name separated by a comma, semicolon, or plain whitespace, and no further columns. A
+  line with just a number selects that test without overriding its name. Old saved files keep
+  working unchanged.
+- **Extended format**: comma-separated, optionally starting with a header row that names each
+  column. Column names are matched case-insensitively, and common synonyms are recognized —
+  `lsl`/`usl` (or `lo`/`hi`, `low`/`high`) for the limit columns, `type` for test type. A
+  header lets you list columns in any order, and omit ones you don't need — for example a
+  pure limits file with no name column at all, `num,lsl,usl`, is valid. Without a header,
+  comma-separated rows are read positionally as
+  `num,name,loLimit,hiLimit,units,testType`.
+- `testType` accepts `P`/`p` (parametric) or `F`/`f` (functional).
+- Limits only make sense for parametric tests — a functional test is pass/fail with no
+  measured value to check a spec limit against. A `loLimit`/`hiLimit` given for a test that is
+  (or is being reclassified to) functional is dropped with a warning; the rest of that row's
+  overrides (name, units, type) still apply.
+- A blank field means "don't override this" — it leaves the parsed value (or an override
+  already loaded earlier in the session) alone. It never clears an existing value back to
+  blank/zero. There's no way to *revert* an override from inside the app short of editing the
+  file (blank the cell) or reloading the data fresh — Save/Load is the entire limit/type
+  editing workflow, there is no in-app limit editor.
+- A field tsmap can't parse (garbage numeric value, invalid test type, an unrecognized header
+  column) is dropped with a log warning — the rest of that row, and the rest of the file, still
+  load normally.
 - Tests in the file that are not present in the current scan are silently skipped
   (the log panel shows a count of skipped tests).
 
-You can hand-edit a list file to rename tests for display (e.g. `1000,Threshold Voltage`)
-without changing anything in the original data file. Those names appear in the selector,
-on the map tooltip, and in the chart axis labels.
+You can hand-edit a list file to rename tests, or add/adjust limits, without changing anything
+in the original data file — e.g. `1000,Threshold Voltage,0.2,1.2,mA,P`. Those names, limits,
+and type appear in the selector, on the map tooltip, in chart axis labels, and — for
+limits — as histogram LSL/USL lines and in the Process Capability panel.
 
 ### Memory advisory
 
@@ -363,13 +400,13 @@ a specific *test value*, or fail spec more often there than elsewhere ("the edge
 
 - the panel's per-test Min/Mean/Max statistics (always shown),
 - test-value maps or stacked value maps,
-- the [Analysis tab](#7-analysis-tab) (boxplots, histograms, scatter, correlation — all independent).
+- the [Insights tab](#7-insights-tab) (boxplots, histograms, scatter, correlation — all independent).
 
 Because this regional value pass scales with regions × tests × dies, it is **off by default**
 to keep loads fast. The toggle appears once a file with test values is loaded; switch it on
 and the maps re-render with the extra findings in the panel — the wafer's data is already in
 memory, so this recomputes in place with no reload. Switch it off to remove them. It resets to
-off each time you load a new file, and is disabled while the Analysis tab is open (it only
+off each time you load a new file, and is disabled while the Insights tab is open (it only
 affects the map's summary panel).
 
 ---
@@ -380,7 +417,7 @@ A **split** is a name you assign to a wafer that isn't in the file at all — mo
 process corner (`TT`, `FF`, `SS`, `FS`, `SF`), but it can be anything: an experiment
 condition, a test-temperature group, anything you want to compare wafers by that your
 tester didn't record. Once assigned, splits behave exactly like any other metadata field
-in the [Analysis tab's Group by dropdown](#7-analysis-tab) — split-vs-split
+in the [Insights tab's Group by dropdown](#7-insights-tab) — split-vs-split
 yield, boxplots, histograms, correlation, and scatter all work immediately with no extra
 setup — and they can optionally be shown right on the wafer map/gallery labels too.
 
@@ -450,18 +487,17 @@ rather than silently changing chart groupings and map labels behind your back.
 
 ---
 
-## 7. Analysis tab
+## 7. Insights tab
 
-Click **Analysis** in the map toolbar to switch from the wafer map/gallery to a grid of
-statistical panels (yield, bin pareto, process capability, boxplot, histogram, correlation
-matrix, and scatter); click it again to return. Both the single-wafer view and the gallery
-have their own **Analysis** button. The map and the Analysis tab share the same parsed,
-in-memory data — switching between them never re-parses.
+The **Insights** button in the map toolbar (both the single-wafer view and the gallery have
+their own) switches to wmap's own grid of statistical panels — yield, bin pareto, process
+capability, boxplot, histogram, correlation, and scatter — sharing the same parsed,
+in-memory data as the map, so switching never re-parses.
 
-**The Analysis tab itself is a wmap feature, not a tsmap one** — every panel, its controls,
-and its grouping/drill-down behaviour are documented in full in wmap's own in-app guide
-(the **?** help button inside the map/gallery toolbar, next to the Analysis button). This
-guide only covers what's specific to tsmap's side of it:
+**This is entirely a wmap feature.** Every panel, its controls, and its grouping/drill-down
+behaviour are documented in full in wmap's own built-in guide — see the note at the top of
+this document for how to open it. This section covers only the two things that are
+tsmap-specific:
 
 - **Where the "Group by" field list comes from.** Grouping is driven by metadata attached
   to each wafer at load time, plus any [wafer splits](#6-wafer-splits) you've assigned.

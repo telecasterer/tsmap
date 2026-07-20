@@ -1,0 +1,22 @@
+# tsmap test list — clean demo of the extended (limits + type) format
+# Pairs with sample_data/PVT-LOT-05.stdf (13-wafer PVT corner lot, tests
+# 1001-1006 parametric with baked-in spec limits, 2001 functional with none).
+# Load PVT-LOT-05.stdf, open the test selector, click "Load list", pick this
+# file — every row below overrides something visibly different from what's
+# in the STDF, so the effect is easy to confirm in the selector/screenshot:
+#   - 1001/1002/1003/1005/1006: renamed, limits tightened/widened vs. the
+#     file's own 260-380 / 500-900 / 0-12 / 1600-2200 etc.
+#   - 1004: name/units/type overridden but *limits left blank* — its parsed
+#     460/840 limits are untouched, demonstrating "blank = don't override".
+#   - 2001: renamed only; still functional (type column reaffirms F).
+# Header columns are deliberately reordered and use the lsl/usl/type
+# synonyms (not the canonical loLimit/hiLimit/testType spelling) to also
+# exercise alias/order-independent header parsing.
+num,name,lsl,usl,units,type
+1001,Vt_N,270,370,mV,p
+1002,Vt_P,270,370,mV,p
+1003,Idsat_N,520,880,uA,P
+1004,Idsat_P,,,uA,P
+1005,Ioff,0.5,10,nA,P
+1006,Fmax,1650,2150,MHz,P
+2001,Scan Chain,,,,f

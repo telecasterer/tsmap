@@ -1,6 +1,6 @@
 // Pure, DOM-free utility functions extracted from main.ts for testability.
 
-import type { LotMeta, MetaField, ParsedFile, TestDef, WaferData, WaferSource } from './types';
+import type { LotMeta, MetaField, ParsedFile, TestDef, TestOverride, WaferData, WaferSource } from './types';
 import type { RustParsedFile, StdfTestNames } from './platform';
 import type { TestDef as WmapTestDef } from '@paulrobins/wafermap';
 import type { PlotMode } from '@paulrobins/wafermap';
@@ -122,13 +122,64 @@ export function autoPlotMode(wafers: WaferData[]): PlotMode {
 }
 
 /**
- * Prune, backfill, and apply name overrides to a parsed file's testDefs and
+ * Merges per-test overrides (name/loLimit/hiLimit/units/testType) onto
+ * `testDefs` in place. A field is only overwritten when the override
+ * actually specifies it (`!== undefined`) — this is what lets a rename-only
+ * override leave limits untouched, a limit-only override leave the name
+ * untouched, etc. Overrides for test numbers not present in `testDefs` are
+ * silently ignored.
+ */
+export function applyTestOverrides(
+  testDefs: Record<string, TestDef>,
+  overrides: Map<number, TestOverride>,
+): void {
+  for (const [num, ov] of overrides) {
+    const key = String(num);
+    if (!(key in testDefs)) continue;
+    // Functional tests (FTR — pass/fail only) never have a numeric measured
+    // value to check a spec limit against, so a loLimit/hiLimit override is
+    // meaningless dead data there — silently drop it rather than carry it
+    // into TestDef. Effective type is the override's own testType if this
+    // row supplies one (an explicit reclassification), else the test's
+    // existing parsed type.
+    const effectiveType = ov.testType ?? testDefs[key].testType;
+    const allowLimits = effectiveType !== 'F';
+    testDefs[key] = {
+      ...testDefs[key],
+      ...(ov.name !== undefined ? { name: ov.name } : {}),
+      ...(allowLimits && ov.loLimit !== undefined ? { loLimit: ov.loLimit } : {}),
+      ...(allowLimits && ov.hiLimit !== undefined ? { hiLimit: ov.hiLimit } : {}),
+      ...(ov.units !== undefined ? { units: ov.units } : {}),
+      ...(ov.testType !== undefined ? { testType: ov.testType } : {}),
+    };
+  }
+}
+
+/**
+ * Diffs two TestDefs for the fields TestOverride can carry, returning only
+ * the fields that actually differ (or `undefined` if none do). Used to seed
+ * a fresh selector re-open with whatever overrides are already baked into
+ * `current` but not reflected in `original` (e.g. re-opening "Filter tests…"
+ * after an earlier rename/limit-load pass).
+ */
+export function diffTestOverride(current: TestDef, original: TestDef): TestOverride | undefined {
+  const ov: TestOverride = {};
+  if (current.name !== original.name) ov.name = current.name;
+  if (current.loLimit !== original.loLimit) ov.loLimit = current.loLimit;
+  if (current.hiLimit !== original.hiLimit) ov.hiLimit = current.hiLimit;
+  if (current.units !== original.units) ov.units = current.units;
+  if (current.testType !== original.testType) ov.testType = current.testType;
+  return Object.keys(ov).length ? ov : undefined;
+}
+
+/**
+ * Prune, backfill, and apply test overrides to a parsed file's testDefs and
  * die testValues after a filtered parse.
  *
  * - Prunes testDefs and per-die testValues to only the selected test numbers.
  * - Backfills any selected tests missing from testDefs (stop-on-fail gap) from
  *   firstPassDefs when provided.
- * - Applies nameOverrides on top of whatever names were in testDefs.
+ * - Applies testOverrides on top of whatever was in testDefs (see applyTestOverrides).
  *
  * Mutates `parsed` in place and returns it.
  */
@@ -136,7 +187,7 @@ export function applyTestSelection(
   parsed: ParsedFile,
   selection: number[],
   firstPassDefs: StdfTestNames | null,
-  nameOverrides: Map<number, string>,
+  testOverrides: Map<number, TestOverride>,
 ): ParsedFile {
   const selectionSet = new Set(selection.map(String));
 
@@ -170,13 +221,7 @@ export function applyTestSelection(
     }
   }
 
-  // Apply name overrides.
-  for (const [num, name] of nameOverrides) {
-    const key = String(num);
-    if (key in parsed.testDefs) {
-      parsed.testDefs[key] = { ...parsed.testDefs[key], name };
-    }
-  }
+  applyTestOverrides(parsed.testDefs, testOverrides);
 
   return parsed;
 }

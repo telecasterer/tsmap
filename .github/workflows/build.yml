@@ -81,7 +81,13 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      # Full history (not the default shallow clone) — this build runs `npm run
+      # build` -> prebuild -> scripts/check-testdata-parser-published.js, which
+      # needs git log on packages/parsers/ to detect source drift since the
+      # crate's last version bump; a shallow clone makes it silently skip that check.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
